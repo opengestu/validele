@@ -97,7 +97,8 @@ export class PayDunyaService {
           },
           store: {
             name: request.store.name
-          }
+          },
+          return_url: 'https://glistening-sawine-9c59f8.netlify.app/buyer'
         },
         {
           headers: this.getHeaders(),
