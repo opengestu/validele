@@ -1,6 +1,7 @@
 // Tous les appels PayDunya doivent passer par le backend. Le backend gère le mode sandbox/prod via PAYDUNYA_MODE.
 // Ne pas faire d'appel direct à l'API PayDunya ici.
 import axios from 'axios';
+import { apiUrl } from '@/lib/api';
 
 export const createInvoice = async (data: {
     amount: number;
@@ -28,7 +29,7 @@ export const createInvoice = async (data: {
                 address: 'Dakar, Sénégal'
             }
         };
-        const response = await axios.post('/api/wave/create-invoice', body);
+    const response = await axios.post(apiUrl('/api/wave/create-invoice'), body);
         return response.data;
     } catch (error) {
         console.error('Erreur lors de la création de la facture:', error);
@@ -63,7 +64,7 @@ export const makeWavePayment = async (data: {
                 wave_senegal_phone: data.wave_senegal_phone
             };
         }
-        const response = await axios.post('/api/wave/make-payment', payload);
+    const response = await axios.post(apiUrl('/api/wave/make-payment'), payload);
         return response.data;
     } catch (error) {
         console.error('Erreur lors du paiement Wave:', error);
@@ -96,7 +97,7 @@ export const makeOrangeMoneyPayment = async (data: {
                 orange_money_senegal_phone: data.orange_money_senegal_phone
             };
         }
-        const response = await axios.post('/api/orange-money/make-payment', payload);
+    const response = await axios.post(apiUrl('/api/orange-money/make-payment'), payload);
         return response.data;
     } catch (error) {
         console.error('Erreur lors du paiement Orange Money:', error);
@@ -112,7 +113,7 @@ export const makeOrangeMoneyQrCodePayment = async (data: {
     password?: string;
 }) => {
     try {
-        const response = await axios.post('/api/orange-money/qrcode', {
+        const response = await axios.post(apiUrl('/api/orange-money/qrcode'), {
             customer_name: data.customer_name,
             customer_email: data.customer_email,
             phone_number: data.phone_number,
@@ -135,7 +136,7 @@ export const makeOrangeMoneyOtpPayment = async (data: {
     password?: string;
 }) => {
     try {
-        const response = await axios.post('/api/orange-money/otp', {
+        const response = await axios.post(apiUrl('/api/orange-money/otp'), {
             customer_name: data.customer_name,
             customer_email: data.customer_email,
             phone_number: data.phone_number,

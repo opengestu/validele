@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { apiUrl } from '@/lib/api';
 import.meta.env;
 import waveLogo from '@/assets/wave.png';
 import orangeMoneyLogo from '@/assets/orange-money.png';
@@ -331,7 +332,7 @@ const BuyerDashboard = () => {
     if (!searchResult || !user) return;
     try {
       setProcessingPayment(true);
-      const response = await fetch('/api/payments/create-order-and-invoice', {
+      const response = await fetch(apiUrl('/api/payments/create-order-and-invoice'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -363,7 +364,7 @@ const BuyerDashboard = () => {
       const phone = userProfile?.phone || '';
       if (paymentMethod === 'wave') {
         // Paiement Wave : redirection immédiate
-        const res = await fetch('/api/payments/softpay/wave', {
+        const res = await fetch(apiUrl('/api/payments/softpay/wave'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fullName, email, phone, payment_token: data.token })
@@ -383,7 +384,7 @@ const BuyerDashboard = () => {
           const phone = formatPhoneForOrangeMoney(userProfile?.phone || '');
           if (choice === 'qr') {
             // QR Code : redirection immédiate
-            const res = await fetch('/api/payments/softpay/orange', {
+            const res = await fetch(apiUrl('/api/payments/softpay/orange'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -425,7 +426,7 @@ const BuyerDashboard = () => {
     if (!pendingOrderToken) return;
     setProcessingPayment(true);
     try {
-      const response = await fetch('/api/payments/payment', {
+      const response = await fetch(apiUrl('/api/payments/payment'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -860,7 +861,7 @@ const BuyerDashboard = () => {
                 try {
                   let res;
                   if (softPayType === 'wave') {
-                    res = await fetch('/api/payments/softpay/wave', {
+                    res = await fetch(apiUrl('/api/payments/softpay/wave'), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -879,7 +880,7 @@ const BuyerDashboard = () => {
                       throw new Error(data.message || 'Erreur paiement Wave');
                     }
                   } else if (softPayType === 'orange_qr') {
-                    res = await fetch('/api/payments/softpay/orange', {
+                    res = await fetch(apiUrl('/api/payments/softpay/orange'), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -899,7 +900,7 @@ const BuyerDashboard = () => {
                       throw new Error(data.message || 'Erreur paiement Orange Money QR');
                     }
                   } else if (softPayType === 'orange_otp') {
-                    res = await fetch('/api/payments/softpay/orange', {
+                    res = await fetch(apiUrl('/api/payments/softpay/orange'), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -968,7 +969,7 @@ const BuyerDashboard = () => {
               const form = e.target as HTMLFormElement;
               const otp = (form.elements.namedItem('otp') as HTMLInputElement).value;
               try {
-                const res = await fetch('/api/payments/softpay/orange', {
+                const res = await fetch(apiUrl('/api/payments/softpay/orange'), {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({

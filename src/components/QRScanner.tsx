@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from '@/components/ui/dialog';
+import { apiUrl } from '@/lib/api';
 
 function Html5QrcodeReact({ onScan, onError }) {
   const divId = 'qr-reader-react';
@@ -450,7 +451,7 @@ const QRScanner = () => {
         (async () => {
           try {
             setIsPayoutInProgress(true);
-            const response = await fetch('/api/order/scan', {
+            const response = await fetch(apiUrl('/api/order/scan'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ orderId: validationResult.id }),
