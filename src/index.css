@@ -1,0 +1,261 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Couleurs de base */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Palette Validèl Security - Couleurs principales */
+    --primary: 142 76% 36%;          /* Vert sécurité #22c55e */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 213 94% 68%;        /* Bleu confiance #3b82f6 */
+    --secondary-foreground: 0 0% 100%;
+
+    /* Couleurs spécifiques par rôle */
+    --validel-vendor: 24 95% 53%;    /* Orange vendeur #f97316 */
+    --validel-vendor-foreground: 0 0% 100%;
+    
+    --validel-buyer: 142 76% 36%;    /* Vert acheteur #22c55e */
+    --validel-buyer-foreground: 0 0% 100%;
+    
+    --validel-delivery: 262 83% 58%; /* Violet livreur #a855f7 */
+    --validel-delivery-foreground: 0 0% 100%;
+
+    /* Couleurs d'accent et utilitaires */
+    --accent: 199 89% 48%;           /* Bleu accent #0ea5e9 */
+    --accent-foreground: 0 0% 100%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 142 76% 36%;             /* Ring vert sécurité */
+
+    --radius: 0.75rem;               /* Bordures plus arrondies */
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    /* Mode sombre Validèl */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 217.2 32.6% 17.5%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Couleurs principales mode sombre */
+    --primary: 142 69% 58%;          /* Vert plus clair #4ade80 */
+    --primary-foreground: 222.2 84% 4.9%;
+
+    --secondary: 213 94% 68%;        /* Bleu conservé #3b82f6 */
+    --secondary-foreground: 222.2 84% 4.9%;
+
+    /* Couleurs rôles mode sombre */
+    --validel-vendor: 24 95% 53%;    /* Orange conservé */
+    --validel-vendor-foreground: 222.2 84% 4.9%;
+    
+    --validel-buyer: 142 69% 58%;    /* Vert plus clair */
+    --validel-buyer-foreground: 222.2 84% 4.9%;
+    
+    --validel-delivery: 262 83% 58%; /* Violet conservé */
+    --validel-delivery-foreground: 222.2 84% 4.9%;
+
+    --accent: 199 89% 48%;           /* Bleu accent conservé */
+    --accent-foreground: 222.2 84% 4.9%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 142 69% 58%;             /* Ring vert mode sombre */
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  /* Buttons Validèl par rôle */
+  .btn-vendor {
+    @apply bg-validel-vendor hover:bg-validel-vendor/90 text-validel-vendor-foreground;
+  }
+  
+  .btn-buyer {
+    @apply bg-validel-buyer hover:bg-validel-buyer/90 text-validel-buyer-foreground;
+  }
+  
+  .btn-delivery {
+    @apply bg-validel-delivery hover:bg-validel-delivery/90 text-validel-delivery-foreground;
+  }
+  
+  /* Cards avec effet de profondeur */
+  .card-elevated {
+    @apply shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1;
+  }
+  
+  .card-vendor {
+    @apply border-l-4 border-validel-vendor bg-gradient-to-br from-white to-orange-50 dark:from-gray-900 dark:to-orange-950/20;
+  }
+  
+  .card-buyer {
+    @apply border-l-4 border-validel-buyer bg-gradient-to-br from-white to-green-50 dark:from-gray-900 dark:to-green-950/20;
+  }
+  
+  .card-delivery {
+    @apply border-l-4 border-validel-delivery bg-gradient-to-br from-white to-purple-50 dark:from-gray-900 dark:to-purple-950/20;
+  }
+  
+  /* Gradients d'arrière-plan */
+  .bg-hero {
+    @apply bg-hero-gradient;
+  }
+  
+  /* Animations d'entrée */
+  .animate-enter {
+    @apply animate-fade-in;
+  }
+  
+  /* Status badges */
+  .status-success {
+    @apply bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300;
+  }
+  
+  .status-warning {
+    @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300;
+  }
+  
+  .status-error {
+    @apply bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300;
+  }
+  
+  .status-info {
+    @apply bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300;
+  }
+  
+  /* Nouveaux effets Phase 2 */
+  .hover-lift {
+    @apply transition-all duration-500 transform;
+  }
+  
+  .hover-lift:hover {
+    @apply -translate-y-2 scale-105 shadow-2xl;
+  }
+  
+  /* Animations de texte */
+  .animated-gradient {
+    background: linear-gradient(270deg, hsl(var(--primary)), hsl(var(--secondary)), hsl(var(--accent)));
+    background-size: 600% 600%;
+    animation: gradient-shift 8s ease infinite;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  @keyframes gradient-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  
+  /* Effet parallaxe */
+  .parallax-bg {
+    background-attachment: fixed;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+  }
+  
+  /* Smooth scroll */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Backdrop blur personnalisé */
+  .backdrop-blur-custom {
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
+  
+  /* Animation typing effect */
+  @keyframes typing {
+    from { width: 0 }
+    to { width: 100% }
+  }
+  
+  .typing-effect {
+    animation: typing 3s steps(30, end);
+    overflow: hidden;
+    white-space: nowrap;
+    border-right: 3px solid hsl(var(--primary));
+    animation-fill-mode: forwards;
+  }
+  
+  /* Effets de survol pour les liens de navigation */
+  .nav-link {
+    @apply relative transition-all duration-300;
+  }
+  
+  .nav-link::after {
+    content: '';
+    @apply absolute -bottom-1 left-0 w-0 h-0.5 bg-primary transition-all duration-300;
+  }
+  
+  .nav-link:hover::after {
+    @apply w-full;
+  }
+}
