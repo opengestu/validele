@@ -76,7 +76,7 @@ app.post('/api/otp/send', async (req, res) => {
 });
 
 // Vérifier un code OTP
-app.post('/api/otp/verify', (req, res) => {
+app.post('/api/otp/verify', async (req, res) => {
   try {
     const { phone, code } = req.body;
 
@@ -96,7 +96,7 @@ app.post('/api/otp/verify', (req, res) => {
 
     console.log(`[OTP] Vérification pour: ${formattedPhone}, code: ${code}`);
 
-    const result = verifyOTP(formattedPhone, code);
+    const result = await verifyOTP(formattedPhone, code);
 
     if (result.valid) {
       res.json({ success: true, valid: true });
