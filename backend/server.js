@@ -536,20 +536,24 @@ app.post('/api/paydunya/notification', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-const HTTPS_KEY_PATH = '../localhost.key';
-const HTTPS_CERT_PATH = '../localhost.crt';
 
-let server;
-try {
-  const key = fs.readFileSync(HTTPS_KEY_PATH);
-  const cert = fs.readFileSync(HTTPS_CERT_PATH);
-  server = https.createServer({ key, cert }, app);
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`HTTPS server running on https://0.0.0.0:${PORT}`);
-  });
-} catch (err) {
-  console.warn('Certificats SSL non trouvés, démarrage en HTTP. Détail:', err.message);
+// Sur Render/production, utiliser HTTP (Render gère le HTTPS)
+// En local, essayer HTTPS si certificats disponibles
+if (process.env.NODE_ENV === 'production' || !fs.existsSync('../localhost.key')) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`HTTP server running on http://0.0.0.0:${PORT}`);
   });
+} else {
+  try {
+    const key = fs.readFileSync('../localhost.key');
+    const cert = fs.readFileSync('../localhost.crt');
+    https.createServer({ key, cert }, app).listen(PORT, '0.0.0.0', () => {
+      console.log(`HTTPS server running on https://0.0.0.0:${PORT}`);
+    });
+  } catch (err) {
+    console.warn('Erreur HTTPS, basculement en HTTP:', err.message);
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`HTTP server running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
