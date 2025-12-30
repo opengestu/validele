@@ -544,12 +544,12 @@ try {
   const key = fs.readFileSync(HTTPS_KEY_PATH);
   const cert = fs.readFileSync(HTTPS_CERT_PATH);
   server = https.createServer({ key, cert }, app);
-  server.listen(PORT, () => {
-    console.log(`HTTPS server running on https://localhost:${PORT}`);
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`HTTPS server running on https://0.0.0.0:${PORT}`);
   });
 } catch (err) {
   console.warn('Certificats SSL non trouvés, démarrage en HTTP. Détail:', err.message);
-  app.listen(PORT, () => {
-    console.log(`HTTP server running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`HTTP server running on http://0.0.0.0:${PORT}`);
   });
 }
