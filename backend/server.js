@@ -5,6 +5,7 @@ const axios = require('axios');
 require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
+const { sendOTP, verifyOTP } = require('./direct7');
 
 const app = express();
 
@@ -32,6 +33,83 @@ app.use((err, req, res, next) => {
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
+
+// ==========================================
+// ENDPOINTS OTP (Direct7Networks)
+// ==========================================
+
+// Envoyer un code OTP
+app.post('/api/otp/send', async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ success: false, error: 'Numéro de téléphone requis' });
+    }
+
+    // Formater le numéro
+    let formattedPhone = phone.replace(/[\s\-\(\)]/g, '');
+    if (!formattedPhone.startsWith('+')) {
+      if (formattedPhone.startsWith('221')) {
+        formattedPhone = '+' + formattedPhone;
+      } else if (formattedPhone.startsWith('0')) {
+        formattedPhone = '+221' + formattedPhone.substring(1);
+      } else {
+        formattedPhone = '+221' + formattedPhone;
+      }
+    }
+
+    // Valider le format sénégalais
+    if (!formattedPhone.match(/^\+221[0-9]{9}$/)) {
+      return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
+    }
+
+    console.log(`[OTP] Demande d'envoi pour: ${formattedPhone}`);
+
+    await sendOTP(formattedPhone);
+
+    res.json({ success: true, message: 'Code envoyé', phone: formattedPhone });
+  } catch (error) {
+    console.error('[OTP] Erreur envoi:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Vérifier un code OTP
+app.post('/api/otp/verify', (req, res) => {
+  try {
+    const { phone, code } = req.body;
+
+    if (!phone || !code) {
+      return res.status(400).json({ success: false, error: 'Numéro et code requis' });
+    }
+
+    // Formater le numéro
+    let formattedPhone = phone.replace(/[\s\-\(\)]/g, '');
+    if (!formattedPhone.startsWith('+')) {
+      if (formattedPhone.startsWith('221')) {
+        formattedPhone = '+' + formattedPhone;
+      } else {
+        formattedPhone = '+221' + formattedPhone;
+      }
+    }
+
+    console.log(`[OTP] Vérification pour: ${formattedPhone}, code: ${code}`);
+
+    const result = verifyOTP(formattedPhone, code);
+
+    if (result.valid) {
+      res.json({ success: true, valid: true });
+    } else {
+      res.status(400).json({ success: false, valid: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('[OTP] Erreur vérification:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
 
 // Utilisation de l'API PayDunya en production ou sandbox
 const PAYDUNYA_MODE = process.env.PAYDUNYA_MODE || 'prod';
