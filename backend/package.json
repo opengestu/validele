@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "Backend pour l'application Escrow Pay",
   "type": "commonjs",
-  "main": "src/index.ts",
+  "main": "server.js",
   "scripts": {
-    "start": "ts-node src/index.ts",
-    "dev": "nodemon src/index.ts"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
