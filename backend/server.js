@@ -6,6 +6,7 @@ require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
 const { sendOTP, verifyOTP } = require('./direct7');
+const { supabase } = require('./supabase');
 
 const app = express();
 
@@ -32,6 +33,16 @@ app.use((err, req, res, next) => {
 // Endpoint de test
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
+});
+
+// Health check endpoint pour Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Alias pour health check
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ==========================================
@@ -106,6 +117,101 @@ app.post('/api/otp/verify', async (req, res) => {
   } catch (error) {
     console.error('[OTP] Erreur vérification:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// ENDPOINT CREATE ORDER AND INVOICE
+// ==========================================
+
+app.post('/api/payments/create-order-and-invoice', async (req, res) => {
+  try {
+    const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address, description, storeName } = req.body;
+
+    console.log('[CREATE-ORDER] Requête reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
+
+    // Générer un order_code unique basé sur timestamp + random
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const order_code = `CMD${timestamp.slice(-4)}${random.slice(0, 2)}`;
+
+    // 1. Créer la commande dans Supabase
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        buyer_id,
+        product_id,
+        vendor_id,
+        total_amount,
+        status: 'pending',
+        payment_method,
+        buyer_phone,
+        delivery_address,
+        order_code,
+      })
+      .select()
+      .single();
+
+    if (orderError || !order) {
+      console.error('[CREATE-ORDER] Erreur création commande:', orderError);
+      return res.status(400).json({ status: 'failed', message: orderError?.message || "Impossible de créer la commande" });
+    }
+
+    console.log('[CREATE-ORDER] Commande créée:', order.id, order_code);
+
+    // 2. Créer la facture PayDunya
+    const invoiceResponse = await axios.post(
+      `${PAYDUNYA_API_BASE}/checkout-invoice/create`,
+      {
+        invoice: {
+          total_amount,
+          description: description || `Commande ${order_code}`
+        },
+        store: {
+          name: storeName || 'Validèl'
+        }
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
+          'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
+          'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN
+        }
+      }
+    );
+
+    console.log('[CREATE-ORDER] Réponse PayDunya:', invoiceResponse.data);
+
+    const paydunyaData = invoiceResponse.data;
+
+    if (paydunyaData.response_code !== '00') {
+      console.error('[CREATE-ORDER] Erreur PayDunya:', paydunyaData);
+      return res.status(400).json({ status: 'failed', message: paydunyaData.response_text || "Erreur PayDunya" });
+    }
+
+    // 3. Mettre à jour la commande avec le token PayDunya
+    await supabase
+      .from('orders')
+      .update({ 
+        token: paydunyaData.token, 
+        qr_code: order_code 
+      })
+      .eq('id', order.id);
+
+    // 4. Retourner la réponse
+    res.json({ 
+      status: 'success', 
+      redirect_url: paydunyaData.response_text, 
+      token: paydunyaData.token, 
+      receipt_url: paydunyaData.receipt_url,
+      order_id: order.id,
+      order_code: order_code
+    });
+
+  } catch (error) {
+    console.error('[CREATE-ORDER] Erreur:', error.response?.data || error.message);
+    res.status(500).json({ status: 'failed', message: error.message });
   }
 });
 
