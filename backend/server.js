@@ -6,7 +6,6 @@ require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
 const { sendOTP, verifyOTP } = require('./direct7');
-const { supabase } = require('./supabase');
 
 const app = express();
 
@@ -35,14 +34,9 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
 
-// Health check endpoint pour Render
+// Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Alias pour health check
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ==========================================
@@ -121,14 +115,35 @@ app.post('/api/otp/verify', async (req, res) => {
 });
 
 // ==========================================
+
+// Utilisation de l'API PayDunya en production ou sandbox
+const PAYDUNYA_MODE = process.env.PAYDUNYA_MODE || 'prod';
+const PAYDUNYA_API_BASE = PAYDUNYA_MODE === 'sandbox'
+  ? 'https://app.paydunya.com/sandbox-api/v1'
+  : 'https://app.paydunya.com/api/v1';
+const PAYDUNYA_SOFTPAY_WAVE = PAYDUNYA_MODE === 'sandbox'
+  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/wave-senegal'
+  : 'https://app.paydunya.com/api/v1/softpay/wave-senegal';
+const PAYDUNYA_SOFTPAY_OM = PAYDUNYA_MODE === 'sandbox'
+  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/orange-money-senegal'
+  : 'https://app.paydunya.com/api/v1/softpay/orange-money-senegal';
+const PAYDUNYA_SOFTPAY_NEW_OM = PAYDUNYA_MODE === 'sandbox'
+  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/new-orange-money-senegal'
+  : 'https://app.paydunya.com/api/v1/softpay/new-orange-money-senegal';
+
+console.log(`[PAYDUNYA] Mode utilisé: ${PAYDUNYA_MODE}`);
+
+// ==========================================
 // ENDPOINT CREATE ORDER AND INVOICE
 // ==========================================
 
+// Créer une commande et générer une facture PayDunya en une seule requête
 app.post('/api/payments/create-order-and-invoice', async (req, res) => {
   try {
+    const { supabase } = require('./supabase');
     const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address, description, storeName } = req.body;
 
-    console.log('[CREATE-ORDER] Requête reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
+    console.log('[CREATE-ORDER] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
 
     // Générer un order_code unique basé sur timestamp + random
     const timestamp = Date.now().toString(36).toUpperCase();
@@ -157,82 +172,61 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
       return res.status(400).json({ status: 'failed', message: orderError?.message || "Impossible de créer la commande" });
     }
 
-    console.log('[CREATE-ORDER] Commande créée:', order.id, order_code);
+    console.log('[CREATE-ORDER] Commande créée:', order.id);
 
-    // 2. Créer la facture PayDunya
-    const invoiceResponse = await axios.post(
-      `${PAYDUNYA_API_BASE}/checkout-invoice/create`,
-      {
-        invoice: {
-          total_amount,
-          description: description || `Commande ${order_code}`
-        },
-        store: {
-          name: storeName || 'Validèl'
-        }
+    // 2. Générer la facture PayDunya
+    const invoiceResponse = await axios.post(`${PAYDUNYA_API_BASE}/checkout-invoice/create`, {
+      invoice: {
+        total_amount,
+        description: description || `Commande ${order_code}`,
       },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
-          'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-          'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN
-        }
+      store: {
+        name: storeName || 'Validèl',
+      },
+      actions: {
+        cancel_url: process.env.PAYDUNYA_CANCEL_URL || 'https://validele.app/payment/cancel',
+        return_url: process.env.PAYDUNYA_RETURN_URL || 'https://validele.app/payment/success',
+        callback_url: process.env.PAYDUNYA_CALLBACK_URL || 'https://validele.onrender.com/api/paydunya/callback',
       }
-    );
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
+        'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
+        'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN,
+      }
+    });
 
-    console.log('[CREATE-ORDER] Réponse PayDunya:', invoiceResponse.data);
+    const invoiceData = invoiceResponse.data;
+    console.log('[CREATE-ORDER] Réponse PayDunya:', invoiceData);
 
-    const paydunyaData = invoiceResponse.data;
-
-    if (paydunyaData.response_code !== '00') {
-      console.error('[CREATE-ORDER] Erreur PayDunya:', paydunyaData);
-      return res.status(400).json({ status: 'failed', message: paydunyaData.response_text || "Erreur PayDunya" });
+    if (invoiceData.response_code !== '00') {
+      console.error('[CREATE-ORDER] Erreur PayDunya:', invoiceData);
+      return res.status(400).json({ status: 'failed', message: invoiceData.response_text || "Erreur PayDunya" });
     }
 
     // 3. Mettre à jour la commande avec le token PayDunya
     await supabase
       .from('orders')
-      .update({ 
-        token: paydunyaData.token, 
-        qr_code: order_code 
-      })
+      .update({ token: invoiceData.token, qr_code: order_code })
       .eq('id', order.id);
 
+    console.log('[CREATE-ORDER] Token mis à jour pour commande', order.id);
+
     // 4. Retourner la réponse
-    res.json({ 
+    return res.json({ 
       status: 'success', 
-      redirect_url: paydunyaData.response_text, 
-      token: paydunyaData.token, 
-      receipt_url: paydunyaData.receipt_url,
-      order_id: order.id,
-      order_code: order_code
+      redirect_url: invoiceData.response_text, 
+      token: invoiceData.token, 
+      receipt_url: invoiceData.receipt_url,
+      order_id: order.id 
     });
 
   } catch (error) {
-    console.error('[CREATE-ORDER] Erreur:', error.response?.data || error.message);
-    res.status(500).json({ status: 'failed', message: error.message });
+    console.error('[CREATE-ORDER] Erreur:', error);
+    return res.status(500).json({ status: 'failed', message: error.message });
   }
 });
-
-// ==========================================
-
-// Utilisation de l'API PayDunya en production ou sandbox
-const PAYDUNYA_MODE = process.env.PAYDUNYA_MODE || 'prod';
-const PAYDUNYA_API_BASE = PAYDUNYA_MODE === 'sandbox'
-  ? 'https://app.paydunya.com/sandbox-api/v1'
-  : 'https://app.paydunya.com/api/v1';
-const PAYDUNYA_SOFTPAY_WAVE = PAYDUNYA_MODE === 'sandbox'
-  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/wave-senegal'
-  : 'https://app.paydunya.com/api/v1/softpay/wave-senegal';
-const PAYDUNYA_SOFTPAY_OM = PAYDUNYA_MODE === 'sandbox'
-  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/orange-money-senegal'
-  : 'https://app.paydunya.com/api/v1/softpay/orange-money-senegal';
-const PAYDUNYA_SOFTPAY_NEW_OM = PAYDUNYA_MODE === 'sandbox'
-  ? 'https://app.paydunya.com/sandbox-api/v1/softpay/new-orange-money-senegal'
-  : 'https://app.paydunya.com/api/v1/softpay/new-orange-money-senegal';
-
-console.log(`[PAYDUNYA] Mode utilisé: ${PAYDUNYA_MODE}`);
 
 // Fonction pour formater le numéro de téléphone pour Orange Money Sénégal
 // L'API PayDunya Orange Money attend le format local sénégalais (ex: 778676477)
