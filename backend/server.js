@@ -6,6 +6,9 @@ require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
 const { sendOTP, verifyOTP } = require('./direct7');
+const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
+const notificationService = require('./notification-service');
+const { supabase } = require('./supabase');
 
 const app = express();
 
@@ -37,6 +40,23 @@ app.get('/api/test', (req, res) => {
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Debug: IP publique sortante du serveur (utile pour whitelister Direct7)
+app.get('/api/debug/egress-ip', async (req, res) => {
+  try {
+    // ipify retourne l'IP publique vue depuis l'extérieur
+    const { data } = await axios.get('https://api64.ipify.org?format=json', { timeout: 8000 });
+    if (data && typeof data.ip === 'string') {
+      return res.json({ ip: data.ip });
+    }
+
+    const { data: data2 } = await axios.get('https://api.ipify.org?format=json', { timeout: 8000 });
+    return res.json({ ip: data2?.ip || null });
+  } catch (error) {
+    console.error('[DEBUG] Erreur récupération egress IP:', error?.message || error);
+    return res.status(500).json({ error: 'Impossible de récupérer l\'IP sortante.' });
+  }
 });
 
 // ==========================================
@@ -76,7 +96,23 @@ app.post('/api/otp/send', async (req, res) => {
     res.json({ success: true, message: 'Code envoyé', phone: formattedPhone });
   } catch (error) {
     console.error('[OTP] Erreur envoi:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const message = (error && error.message) ? String(error.message) : 'Erreur lors de l\'envoi du code';
+    // Erreurs du fournisseur SMS (Direct7)
+    if (message.includes('IP_NOT_WHITELISTED')) {
+      return res.status(502).json({
+        success: false,
+        error: "Service SMS indisponible: IP du serveur non autorisée (IP_NOT_WHITELISTED).",
+        code: 'IP_NOT_WHITELISTED'
+      });
+    }
+    if (message.includes('DIRECT7_API_KEY')) {
+      return res.status(500).json({
+        success: false,
+        error: 'Configuration SMS manquante côté serveur.',
+        code: 'SMS_CONFIG_MISSING'
+      });
+    }
+    res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -110,6 +146,324 @@ app.post('/api/otp/verify', async (req, res) => {
     }
   } catch (error) {
     console.error('[OTP] Erreur vérification:', error);
+    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ==========================================
+// ENDPOINTS SMS AUTH (création profil)
+// ==========================================
+
+// Créer un compte "virtuel" (Auth user + profile) pour la connexion SMS.
+// Objectif: avoir un id présent dans auth.users pour satisfaire la FK profiles.id -> users.id.
+app.post('/api/sms/register', async (req, res) => {
+  try {
+    const { full_name, phone, role, company_name, vehicle_info, pin } = req.body || {};
+
+    if (!full_name || !phone || !role || !pin) {
+      return res.status(400).json({ success: false, error: 'Champs requis manquants' });
+    }
+
+    // Formater le numéro (même logique que OTP)
+    let formattedPhone = String(phone).replace(/[\s\-\(\)]/g, '');
+    if (!formattedPhone.startsWith('+')) {
+      if (formattedPhone.startsWith('221')) {
+        formattedPhone = '+' + formattedPhone;
+      } else if (formattedPhone.startsWith('0')) {
+        formattedPhone = '+221' + formattedPhone.substring(1);
+      } else {
+        formattedPhone = '+221' + formattedPhone;
+      }
+    }
+    if (!formattedPhone.match(/^\+221[0-9]{9}$/)) {
+      return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
+    }
+
+    const safeRole = String(role);
+    if (!['buyer', 'vendor', 'delivery'].includes(safeRole)) {
+      return res.status(400).json({ success: false, error: 'Rôle invalide' });
+    }
+
+    // Empêcher doublons: si un profil existe déjà pour ce téléphone, retourner 409.
+    const { data: existing, error: existingError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('phone', formattedPhone)
+      .limit(1);
+
+    if (existingError) {
+      console.error('[SMS] Erreur recherche profil existant:', existingError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur (vérification profil)' });
+    }
+    if (existing && existing.length > 0) {
+      return res.status(409).json({ success: false, error: 'Un compte existe déjà pour ce numéro' });
+    }
+
+    // Créer un user Supabase Auth (admin) avec email "virtuel".
+    const virtualEmail = `${formattedPhone.replace('+', '')}@sms.validele.app`;
+    const randomPassword = `Sms#${Math.random().toString(36).slice(2)}${Date.now()}`;
+
+    const { data: created, error: createUserError } = await supabase.auth.admin.createUser({
+      email: virtualEmail,
+      password: randomPassword,
+      email_confirm: true,
+      user_metadata: {
+        full_name,
+        phone: formattedPhone,
+        role: safeRole,
+        auth_mode: 'sms'
+      }
+    });
+
+    if (createUserError || !created?.user?.id) {
+      console.error('[SMS] Erreur création user:', createUserError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur (création utilisateur)' });
+    }
+
+    const userId = created.user.id;
+
+    // Créer le profil (id = userId) pour satisfaire la FK
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert({
+        id: userId,
+        full_name,
+        phone: formattedPhone,
+        role: safeRole,
+        company_name: safeRole === 'vendor' ? (company_name || null) : null,
+        vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
+        pin_hash: pin
+      });
+
+    if (profileError) {
+      console.error('[SMS] Erreur création profile:', profileError);
+      // Best-effort cleanup: supprimer le user créé si le profil échoue
+      try {
+        await supabase.auth.admin.deleteUser(userId);
+      } catch (cleanupErr) {
+        console.error('[SMS] Erreur suppression user après échec profil:', cleanupErr);
+      }
+      return res.status(500).json({ success: false, error: 'Erreur lors de la création du profil' });
+    }
+
+    return res.json({
+      success: true,
+      profileId: userId,
+      phone: formattedPhone,
+      role: safeRole,
+      fullName: full_name
+    });
+  } catch (error) {
+    console.error('[SMS] Erreur register:', error);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// ==========================================
+// ENDPOINTS PUSH NOTIFICATIONS (FCM HTTP v1)
+// ==========================================
+
+// Envoyer une notification à un appareil
+app.post('/api/push/send', async (req, res) => {
+  try {
+    const { token, title, body, data } = req.body;
+
+    if (!token || !title || !body) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Token, title et body sont requis' 
+      });
+    }
+
+    console.log(`[PUSH] Envoi notification à: ${token.substring(0, 20)}...`);
+
+    const result = await sendPushNotification(token, title, body, data || {});
+
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('[PUSH] Erreur envoi:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Envoyer une notification à plusieurs appareils
+app.post('/api/push/send-multiple', async (req, res) => {
+  try {
+    const { tokens, title, body, data } = req.body;
+
+    if (!tokens || !Array.isArray(tokens) || tokens.length === 0 || !title || !body) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Tokens (array), title et body sont requis' 
+      });
+    }
+
+    console.log(`[PUSH] Envoi notification à ${tokens.length} appareils`);
+
+    const result = await sendPushToMultiple(tokens, title, body, data || {});
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[PUSH] Erreur envoi multiple:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Envoyer une notification à un topic
+app.post('/api/push/send-topic', async (req, res) => {
+  try {
+    const { topic, title, body, data } = req.body;
+
+    if (!topic || !title || !body) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Topic, title et body sont requis' 
+      });
+    }
+
+    console.log(`[PUSH] Envoi notification au topic: ${topic}`);
+
+    const result = await sendPushToTopic(topic, title, body, data || {});
+
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('[PUSH] Erreur envoi topic:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// ENDPOINTS NOTIFICATIONS AUTOMATIQUES
+// ==========================================
+
+// Notification de bienvenue (à appeler une seule fois côté app)
+app.post('/api/notify/welcome', async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ success: false, error: 'token requis' });
+    }
+
+    const result = await sendPushNotification(
+      token,
+      'Bienvenue sur Validèl!',
+      'Vous serez informé de vos commandes et livraisons en temps réel. Bonne expérience!',
+      { type: 'welcome', click_action: 'OPEN_HOME' }
+    );
+
+    res.json({ success: true, sent: true, result });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur welcome:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifier le vendeur d'une nouvelle commande
+app.post('/api/notify/new-order', async (req, res) => {
+  try {
+    const { vendorId, orderId, buyerName, productName, amount } = req.body;
+
+    if (!vendorId || !orderId) {
+      return res.status(400).json({ success: false, error: 'vendorId et orderId requis' });
+    }
+
+    const result = await notificationService.notifyVendorNewOrder(vendorId, {
+      orderId,
+      buyerName,
+      productName,
+      amount
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur new-order:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifier l'acheteur que sa commande est confirmée
+app.post('/api/notify/order-confirmed', async (req, res) => {
+  try {
+    const { buyerId, orderId, orderCode } = req.body;
+
+    if (!buyerId || !orderId) {
+      return res.status(400).json({ success: false, error: 'buyerId et orderId requis' });
+    }
+
+    const result = await notificationService.notifyBuyerOrderConfirmed(buyerId, {
+      orderId,
+      orderCode
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur order-confirmed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifier le livreur qu'une commande lui est assignée
+app.post('/api/notify/delivery-assigned', async (req, res) => {
+  try {
+    const { deliveryPersonId, orderId, deliveryAddress, productName } = req.body;
+
+    if (!deliveryPersonId || !orderId) {
+      return res.status(400).json({ success: false, error: 'deliveryPersonId et orderId requis' });
+    }
+
+    const result = await notificationService.notifyDeliveryPersonAssigned(deliveryPersonId, {
+      orderId,
+      deliveryAddress,
+      productName
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur delivery-assigned:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifier l'acheteur que la livraison est en cours
+app.post('/api/notify/delivery-started', async (req, res) => {
+  try {
+    const { buyerId, orderId, orderCode } = req.body;
+
+    if (!buyerId || !orderId) {
+      return res.status(400).json({ success: false, error: 'buyerId et orderId requis' });
+    }
+
+    const result = await notificationService.notifyBuyerDeliveryStarted(buyerId, {
+      orderId,
+      orderCode
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur delivery-started:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifier la fin de livraison (vendeur + acheteur)
+app.post('/api/notify/delivery-completed', async (req, res) => {
+  try {
+    const { vendorId, buyerId, orderId, orderCode } = req.body;
+
+    if (!vendorId || !buyerId || !orderId) {
+      return res.status(400).json({ success: false, error: 'vendorId, buyerId et orderId requis' });
+    }
+
+    const results = await notificationService.notifyDeliveryCompleted(vendorId, buyerId, {
+      orderId,
+      orderCode
+    });
+
+    res.json({ success: true, results });
+  } catch (error) {
+    console.error('[NOTIFY] Erreur delivery-completed:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
