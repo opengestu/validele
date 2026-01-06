@@ -18,6 +18,7 @@
     "@capacitor/app": "^8.0.0",
     "@capacitor/cli": "^8.0.0",
     "@capacitor/core": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
     "@capacitor/dialog": "^8.0.0",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-accordion": "^1.2.0",
@@ -75,7 +76,8 @@
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.3",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "googleapis": "^144.0.0"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
