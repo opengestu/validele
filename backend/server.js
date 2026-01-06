@@ -224,9 +224,10 @@ app.post('/api/sms/register', async (req, res) => {
     const userId = created.user.id;
 
     // Créer le profil (id = userId) pour satisfaire la FK
+    // Utiliser upsert pour éviter les erreurs de doublon
     const { error: profileError } = await supabase
       .from('profiles')
-      .insert({
+      .upsert({
         id: userId,
         full_name,
         phone: formattedPhone,
@@ -234,7 +235,7 @@ app.post('/api/sms/register', async (req, res) => {
         company_name: safeRole === 'vendor' ? (company_name || null) : null,
         vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
         pin_hash: pin
-      });
+      }, { onConflict: 'id' });
 
     if (profileError) {
       console.error('[SMS] Erreur création profile:', profileError);
