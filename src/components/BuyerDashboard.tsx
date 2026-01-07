@@ -996,7 +996,11 @@ const BuyerDashboard = () => {
                         <div key={order.id} className="order-card">
                           <div>
                             <b>{order.products?.name}</b> <span>{order.total_amount} FCFA</span>
-                            <span style={{ marginLeft: 8, color: '#888' }}>Statut: {getStatusTextFr(order.status ?? '')}</span>
+                            <span style={{ marginLeft: 8, color: '#888' }}>
+                              {order.payment_method === 'orange_money' && '🟠 '}
+                              {order.payment_method === 'wave' && '💙 '}
+                              Statut: {getStatusTextFr(order.status ?? '')}
+                            </span>
                           </div>
                           {/* Bouton pour voir le QR code */}
                           <div style={{ margin: '8px 0' }}>

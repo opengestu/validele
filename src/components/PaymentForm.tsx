@@ -68,9 +68,9 @@ export const PaymentForm = ({
           // Ouvrir le lien SMS automatiquement
           pixPayService.openPaymentLink(result.sms_link);
           
-          // Note: Le statut final sera reçu via webhook
-          // Pour l'instant, on considère que la demande a été initiée
-          onPaymentSuccess?.();
+          // Note: Ne PAS marquer comme payé ici !
+          // Le statut sera mis à jour automatiquement via le webhook PixPay
+          // quand le client validera le paiement sur son téléphone
         } else {
           throw new Error(result.error || result.message || 'Erreur paiement');
         }
@@ -163,9 +163,14 @@ export const PaymentForm = ({
           </div>
           
           {smsLink && (
-            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-              <p className="text-sm text-green-800 mb-2">
-                ✓ Lien de paiement envoyé !
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+              <p className="text-sm text-blue-900 font-semibold">
+                📱 Lien de paiement envoyé !
+              </p>
+              <p className="text-sm text-blue-800">
+                1. Consultez le lien qui s'est ouvert<br />
+                2. Validez le paiement sur votre téléphone<br />
+                3. Votre commande sera automatiquement mise à jour
               </p>
               <Button
                 type="button"
@@ -176,6 +181,9 @@ export const PaymentForm = ({
               >
                 Ouvrir à nouveau le lien
               </Button>
+              <p className="text-xs text-blue-600 text-center">
+                ⚠️ Ne fermez pas cette fenêtre avant de valider le paiement
+              </p>
             </div>
           )}
         </div>
