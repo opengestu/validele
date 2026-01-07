@@ -372,6 +372,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       transaction_id: result.transaction_id,
       provider_id: result.provider_id,
       message: result.message,
+      sms_link: result.sms_link,  // IMPORTANT: retourner le lien Wave
       amount: result.amount,
       fee: result.fee
     });

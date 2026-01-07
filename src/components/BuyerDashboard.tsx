@@ -438,21 +438,21 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Orange Money, utiliser le nouveau flow PixPay et ouvrir directement
+    // Si c'est Orange Money, demander le numéro Orange Money à l'utilisateur
     if (paymentMethod === 'orange_money') {
+      const orangePhone = prompt('Entrez votre numéro Orange Money (ex: 774254729):');
+      
+      if (!orangePhone || orangePhone.trim() === '') {
+        toast({
+          title: 'Numéro requis',
+          description: 'Vous devez entrer un numéro Orange Money pour continuer',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       try {
         setProcessingPayment(true);
-        
-        // Vérifier que le téléphone est configuré
-        if (!userProfile?.phone) {
-          toast({
-            title: 'Téléphone requis',
-            description: 'Veuillez configurer votre numéro de téléphone dans votre profil',
-            variant: 'destructive',
-          });
-          setProcessingPayment(false);
-          return;
-        }
         
         // Créer la commande d'abord
         const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
@@ -485,7 +485,7 @@ const BuyerDashboard = () => {
         // Initier le paiement Orange Money directement
         const orangeResult = await pixPayService.initiatePayment({
           amount: searchResult.price * purchaseQuantity,
-          phone: userProfile?.phone || '',
+          phone: orangePhone,
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
@@ -521,21 +521,21 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Wave, utiliser PixPay et ouvrir directement le lien
+    // Si c'est Wave, demander le numéro Wave à l'utilisateur
     if (paymentMethod === 'wave') {
+      const wavePhone = prompt('Entrez votre numéro Wave (ex: 774254729):');
+      
+      if (!wavePhone || wavePhone.trim() === '') {
+        toast({
+          title: 'Numéro requis',
+          description: 'Vous devez entrer un numéro Wave pour continuer',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       try {
         setProcessingPayment(true);
-        
-        // Vérifier que le téléphone est configuré
-        if (!userProfile?.phone) {
-          toast({
-            title: 'Téléphone requis',
-            description: 'Veuillez configurer votre numéro de téléphone dans votre profil',
-            variant: 'destructive',
-          });
-          setProcessingPayment(false);
-          return;
-        }
         
         // Créer la commande d'abord
         const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
@@ -568,13 +568,13 @@ const BuyerDashboard = () => {
         // Initier le paiement Wave directement
         console.log('[BuyerDashboard] Initiation paiement Wave avec:', {
           amount: searchResult.price * purchaseQuantity,
-          phone: userProfile?.phone,
+          phone: wavePhone,
           orderId: createdOrderId
         });
         
         const waveResult = await pixPayService.initiateWavePayment({
           amount: searchResult.price * purchaseQuantity,
-          phone: userProfile?.phone || '',
+          phone: wavePhone,
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
