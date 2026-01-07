@@ -62,7 +62,8 @@ async function initiatePayment(params) {
     amount,
     phone: formattedPhone,
     orderId,
-    service_id: PIXPAY_CONFIG.service_id_client_payment
+    service_id: PIXPAY_CONFIG.service_id_client_payment,
+    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`
   });
 
   try {

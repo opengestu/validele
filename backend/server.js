@@ -331,7 +331,9 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
   try {
     const ipnData = req.body;
 
-    console.log('[PIXPAY] IPN reçu:', JSON.stringify(ipnData, null, 2));
+    console.log('[PIXPAY-WEBHOOK] 🔔 IPN reçu à', new Date().toISOString());
+    console.log('[PIXPAY-WEBHOOK] Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('[PIXPAY-WEBHOOK] Body:', JSON.stringify(ipnData, null, 2));
 
     const {
       transaction_id,
@@ -344,15 +346,26 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       provider_id
     } = ipnData;
 
+    if (!transaction_id) {
+      console.error('[PIXPAY-WEBHOOK] ❌ Pas de transaction_id');
+      return res.status(400).json({ error: 'Missing transaction_id' });
+    }
+
+    if (!state) {
+      console.error('[PIXPAY-WEBHOOK] ❌ Pas de state');
+      return res.status(400).json({ error: 'Missing state' });
+    }
+
     // Parser custom_data
     let customData = {};
     try {
       customData = JSON.parse(custom_data || '{}');
     } catch (e) {
-      console.warn('[PIXPAY] custom_data non JSON:', custom_data);
+      console.warn('[PIXPAY-WEBHOOK] ⚠️ custom_data non JSON:', custom_data);
     }
 
     const orderId = customData.order_id;
+    console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state);
 
     // Mettre à jour la transaction dans Supabase
     if (transaction_id) {
@@ -377,26 +390,34 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       const { error: orderError } = await supabase
         .from('orders')
         .update({
-          payment_status: 'paid',
-          payment_method: 'orange_money',
-          payment_transaction_id: transaction_id
+          status: 'paid', // Utiliser 'status' pas 'payment_status'
+          payment_confirmed_at: new Date().toISOString()
         })
         .eq('id', orderId);
 
       if (orderError) {
         console.error('[PIXPAY] Erreur update order:', orderError);
       } else {
-        console.log('[PIXPAY] Commande', orderId, 'marquée comme payée');
+        console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée');
+        
+        // TODO: Envoyer notification push au vendeur
+        // TODO: Créer QR code pour la commande
       }
     }
 
     // Si échec, notifier
     if (state === 'FAILED' && orderId) {
-      console.error('[PIXPAY] Paiement échoué:', {
+      console.error('[PIXPAY] ❌ Paiement échoué:', {
         transaction_id,
         orderId,
         error
       });
+      
+      // Marquer la commande comme annulée
+      await supabase
+        .from('orders')
+        .update({ status: 'cancelled' })
+        .eq('id', orderId);
     }
 
     // Répondre à PixPay
