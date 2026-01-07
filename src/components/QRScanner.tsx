@@ -467,31 +467,39 @@ const QRScanner = () => {
           try {
             setIsPayoutInProgress(true);
             
+            console.log('[PAYOUT] Récupération infos vendeur, vendor_id:', validationResult.vendor_id);
+            
             // Récupérer les infos vendeur pour le payout
-            const { data: vendorData } = await supabase
+            const { data: vendorData, error: vendorError } = await supabase
               .from('profiles')
               .select('phone, wallet_type')
               .eq('id', validationResult.vendor_id)
               .single();
 
-            if (!vendorData?.phone) {
+            console.log('[PAYOUT] Données vendeur récupérées:', { vendorData, vendorError });
+
+            if (vendorError) {
+              throw new Error(`Erreur récupération vendeur: ${vendorError.message}`);
+            }
+
+            if (!vendorData) {
+              throw new Error('Vendeur non trouvé dans la base de données');
+            }
+
+            if (!vendorData.phone) {
               throw new Error('Numéro de téléphone vendeur manquant');
             }
 
-            if (!vendorData?.wallet_type) {
+            if (!vendorData.wallet_type) {
               throw new Error('Type de portefeuille vendeur non configuré (Wave ou Orange Money)');
             }
 
             // Calculer montant vendeur (95% du total)
             const montantVendeur = Math.round(validationResult.total_amount * 0.95);
 
-            // Déterminer le service_id selon wallet_type
-            const serviceId = vendorData.wallet_type === 'wave-senegal' ? 211 : 213;
-            
-            console.log('[PAYOUT] Envoi à:', {
+            console.log('[PAYOUT] Envoi paiement à:', {
               phone: vendorData.phone,
               amount: montantVendeur,
-              serviceId,
               walletType: vendorData.wallet_type
             });
 

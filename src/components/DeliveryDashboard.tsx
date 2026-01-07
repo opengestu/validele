@@ -93,7 +93,8 @@ const DeliveryDashboard = () => {
         .select(`
           *,
           products(name, code),
-          buyer_profile:profiles!orders_buyer_id_fkey(full_name)
+          buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone),
+          vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)
         `)
         .eq('status', 'paid')
         .is('delivery_person_id', null)
@@ -107,7 +108,8 @@ const DeliveryDashboard = () => {
         .select(`
           *,
           products(name, code),
-          buyer_profile:profiles!orders_buyer_id_fkey(full_name)
+          buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone),
+          vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)
         `)
         .eq('delivery_person_id', user.id)
         .in('status', ['assigned', 'in_delivery', 'delivered'])
@@ -220,8 +222,14 @@ const DeliveryDashboard = () => {
           </h3>
           <div className="space-y-1 text-sm text-gray-600">
             <p><span className="font-medium">Client :</span> {delivery.buyer_profile?.full_name || 'N/A'}</p>
+            {delivery.buyer_profile?.phone && (
+              <p className="text-xs text-gray-500">📞 {delivery.buyer_profile.phone}</p>
+            )}
+            <p><span className="font-medium">Vendeur :</span> {delivery.vendor_profile?.full_name || 'N/A'}</p>
+            {delivery.vendor_profile?.phone && (
+              <p className="text-xs text-gray-500">📞 {delivery.vendor_profile.phone}</p>
+            )}
             <p>Adresse : {delivery.delivery_address}</p>
-            <p>Téléphone : {delivery.buyer_phone}</p>
           </div>
           <div className="mt-3 text-lg font-bold text-green-600">
             {delivery.total_amount?.toLocaleString()} FCFA

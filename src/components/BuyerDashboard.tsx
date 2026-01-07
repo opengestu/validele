@@ -121,7 +121,8 @@ const BuyerDashboard = () => {
         .select(`
           *,
           products(name),
-          profiles!orders_vendor_id_fkey(full_name)
+          profiles!orders_vendor_id_fkey(full_name, phone),
+          delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
         `)
         .eq('buyer_id', user.id)
         .in('status', ['paid', 'in_delivery', 'delivered'])  // Seulement les commandes payées
@@ -1106,7 +1107,19 @@ const BuyerDashboard = () => {
                         <div key={order.id} className="order-card">
                           <div>
                             <b>{order.products?.name}</b> <span>{order.total_amount} FCFA</span>
-                            <span style={{ marginLeft: 8, color: '#888' }}>
+                            <div style={{ marginTop: 4 }}>
+                              <p style={{ fontSize: '0.85em', color: '#555' }}>
+                                <b>Vendeur:</b> {order.profiles?.full_name || 'N/A'}
+                                {order.profiles?.phone && <span style={{ marginLeft: 8 }}>📞 {order.profiles.phone}</span>}
+                              </p>
+                              {order.delivery_person && (
+                                <p style={{ fontSize: '0.85em', color: '#555' }}>
+                                  <b>Livreur:</b> {order.delivery_person.full_name}
+                                  {order.delivery_person.phone && <span style={{ marginLeft: 8 }}>📞 {order.delivery_person.phone}</span>}
+                                </p>
+                              )}
+                            </div>
+                            <span style={{ marginLeft: 0, marginTop: 4, display: 'block', color: '#888' }}>
                               {order.payment_method === 'orange_money' && '🟠 '}
                               {order.payment_method === 'wave' && '💙 '}
                               Statut: {getStatusTextFr(order.status ?? '')}

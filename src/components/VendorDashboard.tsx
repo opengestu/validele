@@ -181,7 +181,8 @@ const VendorDashboard = () => {
         .select(`
           *,
           products(name),
-          profiles!orders_buyer_id_fkey(full_name)
+          profiles!orders_buyer_id_fkey(full_name, phone),
+          delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
         `)
         .eq('vendor_id', user.id)
         .order('created_at', { ascending: false });
@@ -607,9 +608,20 @@ const VendorDashboard = () => {
                           Code commande : <span className="bg-blue-100 px-2 py-0.5 rounded">{order.order_code}</span>
                         </div>
                       )}
-                      <p className="text-sm text-gray-500">
-                        Client: {order.profiles?.full_name || 'Client'}
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Client:</span> {order.profiles?.full_name || 'Client'}
                       </p>
+                      {order.profiles?.phone && (
+                        <p className="text-sm text-gray-500">
+                          📞 {order.profiles.phone}
+                        </p>
+                      )}
+                      {order.delivery_person && (
+                        <p className="text-sm text-gray-600">
+                          <span className="font-medium">Livreur:</span> {order.delivery_person.full_name}
+                          {order.delivery_person.phone && ` - ${order.delivery_person.phone}`}
+                        </p>
+                      )}
                       <p className="text-sm text-gray-500">
                         {new Date(order.created_at).toLocaleDateString()}
                       </p>
@@ -912,11 +924,22 @@ const VendorDashboard = () => {
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start">
                           <div>
-                            <p className="font-medium">Commande #{order.id?.slice(-6)}</p>
+                            <p className="font-medium">{order.products?.name || `Commande #${order.id?.slice(-6)}`}</p>
                             {order.order_code && (
                               <div className="text-xs font-mono text-blue-700 mb-2">Code commande : <span className="bg-blue-100 px-2 py-0.5 rounded">{order.order_code}</span></div>
                             )}
-                            <p className="text-sm text-gray-600">Client</p>
+                            <p className="text-sm font-medium text-gray-600">Client: {order.profiles?.full_name || 'N/A'}</p>
+                            {order.profiles?.phone && (
+                              <p className="text-xs text-gray-500">📞 {order.profiles.phone}</p>
+                            )}
+                            {order.delivery_person && (
+                              <>
+                                <p className="text-sm font-medium text-gray-600 mt-1">Livreur: {order.delivery_person.full_name}</p>
+                                {order.delivery_person.phone && (
+                                  <p className="text-xs text-gray-500">📞 {order.delivery_person.phone}</p>
+                                )}
+                              </>
+                            )}
                             <p className="text-sm text-gray-500">{new Date(order.created_at || '').toLocaleDateString()}</p>
                           </div>
                           <div className="text-right">
