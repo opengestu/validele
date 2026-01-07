@@ -133,12 +133,13 @@ async function sendMoney(params) {
   const formattedPhone = phone.replace(/^\+/, '');
 
   // Déterminer le service_id selon le type de wallet
-  // Wave: 211 (OUT_WAVE_SN_DIRECT), Orange Money: 213 (OUT_ORANGE_MONEY_SN_DIRECT)
+  // Pour les payouts vendeur (CASHIN):
+  // Wave: 210 (IN_WAVE_SN), Orange Money: 214 (IN_ORANGE_MONEY_SN)
   let service_id;
   if (walletType === 'wave-senegal') {
-    service_id = PIXPAY_CONFIG.wave_service_id; // 211
+    service_id = 210; // Wave CASHIN
   } else if (walletType === 'orange-senegal') {
-    service_id = PIXPAY_CONFIG.service_id_client_payment; // 213
+    service_id = 214; // Orange Money CASHIN
   } else {
     throw new Error(`Type de wallet non supporté: ${walletType}. Utilisez 'wave-senegal' ou 'orange-senegal'`);
   }
@@ -166,7 +167,8 @@ async function sendMoney(params) {
     orderId,
     type,
     walletType,
-    service_id
+    service_id,
+    description: walletType === 'wave-senegal' ? 'Wave CASHIN (210)' : 'Orange Money CASHIN (214)'
   });
 
   try {
