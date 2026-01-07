@@ -9,6 +9,7 @@ const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
 const { supabase } = require('./supabase');
+const { initiatePayment: pixpayInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
 const app = express();
 
@@ -258,6 +259,208 @@ app.post('/api/sms/register', async (req, res) => {
   } catch (error) {
     console.error('[SMS] Erreur register:', error);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// ==========================================
+// ENDPOINTS PIXPAY (ORANGE MONEY)
+// ==========================================
+
+// Initier un paiement (collecte)
+app.post('/api/payment/pixpay/initiate', async (req, res) => {
+  try {
+    const { amount, phone, orderId, customData } = req.body;
+
+    if (!amount || !phone || !orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Paramètres manquants: amount, phone, orderId requis'
+      });
+    }
+
+    console.log('[PIXPAY] Initiation paiement:', { amount, phone, orderId });
+
+    const result = await pixpayInitiate({
+      amount,
+      phone,
+      orderId,
+      customData
+    });
+
+    // Sauvegarder la transaction dans Supabase
+    if (result.success && result.transaction_id) {
+      const { error: dbError } = await supabase
+        .from('payment_transactions')
+        .insert({
+          transaction_id: result.transaction_id,
+          provider: 'pixpay',
+          provider_transaction_id: result.provider_id,
+          order_id: orderId,
+          amount,
+          phone,
+          status: result.state || 'PENDING1',
+          raw_response: result.raw
+        });
+
+      if (dbError) {
+        console.error('[PIXPAY] Erreur sauvegarde DB:', dbError);
+      }
+    }
+
+    return res.json({
+      success: result.success,
+      transaction_id: result.transaction_id,
+      provider_id: result.provider_id,
+      message: result.message,
+      sms_link: result.sms_link,
+      amount: result.amount,
+      fee: result.fee
+    });
+
+  } catch (error) {
+    console.error('[PIXPAY] Erreur initiate:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors de l\'initiation du paiement'
+    });
+  }
+});
+
+// Webhook IPN PixPay
+app.post('/api/payment/pixpay-webhook', async (req, res) => {
+  try {
+    const ipnData = req.body;
+
+    console.log('[PIXPAY] IPN reçu:', JSON.stringify(ipnData, null, 2));
+
+    const {
+      transaction_id,
+      state,
+      response,
+      error,
+      custom_data,
+      amount,
+      destination,
+      provider_id
+    } = ipnData;
+
+    // Parser custom_data
+    let customData = {};
+    try {
+      customData = JSON.parse(custom_data || '{}');
+    } catch (e) {
+      console.warn('[PIXPAY] custom_data non JSON:', custom_data);
+    }
+
+    const orderId = customData.order_id;
+
+    // Mettre à jour la transaction dans Supabase
+    if (transaction_id) {
+      const { error: updateError } = await supabase
+        .from('payment_transactions')
+        .update({
+          status: state,
+          provider_response: response,
+          provider_error: error,
+          provider_transaction_id: provider_id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('transaction_id', transaction_id);
+
+      if (updateError) {
+        console.error('[PIXPAY] Erreur update DB:', updateError);
+      }
+    }
+
+    // Si paiement réussi, mettre à jour la commande
+    if (state === 'SUCCESS' && orderId) {
+      const { error: orderError } = await supabase
+        .from('orders')
+        .update({
+          payment_status: 'paid',
+          payment_method: 'orange_money',
+          payment_transaction_id: transaction_id
+        })
+        .eq('id', orderId);
+
+      if (orderError) {
+        console.error('[PIXPAY] Erreur update order:', orderError);
+      } else {
+        console.log('[PIXPAY] Commande', orderId, 'marquée comme payée');
+      }
+    }
+
+    // Si échec, notifier
+    if (state === 'FAILED' && orderId) {
+      console.error('[PIXPAY] Paiement échoué:', {
+        transaction_id,
+        orderId,
+        error
+      });
+    }
+
+    // Répondre à PixPay
+    return res.json({ success: true, received: true });
+
+  } catch (error) {
+    console.error('[PIXPAY] Erreur webhook:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Envoyer de l'argent (payout vendeur/livreur)
+app.post('/api/payment/pixpay/payout', async (req, res) => {
+  try {
+    const { amount, phone, orderId, type } = req.body;
+
+    if (!amount || !phone || !orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Paramètres manquants: amount, phone, orderId requis'
+      });
+    }
+
+    console.log('[PIXPAY] Payout:', { amount, phone, orderId, type });
+
+    const result = await pixpaySendMoney({
+      amount,
+      phone,
+      orderId,
+      type: type || 'payout'
+    });
+
+    // Sauvegarder dans DB
+    if (result.success && result.transaction_id) {
+      const { error: dbError } = await supabase
+        .from('payment_transactions')
+        .insert({
+          transaction_id: result.transaction_id,
+          provider: 'pixpay',
+          order_id: orderId,
+          amount,
+          phone,
+          status: result.state || 'PENDING1',
+          transaction_type: 'payout',
+          raw_response: result.raw
+        });
+
+      if (dbError) {
+        console.error('[PIXPAY] Erreur sauvegarde payout:', dbError);
+      }
+    }
+
+    return res.json({
+      success: result.success,
+      transaction_id: result.transaction_id,
+      message: result.message
+    });
+
+  } catch (error) {
+    console.error('[PIXPAY] Erreur payout:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors de l\'envoi d\'argent'
+    });
   }
 });
 

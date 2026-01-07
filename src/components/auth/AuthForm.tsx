@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { toFrenchErrorMessage } from '@/lib/errors';
 import PasswordInput from './PasswordInput';
 import RoleSpecificFields from './RoleSpecificFields';
 
@@ -45,9 +46,39 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     }
 
     setLoading(true);
-    console.log('Début inscription...');
+    console.log('Début inscription EMAIL...');
     
     try {
+      // Vérifier si l'email existe déjà AVANT de se déconnecter
+      const { data: existingUser, error: checkError } = await supabase
+        .from('profiles')
+        .select('id, email')
+        .eq('email', formData.email)
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Erreur vérification email:', checkError);
+      }
+
+      if (existingUser) {
+        toast({
+          title: "Email déjà utilisé",
+          description: "Ce compte existe déjà. Connectez-vous ou utilisez un autre email.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+      
+      // D'abord, déconnecter toute session existante (notamment SMS) pour éviter les conflits
+      const { data: session } = await supabase.auth.getSession();
+      if (session?.session) {
+        console.log('Déconnexion session existante pour inscription EMAIL');
+        await supabase.auth.signOut();
+        // Attendre que la déconnexion soit effective
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
       // Étape 1: Créer le compte utilisateur
       const { data, error } = await supabase.auth.signUp({
         email: formData.email,
@@ -55,13 +86,22 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
         options: {
           data: {
             full_name: formData.fullName,
-            role: formData.role, // Passer le rôle dans les métadonnées
+            role: formData.role,
+            auth_mode: 'email' // Différencier de 'sms'
           }
         }
       });
 
-      if (error) throw error;
-      console.log('Compte créé avec succès');
+      if (error) {
+        // Gérer spécifiquement le rate limit
+        if (error.status === 429) {
+          const match = error.message.match(/(\d+) seconds/);
+          const seconds = match ? match[1] : '60';
+          throw new Error(`Trop de tentatives. Réessayez dans ${seconds} secondes.`);
+        }
+        throw error;
+      }
+      console.log('Compte EMAIL créé avec succès');
 
       if (data.user) {
         // Étape 2: Attendre et mettre à jour le profil correctement
@@ -71,18 +111,24 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
           
           const { error: profileError } = await supabase
             .from('profiles')
-            .update({
+            .upsert({
+              id: data.user.id,
               full_name: formData.fullName,
+              email: formData.email,
               phone: formData.phone || null,
               role: formData.role,
               company_name: formData.role === 'vendor' ? formData.companyName || null : null,
               vehicle_info: formData.role === 'delivery' ? formData.vehicleInfo || null : null
-            })
-            .eq('id', data.user.id);
+            }, { onConflict: 'id' });
 
           if (profileError) {
             console.error('Erreur lors de la mise à jour du profil:', profileError);
-            throw profileError;
+            // Si erreur 409 (conflit), le profil existe déjà - on continue
+            if (profileError.code !== '23505') {
+              throw profileError;
+            } else {
+              console.log('Profil existant - mise à jour ignorée');
+            }
           }
           
           console.log('Profil mis à jour avec le rôle:', formData.role);
@@ -112,7 +158,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
       }
     } catch (error: unknown) {
       console.error('Erreur inscription:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erreur d\'inscription inconnue';
+      const errorMessage = toFrenchErrorMessage(error, "Erreur d'inscription inconnue");
       toast({
         title: "Erreur lors de l'inscription",
         description: errorMessage,
@@ -137,6 +183,9 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     console.log('Début connexion...');
     
     try {
+      // D'abord, déconnecter toute session existante (notamment SMS) pour éviter les conflits
+      await supabase.auth.signOut();
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
@@ -179,7 +228,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
       }
     } catch (error: unknown) {
       console.error('Erreur connexion:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erreur de connexion inconnue';
+      const errorMessage = toFrenchErrorMessage(error, 'Erreur de connexion inconnue');
       toast({
         title: "Erreur de connexion",
         description: errorMessage,
@@ -245,7 +294,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="buyer">Acheteur</SelectItem>
+                <SelectItem value="buyer">Client</SelectItem>
                 <SelectItem value="vendor">Vendeur</SelectItem>
                 <SelectItem value="delivery">Livreur</SelectItem>
               </SelectContent>
