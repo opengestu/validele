@@ -447,21 +447,28 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 
     // Si paiement réussi, mettre à jour la commande
     if (state === 'SUCCESS' && orderId) {
+      // Récupérer l'order_code de la commande
+      const { data: orderData } = await supabase
+        .from('orders')
+        .select('order_code')
+        .eq('id', orderId)
+        .single();
+
       const { error: orderError } = await supabase
         .from('orders')
         .update({
           status: 'paid', // Utiliser 'status' pas 'payment_status'
-          payment_confirmed_at: new Date().toISOString()
+          payment_confirmed_at: new Date().toISOString(),
+          qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
         })
         .eq('id', orderId);
 
       if (orderError) {
         console.error('[PIXPAY] Erreur update order:', orderError);
       } else {
-        console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée');
+        console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
         
         // TODO: Envoyer notification push au vendeur
-        // TODO: Créer QR code pour la commande
       }
     }
 
