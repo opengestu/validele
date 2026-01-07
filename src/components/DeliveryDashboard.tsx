@@ -110,7 +110,7 @@ const DeliveryDashboard = () => {
           buyer_profile:profiles!orders_buyer_id_fkey(full_name)
         `)
         .eq('delivery_person_id', user.id)
-        .in('status', ['in_delivery', 'delivered'])
+        .in('status', ['assigned', 'in_delivery', 'delivered'])
         .order('created_at', { ascending: false });
 
       if (error2) throw error2;
@@ -124,7 +124,7 @@ const DeliveryDashboard = () => {
     }
   };
 
-  const deliveriesInProgress = myDeliveries.filter(d => d.status === 'in_delivery');
+  const deliveriesInProgress = myDeliveries.filter(d => d.status === 'in_delivery' || d.status === 'assigned');
   const deliveriesCompleted = myDeliveries.filter(d => d.status === 'delivered');
   const inProgressDeliveries = deliveriesInProgress.length;
   const completedDeliveries = deliveriesCompleted.length;
@@ -194,6 +194,7 @@ const DeliveryDashboard = () => {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case 'assigned':
       case 'in_delivery':
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><Truck className="h-3 w-3 mr-1" />En cours</span>;
       case 'delivered':
