@@ -37,6 +37,14 @@ interface SoftPayResponse {
   message?: string;
 }
 
+interface CreateOrderResponse {
+  success: boolean;
+  id?: string;
+  order_id?: string;
+  order_code?: string;
+  message?: string;
+}
+
 const BuyerDashboard = () => {
   const { toast } = useToast();
   const { user, signOut } = useAuth();
@@ -434,7 +442,7 @@ const BuyerDashboard = () => {
         setProcessingPayment(true);
         
         // Créer la commande d'abord
-        const { res: response, data } = await fetchJsonWithTimeout<any>(
+        const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
           apiUrl('/api/orders'),
           {
             method: 'POST',

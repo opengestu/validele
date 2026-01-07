@@ -692,6 +692,67 @@ const PAYDUNYA_SOFTPAY_NEW_OM = PAYDUNYA_MODE === 'sandbox'
 console.log(`[PAYDUNYA] Mode utilisé: ${PAYDUNYA_MODE}`);
 
 // ==========================================
+// ENDPOINT CREATE ORDER (without PayDunya)
+// ==========================================
+
+// Créer une commande simple sans facture PayDunya (pour PixPay Orange Money)
+app.post('/api/orders', async (req, res) => {
+  try {
+    const { supabase } = require('./supabase');
+    const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address } = req.body;
+
+    console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
+
+    // Générer un order_code unique basé sur timestamp + random
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const order_code = `CMD${timestamp.slice(-4)}${random.slice(0, 2)}`;
+
+    // Créer la commande dans Supabase
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        buyer_id,
+        product_id,
+        vendor_id,
+        total_amount,
+        status: 'pending',
+        payment_method,
+        buyer_phone,
+        delivery_address,
+        order_code,
+      })
+      .select()
+      .single();
+
+    if (orderError || !order) {
+      console.error('[CREATE-ORDER-SIMPLE] Erreur création commande:', orderError);
+      return res.status(400).json({ 
+        success: false, 
+        message: orderError?.message || "Impossible de créer la commande" 
+      });
+    }
+
+    console.log('[CREATE-ORDER-SIMPLE] Commande créée:', order.id);
+
+    return res.json({ 
+      success: true, 
+      id: order.id, 
+      order_id: order.id,
+      order_code: order.order_code,
+      message: 'Commande créée avec succès'
+    });
+
+  } catch (error) {
+    console.error('[CREATE-ORDER-SIMPLE] Erreur inattendue:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Erreur serveur lors de la création de la commande' 
+    });
+  }
+});
+
+// ==========================================
 // ENDPOINT CREATE ORDER AND INVOICE
 // ==========================================
 
