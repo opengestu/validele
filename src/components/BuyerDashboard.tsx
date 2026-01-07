@@ -439,14 +439,12 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Orange Money, demander le numéro Orange Money à l'utilisateur
+    // Si c'est Orange Money, utiliser le numéro du profil
     if (paymentMethod === 'orange_money') {
-      const orangePhone = prompt('Entrez votre numéro Orange Money (ex: 774254729):');
-      
-      if (!orangePhone || orangePhone.trim() === '') {
+      if (!userProfile?.phone) {
         toast({
-          title: 'Numéro requis',
-          description: 'Vous devez entrer un numéro Orange Money pour continuer',
+          title: 'Numéro manquant',
+          description: 'Veuillez ajouter un numéro de téléphone dans votre profil',
           variant: 'destructive',
         });
         return;
@@ -486,7 +484,7 @@ const BuyerDashboard = () => {
         // Initier le paiement Orange Money directement
         const orangeResult = await pixPayService.initiatePayment({
           amount: searchResult.price * purchaseQuantity,
-          phone: orangePhone,
+          phone: userProfile.phone,
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
@@ -522,14 +520,12 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Wave, demander le numéro Wave à l'utilisateur
+    // Si c'est Wave, utiliser le numéro du profil
     if (paymentMethod === 'wave') {
-      const wavePhone = prompt('Entrez votre numéro Wave (ex: 774254729):');
-      
-      if (!wavePhone || wavePhone.trim() === '') {
+      if (!userProfile?.phone) {
         toast({
-          title: 'Numéro requis',
-          description: 'Vous devez entrer un numéro Wave pour continuer',
+          title: 'Numéro manquant',
+          description: 'Veuillez ajouter un numéro de téléphone dans votre profil',
           variant: 'destructive',
         });
         return;
@@ -569,13 +565,13 @@ const BuyerDashboard = () => {
         // Initier le paiement Wave directement
         console.log('[BuyerDashboard] Initiation paiement Wave avec:', {
           amount: searchResult.price * purchaseQuantity,
-          phone: wavePhone,
+          phone: userProfile.phone,
           orderId: createdOrderId
         });
         
         const waveResult = await pixPayService.initiateWavePayment({
           amount: searchResult.price * purchaseQuantity,
-          phone: wavePhone,
+          phone: userProfile.phone,
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
