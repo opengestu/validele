@@ -221,10 +221,13 @@ async function initiateWavePayment(params) {
     throw new Error('PIXPAY_WAVE_BUSINESS_NAME_ID non configuré');
   }
 
-  // Pour Wave, destination doit être vide selon la documentation
+  // Formater le numéro de téléphone (retirer le +)
+  const formattedPhone = phone ? phone.replace(/^\+/, '') : '';
+
+  // Pour Wave, destination = numéro du client qui paie
   const payload = {
     amount: parseInt(amount),
-    destination: '',  // Vide pour Wave SN
+    destination: formattedPhone,  // Numéro du client Wave
     api_key: PIXPAY_CONFIG.api_key,
     service_id: PIXPAY_CONFIG.wave_service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
@@ -234,13 +237,13 @@ async function initiateWavePayment(params) {
     custom_data: JSON.stringify({
       order_id: orderId,
       payment_method: 'wave',
-      phone: phone || '',  // Sauvegardé dans custom_data seulement
       ...customData
     })
   };
 
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,
+    destination: formattedPhone,
     orderId,
     service_id: PIXPAY_CONFIG.wave_service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
