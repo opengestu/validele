@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings } from 'lucide-react';
 import { PaymentForm } from '@/components/PaymentForm';
 import { PayDunyaService } from '@/services/paydunya';
+import { PixPayService } from '@/services/pixpay';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,6 +68,7 @@ const BuyerDashboard = () => {
   const [purchaseQuantity, setPurchaseQuantity] = useState(1);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [payDunyaService] = useState(new PayDunyaService());
+  const [pixPayService] = useState(new PixPayService());
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   // Ajout d'un état pour afficher le formulaire de paiement direct
   const [showDirectPaymentForm, setShowDirectPaymentForm] = useState(false);
@@ -436,7 +438,7 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Orange Money, utiliser le nouveau flow PixPay
+    // Si c'est Orange Money, utiliser le nouveau flow PixPay et ouvrir directement
     if (paymentMethod === 'orange_money') {
       try {
         setProcessingPayment(true);
@@ -469,29 +471,37 @@ const BuyerDashboard = () => {
           throw new Error('ID de commande non reçu du serveur');
         }
         
-        setOrderId(createdOrderId);
-        
-        // Initialiser currentOrder pour PaymentForm
-        setCurrentOrder({
-          id: createdOrderId,
-          buyer_id: user.id,
-          vendor_id: searchResult.vendor_id,
-          product_id: searchResult.id,
-          total_amount: searchResult.price * purchaseQuantity,
-          payment_method: 'orange_money',
-          delivery_address: 'Adresse à définir',
-          buyer_phone: userProfile?.phone || '',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+        // Initier le paiement Orange Money directement
+        const orangeResult = await pixPayService.initiatePayment({
+          amount: searchResult.price * purchaseQuantity,
+          phone: userProfile?.phone || '',
+          orderId: createdOrderId,
+          customData: {
+            description: `Achat ${searchResult.name}`,
+            storeName: searchResult.store_name || ''
+          }
         });
-        
-        setShowDirectPaymentForm(true);
+
+        if (orangeResult.success && orangeResult.sms_link) {
+          // Ouvrir directement le lien Orange Money
+          await pixPayService.openPaymentLink(orangeResult.sms_link);
+          
+          toast({
+            title: 'Paiement Orange Money',
+            description: 'Validez le paiement sur la page qui s\'est ouverte',
+          });
+          
+          // Retourner à la recherche
+          setSearchResult(null);
+        } else {
+          throw new Error(orangeResult.error || orangeResult.message || 'Erreur paiement Orange Money');
+        }
         
       } catch (error) {
         const err = error as Error;
         toast({
           title: 'Erreur',
-          description: err.message || 'Erreur lors de la création de la commande',
+          description: err.message || 'Erreur lors du paiement Orange Money',
           variant: 'destructive',
         });
       } finally {
@@ -500,7 +510,7 @@ const BuyerDashboard = () => {
       return;
     }
 
-    // Si c'est Wave, utiliser aussi PixPay
+    // Si c'est Wave, utiliser PixPay et ouvrir directement le lien
     if (paymentMethod === 'wave') {
       try {
         setProcessingPayment(true);
@@ -533,29 +543,37 @@ const BuyerDashboard = () => {
           throw new Error('ID de commande non reçu du serveur');
         }
         
-        setOrderId(createdOrderId);
-        
-        // Initialiser currentOrder pour PaymentForm
-        setCurrentOrder({
-          id: createdOrderId,
-          buyer_id: user.id,
-          vendor_id: searchResult.vendor_id,
-          product_id: searchResult.id,
-          total_amount: searchResult.price * purchaseQuantity,
-          payment_method: 'wave',
-          delivery_address: 'Adresse à définir',
-          buyer_phone: userProfile?.phone || '',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+        // Initier le paiement Wave directement
+        const waveResult = await pixPayService.initiateWavePayment({
+          amount: searchResult.price * purchaseQuantity,
+          phone: userProfile?.phone || '',
+          orderId: createdOrderId,
+          customData: {
+            description: `Achat ${searchResult.name}`,
+            storeName: searchResult.store_name || ''
+          }
         });
-        
-        setShowDirectPaymentForm(true);
+
+        if (waveResult.success && waveResult.sms_link) {
+          // Ouvrir directement le lien Wave
+          await pixPayService.openPaymentLink(waveResult.sms_link);
+          
+          toast({
+            title: 'Paiement Wave',
+            description: waveResult.message || 'Validez le paiement dans l\'application Wave',
+          });
+          
+          // Retourner à la recherche
+          setSearchResult(null);
+        } else {
+          throw new Error(waveResult.error || waveResult.message || 'Erreur paiement Wave');
+        }
         
       } catch (error) {
         const err = error as Error;
         toast({
           title: 'Erreur',
-          description: err.message || 'Erreur lors de la création de la commande',
+          description: err.message || 'Erreur lors du paiement Wave',
           variant: 'destructive',
         });
       } finally {

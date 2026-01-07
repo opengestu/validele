@@ -1,5 +1,7 @@
 // Service PixPay pour le frontend
 import { apiUrl } from '@/lib/api';
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 
 export interface PixPayInitiateRequest {
   amount: number;
@@ -106,10 +108,26 @@ export class PixPayService {
   }
 
   /**
-   * Ouvrir le lien SMS de paiement Orange Money
+   * Ouvrir le lien de paiement (Orange Money ou Wave)
    */
-  openPaymentLink(smsLink: string) {
-    if (smsLink) {
+  async openPaymentLink(smsLink: string) {
+    if (!smsLink) {
+      console.error('[PixPay] Aucun lien de paiement fourni');
+      return;
+    }
+
+    try {
+      // Sur mobile, utiliser l'API Browser de Capacitor
+      if (Capacitor.isNativePlatform()) {
+        await Browser.open({ url: smsLink });
+      } else {
+        // Sur web, utiliser window.open
+        window.open(smsLink, '_blank');
+      }
+      console.log('[PixPay] Lien de paiement ouvert:', smsLink);
+    } catch (error) {
+      console.error('[PixPay] Erreur ouverture lien:', error);
+      // Fallback: essayer window.open
       window.open(smsLink, '_blank');
     }
   }
