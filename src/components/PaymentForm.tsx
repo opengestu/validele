@@ -91,11 +91,13 @@ export const PaymentForm = ({
           }
         });
 
-        if (result.success) {
-          // Wave PixPay génère une validation via le système Wave
-          // Afficher le message retourné par PixPay
+        if (result.success && result.sms_link) {
+          setSmsLink(result.sms_link);
+          // Ouvrir le lien Wave automatiquement
+          pixPayService.openPaymentLink(result.sms_link);
+          
+          // Afficher le message de confirmation
           setWaveMessage(result.message || 'Paiement Wave initié. Validez sur votre téléphone.');
-          setSmsLink('validated'); // Marqueur pour afficher le message
         } else {
           throw new Error(result.error || result.message || 'Erreur paiement Wave');
         }

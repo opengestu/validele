@@ -1,49 +1,56 @@
-// Test PixPay (Wave SN) - Crédit téléphonique
+// Test PixPay Wave - Paiement client
 const axios = require('axios');
+require('dotenv').config();
 
 // ========================================
-// CONFIGURATION - À REMPLIR
+// CONFIGURATION
 // ========================================
 const CONFIG = {
   // Environnement
-  mode: 'production', // 'sandbox' ou 'production'
+  mode: 'production',
   
   // URLs
-  sandbox_url: 'https://standbox-api.pixelinnov.net/api_v1/transaction/airtime',
   production_url: 'https://proxy-coreapi.pixelinnov.net/api_v1/transaction/airtime',
   
-  // Credentials (fournis par PixPay)
-  api_key: 'PIX_bc95d417-096c-4a0a-a35e-b325bbe292cc', // À remplacer
-  service_id: 214, // 1=Orange Money (vérifie dans ta doc PixPay)
-  business_name_id: 'TON_BUSINESS_ID', // ← REMPLACE SI TU L'AS REÇU
+  // Credentials Wave
+  api_key: process.env.PIXPAY_API_KEY || 'PIX_bc95d417-096c-4a0a-a35e-b325bbe292cc',
+  service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '211'),
+  business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || 'am-22822bk801d0t',
   
-  // URLs de callback (pour tester, utilise webhook.site)
-  ipn_url: 'https://webhook.site/7e3c52bb-0fed-453f-8b93-61172dedd4b5', // https://webhook.site pour tester
+  // URLs de callback
+  ipn_url: 'https://validele.onrender.com/api/payment/pixpay-webhook',
+  redirect_url: 'https://validele.onrender.com/payment-success',
+  redirect_error_url: 'https://validele.onrender.com/payment-error',
 };
 
 // ========================================
-// FONCTION DE TEST
+// FONCTION DE TEST WAVE
 // ========================================
-async function testPixPayAirtime(amount, destination, customData = null) {
-  const url = CONFIG.mode === 'sandbox' ? CONFIG.sandbox_url : CONFIG.production_url;
+async function testPixPayWave(amount, destination, orderId = null) {
+  const url = CONFIG.production_url;
   
   const payload = {
-    amount: parseInt(amount), // Montant en FCFA
-    destination: String(destination), // Numéro du bénéficiaire
+    amount: parseInt(amount),
+    destination: String(destination),
     api_key: CONFIG.api_key,
-    ipn_url: CONFIG.ipn_url,
     service_id: CONFIG.service_id,
-    custom_data: customData || `test_${Date.now()}`
+    business_name_id: CONFIG.business_name_id,
+    ipn_url: CONFIG.ipn_url,
+    redirect_url: CONFIG.redirect_url,
+    redirect_error_url: CONFIG.redirect_error_url,
+    custom_data: JSON.stringify({
+      order_id: orderId || `TEST_${Date.now()}`,
+      payment_method: 'wave',
+      test: true
+    })
   };
-  
-  // Ajouter business_name_id si fourni
-  if (CONFIG.business_name_id) {
-    payload.business_name_id = CONFIG.business_name_id;
-  }
 
-  console.log('\n🔵 [PIXPAY TEST] Environnement:', CONFIG.mode.toUpperCase());
-  console.log('🔵 [PIXPAY TEST] URL:', url);
-  console.log('🔵 [PIXPAY TEST] Payload:', JSON.stringify(payload, null, 2));
+  console.log('\n🔵 [PIXPAY WAVE TEST] Configuration:');
+  console.log('   - Service ID:', CONFIG.service_id);
+  console.log('   - Business Name ID:', CONFIG.business_name_id);
+  console.log('   - IPN URL:', CONFIG.ipn_url);
+  console.log('\n🔵 [PIXPAY WAVE TEST] Payload:');
+  console.log(JSON.stringify(payload, null, 2));
   console.log('\n⏳ Envoi de la requête...\n');
 
   try {
@@ -51,10 +58,10 @@ async function testPixPayAirtime(amount, destination, customData = null) {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 30000 // 30 secondes
+      timeout: 30000
     });
 
-    console.log('✅ [PIXPAY] Réponse reçue:');
+    console.log('✅ [PIXPAY WAVE] Réponse reçue:');
     console.log(JSON.stringify(response.data, null, 2));
     console.log('\n📊 Détails de la transaction:');
     console.log('   - Transaction ID:', response.data.data?.transaction_id);
@@ -62,18 +69,17 @@ async function testPixPayAirtime(amount, destination, customData = null) {
     console.log('   - Montant:', response.data.data?.amount, 'FCFA');
     console.log('   - Destination:', response.data.data?.destination);
     console.log('   - Message:', response.data.message);
-    console.log('\n💡 Vérifiez votre IPN URL pour le statut final:', CONFIG.ipn_url);
+    console.log('\n💡 Vérifiez le webhook pour le statut final');
     
     return response.data;
 
   } catch (error) {
-    console.error('\n❌ [PIXPAY] Erreur:');
+    console.error('\n❌ [PIXPAY WAVE] Erreur:');
     if (error.response) {
       console.error('   - Status:', error.response.status);
       console.error('   - Data:', JSON.stringify(error.response.data, null, 2));
     } else if (error.request) {
       console.error('   - Pas de réponse du serveur');
-      console.error('   - Request:', error.request);
     } else {
       console.error('   - Message:', error.message);
     }
@@ -82,57 +88,43 @@ async function testPixPayAirtime(amount, destination, customData = null) {
 }
 
 // ========================================
-// EXEMPLES D'UTILISATION
+// TEST WAVE
 // ========================================
-
-// Test 1 : Crédit de 1000 FCFA
-async function test1() {
-  console.log('\n� TEST 1: Crédit de 1000 FCFA');
-  await testPixPayAirtime(400, '777804136', 'test_400_fcfa');
-}
-
-// Test 2 : Crédit de 500 FCFA
-async function test2() {
-  console.log('\n� TEST 2: Crédit de 500 FCFA');
-  await testPixPayAirtime(500, '777804136', 'test_500_fcfa');
+async function testWavePayment() {
+  console.log('\n💙 TEST: Paiement Wave de 200 FCFA');
+  await testPixPayWave(200, '774254729', 'TEST_ORDER_001');
 }
 
 // ========================================
-// LANCER LES TESTS
+// LANCER LE TEST
 // ========================================
-
 async function runTests() {
   console.log('═══════════════════════════════════════════');
-  console.log('  TEST PIXPAY (WAVE SN) - CRÉDIT TÉLÉPHONE');
+  console.log('  TEST PIXPAY WAVE - PAIEMENT CLIENT');
   console.log('═══════════════════════════════════════════');
   
   // Vérification de la configuration
-  if (CONFIG.api_key === 'VOTRE_CLE_API') {
-    console.error('\n❌ ERREUR: Vous devez configurer votre API_KEY dans le fichier');
-    console.log('\n📝 Étapes pour tester:');
-    console.log('   1. Obtenez vos credentials de PixPay (api_key, service_id)');
-    console.log('   2. Modifiez CONFIG.api_key et CONFIG.service_id dans le fichier');
-    console.log('   3. Créez une URL IPN de test sur https://webhook.site');
-    console.log('   4. Collez l\'URL dans CONFIG.ipn_url');
-    console.log('   5. Relancez: node test-pixpay.js\n');
-    return;
+  if (!CONFIG.business_name_id || CONFIG.business_name_id === 'am-22822bk801d0t') {
+    console.log('\n✅ Configuration Wave détectée');
   }
 
   try {
-    // Décommentez les tests que vous voulez exécuter
-    await test1();
-    // await test2();
+    await testWavePayment();
     
-    console.log('\n✅ Tests terminés avec succès');
+    console.log('\n✅ Test terminé avec succès');
+    console.log('\n📱 Prochaines étapes:');
+    console.log('   1. Vérifiez votre téléphone Wave pour valider le paiement');
+    console.log('   2. Surveillez les logs Render pour le webhook IPN');
+    console.log('   3. Le paiement expire dans 15 minutes');
   } catch (error) {
-    console.error('\n❌ Les tests ont échoué');
+    console.error('\n❌ Le test a échoué');
   }
 }
 
-// Si exécuté directement (node test-pixpay.js)
+// Si exécuté directement
 if (require.main === module) {
   runTests();
 }
 
-// Export pour utilisation dans d'autres modules
-module.exports = { testPixPayAirtime, CONFIG };
+// Export
+module.exports = { testPixPayWave, CONFIG };

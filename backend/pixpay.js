@@ -13,7 +13,7 @@ const PIXPAY_CONFIG = {
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
   // Configuration Wave PixPay
-  wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '1'),
+  wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '211'),
   wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || '',
   wave_redirect_url: process.env.PIXPAY_WAVE_REDIRECT_URL || 'https://validele.onrender.com/payment-success',
   wave_redirect_error_url: process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || 'https://validele.onrender.com/payment-error'
@@ -222,7 +222,7 @@ async function initiateWavePayment(params) {
   }
 
   // Formater le numéro de téléphone (retirer le +)
-  const formattedPhone = phone.replace(/^\+/, '');
+  const formattedPhone = phone ? phone.replace(/^\+/, '') : '';
 
   const payload = {
     amount: parseInt(amount),
@@ -271,6 +271,7 @@ async function initiateWavePayment(params) {
       provider_id: response.data.data?.provider_id,
       state: response.data.data?.state,
       message: response.data.message,
+      sms_link: response.data.data?.sms_link,
       amount: response.data.data?.amount,
       fee: response.data.data?.fee,
       raw: response.data
