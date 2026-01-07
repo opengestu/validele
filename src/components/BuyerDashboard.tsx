@@ -443,6 +443,17 @@ const BuyerDashboard = () => {
       try {
         setProcessingPayment(true);
         
+        // Vérifier que le téléphone est configuré
+        if (!userProfile?.phone) {
+          toast({
+            title: 'Téléphone requis',
+            description: 'Veuillez configurer votre numéro de téléphone dans votre profil',
+            variant: 'destructive',
+          });
+          setProcessingPayment(false);
+          return;
+        }
+        
         // Créer la commande d'abord
         const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
           apiUrl('/api/orders'),
@@ -514,6 +525,17 @@ const BuyerDashboard = () => {
     if (paymentMethod === 'wave') {
       try {
         setProcessingPayment(true);
+        
+        // Vérifier que le téléphone est configuré
+        if (!userProfile?.phone) {
+          toast({
+            title: 'Téléphone requis',
+            description: 'Veuillez configurer votre numéro de téléphone dans votre profil',
+            variant: 'destructive',
+          });
+          setProcessingPayment(false);
+          return;
+        }
         
         // Créer la commande d'abord
         const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
