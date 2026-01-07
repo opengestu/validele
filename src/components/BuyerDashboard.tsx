@@ -124,6 +124,7 @@ const BuyerDashboard = () => {
           profiles!orders_vendor_id_fkey(full_name)
         `)
         .eq('buyer_id', user.id)
+        .in('status', ['paid', 'in_delivery', 'delivered'])  // Seulement les commandes payées
         .order('created_at', { ascending: false })
         .limit(50); // Limite augmentée pour debug
 
