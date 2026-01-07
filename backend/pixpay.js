@@ -5,17 +5,19 @@ const axios = require('axios');
 const PIXPAY_CONFIG = {
   api_key: process.env.PIXPAY_API_KEY || '',
   business_name_id: process.env.PIXPAY_BUSINESS_ID || '',
-  // Deux service_id différents selon le sens du paiement
-  service_id_cashin: parseInt(process.env.PIXPAY_SERVICE_ID_CASHIN || '214'), // Collecter (clients paient)
-  service_id_cashout: parseInt(process.env.PIXPAY_SERVICE_ID_CASHOUT || '213'), // Envoyer (payer vendeurs/livreurs)
+  // Logique PixPay:
+  // CASHOUT (213) = Client paie → argent entre dans notre compte PixPay
+  // CASHIN (214) = On paie vendeur/livreur → argent sort de notre compte PixPay
+  service_id_client_payment: parseInt(process.env.PIXPAY_SERVICE_ID_CLIENT_PAYMENT || '213'),
+  service_id_vendor_payout: parseInt(process.env.PIXPAY_SERVICE_ID_VENDOR_PAYOUT || '214'),
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'
 };
 
 console.log('[PIXPAY] Configuration chargée:', {
   api_key: PIXPAY_CONFIG.api_key ? '***' + PIXPAY_CONFIG.api_key.slice(-8) : 'NON DÉFINI',
-  service_id_cashin: PIXPAY_CONFIG.service_id_cashin,
-  service_id_cashout: PIXPAY_CONFIG.service_id_cashout,
+  service_id_client_payment: PIXPAY_CONFIG.service_id_client_payment,
+  service_id_vendor_payout: PIXPAY_CONFIG.service_id_vendor_payout,
   base_url: PIXPAY_CONFIG.base_url,
   ipn_base_url: PIXPAY_CONFIG.ipn_base_url
 });
@@ -43,7 +45,7 @@ async function initiatePayment(params) {
     amount: parseInt(amount),
     destination: formattedPhone,
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: PIXPAY_CONFIG.service_id_cashin, // CASHIN = collecter de l'argent du client
+    service_id: PIXPAY_CONFIG.service_id_client_payment, // CASHOUT (213) = client paie → argent entre chez nous
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
       order_id: orderId,
@@ -56,11 +58,11 @@ async function initiatePayment(params) {
     payload.business_name_id = PIXPAY_CONFIG.business_name_id;
   }
 
-  console.log('[PIXPAY] Initiation paiement (CASHIN - collecter):', {
+  console.log('[PIXPAY] Initiation paiement client (CASHOUT 213):', {
     amount,
     phone: formattedPhone,
     orderId,
-    service_id: PIXPAY_CONFIG.service_id_cashin
+    service_id: PIXPAY_CONFIG.service_id_client_payment
   });
 
   try {
@@ -125,7 +127,7 @@ async function sendMoney(params) {
     amount: parseInt(amount),
     destination: formattedPhone,
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: PIXPAY_CONFIG.service_id_cashout, // CASHOUT = envoyer de l'argent (payer vendeur/livreur)
+    service_id: PIXPAY_CONFIG.service_id_vendor_payout, // CASHIN (214) = on paie vendeur → argent sort de chez nous
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
       order_id: orderId,
@@ -137,12 +139,12 @@ async function sendMoney(params) {
     payload.business_name_id = PIXPAY_CONFIG.business_name_id;
   }
 
-  console.log('[PIXPAY] Envoi argent (CASHOUT - envoyer):', {
+  console.log('[PIXPAY] Paiement vendeur/livreur (CASHIN 214):', {
     amount,
     phone: formattedPhone,
     orderId,
     type,
-    service_id: PIXPAY_CONFIG.service_id_cashout
+    service_id: PIXPAY_CONFIG.service_id_vendor_payout
   });
 
   try {
