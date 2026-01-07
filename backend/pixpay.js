@@ -11,25 +11,33 @@ const PIXPAY_CONFIG = {
   service_id_client_payment: parseInt(process.env.PIXPAY_SERVICE_ID_CLIENT_PAYMENT || '213'),
   service_id_vendor_payout: parseInt(process.env.PIXPAY_SERVICE_ID_VENDOR_PAYOUT || '214'),
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
-  ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'
+  ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
+  // Configuration Wave PixPay
+  wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '1'),
+  wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || '',
+  wave_redirect_url: process.env.PIXPAY_WAVE_REDIRECT_URL || 'https://validele.onrender.com/payment-success',
+  wave_redirect_error_url: process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || 'https://validele.onrender.com/payment-error'
 };
 
 console.log('[PIXPAY] Configuration chargée:', {
   api_key: PIXPAY_CONFIG.api_key ? '***' + PIXPAY_CONFIG.api_key.slice(-8) : 'NON DÉFINI',
   service_id_client_payment: PIXPAY_CONFIG.service_id_client_payment,
   service_id_vendor_payout: PIXPAY_CONFIG.service_id_vendor_payout,
+  wave_service_id: PIXPAY_CONFIG.wave_service_id,
+  wave_business_name_id: PIXPAY_CONFIG.wave_business_name_id ? '***' : 'NON DÉFINI',
   base_url: PIXPAY_CONFIG.base_url,
   ipn_base_url: PIXPAY_CONFIG.ipn_base_url
 });
 
 /**
- * Initier un paiement (collecte) - Le client paie depuis son téléphone
+ * Initier un paiement (collecte) - Le client paie via un lien web
+ * Note: PixPay génère un lien web (pas un vrai SMS) que le client ouvre pour payer
  * @param {Object} params
  * @param {number} params.amount - Montant en FCFA
  * @param {string} params.phone - Numéro du payeur (format: 221XXXXXXXXX)
  * @param {string} params.orderId - ID de la commande
  * @param {Object} params.customData - Données additionnelles (optionnel)
- * @returns {Promise<Object>} Réponse PixPay
+ * @returns {Promise<Object>} Réponse PixPay avec sms_link (lien web)
  */
 async function initiatePayment(params) {
   const { amount, phone, orderId, customData = {} } = params;
@@ -193,8 +201,99 @@ async function checkTransactionStatus(transactionId) {
   };
 }
 
+/**
+ * Initier un paiement Wave via PixPay
+ * @param {Object} params
+ * @param {number} params.amount - Montant en FCFA
+ * @param {string} params.phone - Numéro du payeur (format: 221XXXXXXXXX)
+ * @param {string} params.orderId - ID de la commande
+ * @param {Object} params.customData - Données additionnelles (optionnel)
+ * @returns {Promise<Object>} Réponse PixPay avec redirection
+ */
+async function initiateWavePayment(params) {
+  const { amount, phone, orderId, customData = {} } = params;
+
+  if (!PIXPAY_CONFIG.api_key) {
+    throw new Error('PIXPAY_API_KEY non configurée');
+  }
+
+  if (!PIXPAY_CONFIG.wave_business_name_id) {
+    throw new Error('PIXPAY_WAVE_BUSINESS_NAME_ID non configuré');
+  }
+
+  // Formater le numéro de téléphone (retirer le +)
+  const formattedPhone = phone.replace(/^\+/, '');
+
+  const payload = {
+    amount: parseInt(amount),
+    destination: formattedPhone,
+    api_key: PIXPAY_CONFIG.api_key,
+    service_id: PIXPAY_CONFIG.wave_service_id,
+    business_name_id: PIXPAY_CONFIG.wave_business_name_id,
+    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
+    redirect_url: PIXPAY_CONFIG.wave_redirect_url,
+    redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url,
+    custom_data: JSON.stringify({
+      order_id: orderId,
+      payment_method: 'wave',
+      ...customData
+    })
+  };
+
+  console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
+    amount,
+    phone: formattedPhone,
+    orderId,
+    service_id: PIXPAY_CONFIG.wave_service_id,
+    business_name_id: PIXPAY_CONFIG.wave_business_name_id,
+    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`
+  });
+
+  try {
+    const response = await axios.post(
+      `${PIXPAY_CONFIG.base_url}/transaction/airtime`,
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+      }
+    );
+
+    console.log('[PIXPAY-WAVE] Réponse:', {
+      transaction_id: response.data.data?.transaction_id,
+      state: response.data.data?.state,
+      message: response.data.message
+    });
+
+    return {
+      success: response.data.statut_code === 200,
+      transaction_id: response.data.data?.transaction_id,
+      provider_id: response.data.data?.provider_id,
+      state: response.data.data?.state,
+      message: response.data.message,
+      amount: response.data.data?.amount,
+      fee: response.data.data?.fee,
+      raw: response.data
+    };
+  } catch (error) {
+    console.error('[PIXPAY-WAVE] Erreur:', {
+      status: error.response?.status,
+      message: error.response?.data?.message || error.message,
+      data: error.response?.data
+    });
+
+    throw {
+      success: false,
+      message: error.response?.data?.message || error.message,
+      status: error.response?.status,
+      raw: error.response?.data
+    };
+  }
+}
+
 module.exports = {
   initiatePayment,
+  initiateWavePayment,
   sendMoney,
   checkTransactionStatus,
   PIXPAY_CONFIG

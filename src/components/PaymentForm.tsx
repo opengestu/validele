@@ -33,7 +33,7 @@ export const PaymentForm = ({
 }: PaymentFormProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'paydunya' | 'pixpay'>('pixpay');
+  const [paymentMethod, setPaymentMethod] = useState<'orange_money' | 'wave' | 'paydunya'>('orange_money');
   const [phone, setPhone] = useState(buyerPhone || '');
   const [smsLink, setSmsLink] = useState<string | null>(null);
   
@@ -47,7 +47,7 @@ export const PaymentForm = ({
     setSmsLink(null);
 
     try {
-      if (paymentMethod === 'pixpay') {
+      if (paymentMethod === 'orange_money') {
         // Paiement Orange Money via PixPay
         if (!phone) {
           throw new Error('Numéro de téléphone requis');
@@ -58,53 +58,48 @@ export const PaymentForm = ({
           phone,
           orderId: orderId || `ORDER_${Date.now()}`,
           customData: {
-            description,
-            storeName
+            description: description || '',
+            storeName: storeName || ''
           }
         });
 
         if (result.success && result.sms_link) {
           setSmsLink(result.sms_link);
-          // Ouvrir le lien SMS automatiquement
+          // Ouvrir le lien automatiquement
           pixPayService.openPaymentLink(result.sms_link);
           
           // Note: Ne PAS marquer comme payé ici !
           // Le statut sera mis à jour automatiquement via le webhook PixPay
-          // quand le client validera le paiement sur son téléphone
         } else {
-          throw new Error(result.error || result.message || 'Erreur paiement');
+          throw new Error(result.error || result.message || 'Erreur paiement Orange Money');
         }
         
-      } else {
-        // Paiement PayDunya (existant)
-        if (paydunya) {
-          // Mode direct payment (sandbox)
-          const formData = new FormData(e.currentTarget as HTMLFormElement);
-          const phone = formData.get('phone') as string;
-          const password = formData.get('password') as string;
-          const email = formData.get('email') as string;
-          
-          await paydunya.onDirectPayment(phone, password, email);
-          onPaymentSuccess?.();
-        } else {
-          // Mode redirection (production)
-          const paymentData = {
-            amount,
-            description: description || 'Paiement',
-            storeName: storeName || 'Validel'
-          };
+      } else if (paymentMethod === 'wave') {
+        // Paiement Wave via PixPay
+        if (!phone) {
+          throw new Error('Numéro de téléphone requis');
+        }
 
-          const invoiceResponse = await payDunyaService.createPayment(paymentData);
-
-          if (invoiceResponse.status === 'success' && invoiceResponse.redirect_url) {
-            window.location.href = invoiceResponse.redirect_url;
-          } else {
-            throw new Error(invoiceResponse.message || 'Erreur création paiement');
+        const result = await pixPayService.initiateWavePayment({
+          amount,
+          phone,
+          orderId: orderId || `ORDER_${Date.now()}`,
+          customData: {
+            description: description || '',
+            storeName: storeName || ''
           }
+        });
+
+        if (result.success) {
+          // Wave PixPay génère une validation via le système Wave
+          // Le webhook mettra à jour le statut automatiquement
+          setSmsLink('validated'); // Marqueur pour afficher le message de succès
+        } else {
+          throw new Error(result.error || result.message || 'Erreur paiement Wave');
         }
       }
-    } catch (err: any) {
-      const errorMsg = err.message || 'Erreur lors du paiement';
+    } catch (err) {
+      const errorMsg = (err as Error).message || 'Erreur lors du paiement';
       setError(errorMsg);
       onPaymentError?.(errorMsg);
     } finally {
@@ -126,29 +121,29 @@ export const PaymentForm = ({
       {/* Choix du mode de paiement */}
       <div className="space-y-3">
         <Label>Mode de paiement</Label>
-        <RadioGroup value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'paydunya' | 'pixpay')}>
+        <RadioGroup value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as 'orange_money' | 'wave' | 'paydunya')}>
           <div className="flex items-center space-x-2 border rounded-lg p-3 cursor-pointer hover:bg-gray-50">
-            <RadioGroupItem value="pixpay" id="pixpay" />
-            <Label htmlFor="pixpay" className="flex items-center gap-2 cursor-pointer flex-1">
+            <RadioGroupItem value="orange_money" id="orange_money" />
+            <Label htmlFor="orange_money" className="flex items-center gap-2 cursor-pointer flex-1">
               <Smartphone className="h-5 w-5 text-orange-600" />
-              <span>Orange Money (PixPay)</span>
+              <span>🟠 Orange Money</span>
             </Label>
           </div>
           <div className="flex items-center space-x-2 border rounded-lg p-3 cursor-pointer hover:bg-gray-50">
-            <RadioGroupItem value="paydunya" id="paydunya" />
-            <Label htmlFor="paydunya" className="flex items-center gap-2 cursor-pointer flex-1">
-              <CreditCard className="h-5 w-5 text-blue-600" />
-              <span>PayDunya (Carte/Mobile Money)</span>
+            <RadioGroupItem value="wave" id="wave" />
+            <Label htmlFor="wave" className="flex items-center gap-2 cursor-pointer flex-1">
+              <Smartphone className="h-5 w-5 text-blue-600" />
+              <span>💙 Wave</span>
             </Label>
           </div>
         </RadioGroup>
       </div>
 
-      {/* Formulaire Orange Money */}
-      {paymentMethod === 'pixpay' && (
+      {/* Formulaire Orange Money / Wave */}
+      {(paymentMethod === 'orange_money' || paymentMethod === 'wave') && (
         <div className="space-y-4 mt-4">
           <div>
-            <Label htmlFor="phone">Numéro Orange Money</Label>
+            <Label htmlFor="phone">Numéro {paymentMethod === 'orange_money' ? 'Orange Money' : 'Wave'}</Label>
             <Input
               id="phone"
               type="tel"
@@ -158,19 +153,22 @@ export const PaymentForm = ({
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Vous recevrez un SMS pour valider le paiement
+              {paymentMethod === 'orange_money' 
+                ? 'Un lien de paiement s\'ouvrira automatiquement dans votre navigateur'
+                : 'Vous serez redirigé vers Wave pour valider le paiement'
+              }
             </p>
           </div>
           
-          {smsLink && (
+          {smsLink && smsLink !== 'validated' && (
             <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
               <p className="text-sm text-blue-900 font-semibold">
-                📱 Lien de paiement envoyé !
+                � Lien de paiement ouvert !
               </p>
               <p className="text-sm text-blue-800">
-                1. Consultez le lien qui s'est ouvert<br />
-                2. Validez le paiement sur votre téléphone<br />
-                3. Votre commande sera automatiquement mise à jour
+                1. Un onglet s'est ouvert dans votre navigateur<br />
+                2. Suivez les instructions pour payer avec Orange Money<br />
+                3. Votre commande sera automatiquement mise à jour après paiement
               </p>
               <Button
                 type="button"
@@ -186,56 +184,6 @@ export const PaymentForm = ({
               </p>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Formulaire PayDunya */}
-      {paymentMethod === 'paydunya' && (
-        <div className="space-y-4 mt-4">
-          {paydunya && (
-            <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
-              <b>Mode test PayDunya :</b> Utilisez les identifiants ci-dessous<br />
-              <b>Email :</b> marnel.gnacadja@paydunya.com<br />
-              <b>Téléphone :</b> 97403627<br />
-              <b>Mot de passe :</b> Miliey@2121
-            </div>
-          )}
-          
-          <div>
-            <Label htmlFor="email">Email du compte{paydunya ? ' de test' : ''}</Label>
-            <Input
-              type="email"
-              id="email"
-              name="email"
-              required
-              placeholder="marnel.gnacadja@paydunya.com"
-              defaultValue={paydunya ? "marnel.gnacadja@paydunya.com" : ""}
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="paydunya-phone">Téléphone du compte{paydunya ? ' de test' : ''}</Label>
-            <Input
-              type="tel"
-              id="paydunya-phone"
-              name="phone"
-              required
-              placeholder="97403627"
-              defaultValue={paydunya ? "97403627" : ""}
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="password">Mot de passe du compte{paydunya ? ' de test' : ''}</Label>
-            <Input
-              type="password"
-              id="password"
-              name="password"
-              required
-              placeholder="Miliey@2121"
-              defaultValue={paydunya ? "Miliey@2121" : ""}
-            />
-          </div>
         </div>
       )}
 

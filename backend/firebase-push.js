@@ -12,6 +12,13 @@ const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'validel-d7c83';
 const SCOPES = ['https://www.googleapis.com/auth/firebase.messaging'];
 
 /**
+ * Vérifier si Firebase est configuré
+ */
+function isFirebaseConfigured() {
+  return !!(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_BASE64);
+}
+
+/**
  * Obtenir un token d'accès OAuth2 pour FCM
  */
 async function getAccessToken() {
@@ -24,7 +31,7 @@ async function getAccessToken() {
     }
   }
   if (!raw) {
-    throw new Error('Credentials Firebase manquants (FIREBASE_SERVICE_ACCOUNT_JSON)');
+    return null; // Retourner null au lieu de throw
   }
 
   let serviceAccount;
@@ -54,7 +61,15 @@ async function getAccessToken() {
  * @param {object} data - Données supplémentaires (optionnel)
  */
 async function sendPushNotification(token, title, body, data = {}) {
+  if (!isFirebaseConfigured()) {
+    console.warn('[FIREBASE] Non configuré, notification ignorée:', { title });
+    return { success: false, message: 'Firebase non configuré' };
+  }
+  
   const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { success: false, message: 'Impossible d\'obtenir le token Firebase' };
+  }
   
   const message = {
     message: {
@@ -122,7 +137,15 @@ async function sendPushToMultiple(tokens, title, body, data = {}) {
  * @param {object} data - Données supplémentaires (optionnel)
  */
 async function sendPushToTopic(topic, title, body, data = {}) {
+  if (!isFirebaseConfigured()) {
+    console.warn('[FIREBASE] Non configuré, notification topic ignorée:', { topic, title });
+    return { success: false, message: 'Firebase non configuré' };
+  }
+  
   const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { success: false, message: 'Impossible d\'obtenir le token Firebase' };
+  }
   
   const message = {
     message: {
@@ -168,4 +191,5 @@ module.exports = {
   sendPushToMultiple,
   sendPushToTopic,
   getAccessToken,
+  isFirebaseConfigured,
 };

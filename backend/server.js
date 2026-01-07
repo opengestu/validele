@@ -9,7 +9,7 @@ const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
 const { supabase } = require('./supabase');
-const { initiatePayment: pixpayInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
+const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
 const app = express();
 
@@ -278,7 +278,7 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
       });
     }
 
-    console.log('[PIXPAY] Initiation paiement:', { amount, phone, orderId });
+    console.log('[PIXPAY] Initiation paiement Orange Money:', { amount, phone, orderId });
 
     const result = await pixpayInitiate({
       amount,
@@ -322,6 +322,65 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Erreur lors de l\'initiation du paiement'
+    });
+  }
+});
+
+// Endpoint PixPay Wave
+app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
+  try {
+    const { amount, phone, orderId, customData } = req.body;
+
+    if (!amount || !phone || !orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Paramètres manquants: amount, phone, orderId requis'
+      });
+    }
+
+    console.log('[PIXPAY-WAVE] Initiation paiement Wave:', { amount, phone, orderId });
+
+    const result = await pixpayWaveInitiate({
+      amount,
+      phone,
+      orderId,
+      customData
+    });
+
+    // Sauvegarder la transaction dans Supabase
+    if (result.success && result.transaction_id) {
+      const { error: dbError } = await supabase
+        .from('payment_transactions')
+        .insert({
+          transaction_id: result.transaction_id,
+          provider: 'pixpay_wave',
+          provider_transaction_id: result.provider_id,
+          order_id: orderId,
+          amount,
+          phone,
+          status: result.state || 'PENDING1',
+          raw_response: result.raw
+        });
+
+      if (dbError) {
+        console.error('[PIXPAY-WAVE] Erreur sauvegarde DB:', dbError);
+      }
+    }
+
+    return res.json({
+      success: result.success,
+      transaction_id: result.transaction_id,
+      provider_id: result.provider_id,
+      message: result.message,
+      amount: result.amount,
+      fee: result.fee
+    });
+
+  } catch (error) {
+    console.error('[PIXPAY-WAVE] Erreur initiate:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors de l\'initiation du paiement Wave'
     });
   }
 });

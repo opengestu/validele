@@ -54,6 +54,32 @@ export class PixPayService {
   }
 
   /**
+   * Initier un paiement Wave via PixPay
+   */
+  async initiateWavePayment(data: PixPayInitiateRequest): Promise<PixPayInitiateResponse> {
+    try {
+      const response = await fetch(apiUrl('/api/payment/pixpay-wave/initiate'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Erreur lors de l\'initiation du paiement Wave');
+      }
+
+      return result;
+    } catch (error) {
+      console.error('[PixPay-Wave] Erreur initiation:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Envoyer de l'argent (payout vendeur/livreur)
    */
   async sendPayout(data: PixPayPayoutRequest): Promise<PixPayInitiateResponse> {

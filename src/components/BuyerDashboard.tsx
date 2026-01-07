@@ -499,8 +499,72 @@ const BuyerDashboard = () => {
       }
       return;
     }
+
+    // Si c'est Wave, utiliser aussi PixPay
+    if (paymentMethod === 'wave') {
+      try {
+        setProcessingPayment(true);
+        
+        // Créer la commande d'abord
+        const { res: response, data } = await fetchJsonWithTimeout<CreateOrderResponse>(
+          apiUrl('/api/orders'),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buyer_id: user.id,
+              product_id: searchResult.id,
+              vendor_id: searchResult.vendor_id,
+              total_amount: searchResult.price * purchaseQuantity,
+              payment_method: 'wave',
+              buyer_phone: userProfile?.phone || '',
+              delivery_address: 'Adresse à définir',
+            })
+          },
+          30000
+        );
+
+        if (!response.ok) {
+          throw new Error(data?.message || 'Erreur création commande');
+        }
+
+        const createdOrderId = data?.id || data?.order_id || '';
+        if (!createdOrderId) {
+          throw new Error('ID de commande non reçu du serveur');
+        }
+        
+        setOrderId(createdOrderId);
+        
+        // Initialiser currentOrder pour PaymentForm
+        setCurrentOrder({
+          id: createdOrderId,
+          buyer_id: user.id,
+          vendor_id: searchResult.vendor_id,
+          product_id: searchResult.id,
+          total_amount: searchResult.price * purchaseQuantity,
+          payment_method: 'wave',
+          delivery_address: 'Adresse à définir',
+          buyer_phone: userProfile?.phone || '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        
+        setShowDirectPaymentForm(true);
+        
+      } catch (error) {
+        const err = error as Error;
+        toast({
+          title: 'Erreur',
+          description: err.message || 'Erreur lors de la création de la commande',
+          variant: 'destructive',
+        });
+      } finally {
+        setProcessingPayment(false);
+      }
+      return;
+    }
     
-    // Pour Wave et autres, continuer avec PayDunya
+    // Pour les autres modes de paiement (si existants), continuer avec l'ancien flow
     try {
       setProcessingPayment(true);
       const { res: response, data } = await fetchJsonWithTimeout<PayDunyaResponse>(
