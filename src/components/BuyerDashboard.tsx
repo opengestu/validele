@@ -478,7 +478,7 @@ const BuyerDashboard = () => {
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
-            storeName: searchResult.store_name || ''
+            storeName: searchResult.profiles?.company_name || ''
           }
         });
 
@@ -550,7 +550,7 @@ const BuyerDashboard = () => {
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
-            storeName: searchResult.store_name || ''
+            storeName: searchResult.profiles?.company_name || ''
           }
         });
 
