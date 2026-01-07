@@ -464,7 +464,11 @@ const BuyerDashboard = () => {
           throw new Error(data?.message || 'Erreur création commande');
         }
 
-        const createdOrderId = data?.id || data?.order_id;
+        const createdOrderId = data?.id || data?.order_id || '';
+        if (!createdOrderId) {
+          throw new Error('ID de commande non reçu du serveur');
+        }
+        
         setOrderId(createdOrderId);
         
         // Initialiser currentOrder pour PaymentForm
