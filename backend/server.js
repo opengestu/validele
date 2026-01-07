@@ -499,7 +499,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 // Envoyer de l'argent (payout vendeur/livreur)
 app.post('/api/payment/pixpay/payout', async (req, res) => {
   try {
-    const { amount, phone, orderId, type } = req.body;
+    const { amount, phone, orderId, type, walletType } = req.body;
 
     if (!amount || !phone || !orderId) {
       return res.status(400).json({
@@ -508,13 +508,21 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
       });
     }
 
-    console.log('[PIXPAY] Payout:', { amount, phone, orderId, type });
+    if (!walletType) {
+      return res.status(400).json({
+        success: false,
+        error: 'walletType requis (wave-senegal ou orange-senegal)'
+      });
+    }
+
+    console.log('[PIXPAY] Payout:', { amount, phone, orderId, type, walletType });
 
     const result = await pixpaySendMoney({
       amount,
       phone,
       orderId,
-      type: type || 'payout'
+      type: type || 'payout',
+      walletType
     });
 
     // Sauvegarder dans DB

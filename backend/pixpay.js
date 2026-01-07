@@ -124,7 +124,7 @@ async function initiatePayment(params) {
  * @returns {Promise<Object>} Réponse PixPay
  */
 async function sendMoney(params) {
-  const { amount, phone, orderId, type = 'payout' } = params;
+  const { amount, phone, orderId, type = 'payout', walletType } = params;
 
   if (!PIXPAY_CONFIG.api_key) {
     throw new Error('PIXPAY_API_KEY non configurée');
@@ -132,11 +132,22 @@ async function sendMoney(params) {
 
   const formattedPhone = phone.replace(/^\+/, '');
 
+  // Déterminer le service_id selon le type de wallet
+  // Wave: 211 (OUT_WAVE_SN_DIRECT), Orange Money: 213 (OUT_ORANGE_MONEY_SN_DIRECT)
+  let service_id;
+  if (walletType === 'wave-senegal') {
+    service_id = PIXPAY_CONFIG.wave_service_id; // 211
+  } else if (walletType === 'orange-senegal') {
+    service_id = PIXPAY_CONFIG.service_id_client_payment; // 213
+  } else {
+    throw new Error(`Type de wallet non supporté: ${walletType}. Utilisez 'wave-senegal' ou 'orange-senegal'`);
+  }
+
   const payload = {
     amount: parseInt(amount),
     destination: formattedPhone,
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: PIXPAY_CONFIG.service_id_vendor_payout, // CASHIN (214) = on paie vendeur → argent sort de chez nous
+    service_id: service_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
       order_id: orderId,
@@ -144,16 +155,18 @@ async function sendMoney(params) {
     })
   };
 
-  if (PIXPAY_CONFIG.business_name_id) {
-    payload.business_name_id = PIXPAY_CONFIG.business_name_id;
+  // Ajouter business_name_id seulement pour Wave
+  if (walletType === 'wave-senegal' && PIXPAY_CONFIG.wave_business_name_id) {
+    payload.business_name_id = PIXPAY_CONFIG.wave_business_name_id;
   }
 
-  console.log('[PIXPAY] Paiement vendeur/livreur (CASHIN 214):', {
+  console.log('[PIXPAY] Paiement vendeur/livreur:', {
     amount,
     phone: formattedPhone,
     orderId,
     type,
-    service_id: PIXPAY_CONFIG.service_id_vendor_payout
+    walletType,
+    service_id
   });
 
   try {

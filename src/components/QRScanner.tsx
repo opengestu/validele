@@ -466,32 +466,68 @@ const QRScanner = () => {
         (async () => {
           try {
             setIsPayoutInProgress(true);
-            const response = await fetch(apiUrl('/api/order/scan'), {
+            
+            // Récupérer les infos vendeur pour le payout
+            const { data: vendorData } = await supabase
+              .from('profiles')
+              .select('phone, wallet_type')
+              .eq('id', validationResult.vendor_id)
+              .single();
+
+            if (!vendorData?.phone) {
+              throw new Error('Numéro de téléphone vendeur manquant');
+            }
+
+            if (!vendorData?.wallet_type) {
+              throw new Error('Type de portefeuille vendeur non configuré (Wave ou Orange Money)');
+            }
+
+            // Calculer montant vendeur (95% du total)
+            const montantVendeur = Math.round(validationResult.total_amount * 0.95);
+
+            // Déterminer le service_id selon wallet_type
+            const serviceId = vendorData.wallet_type === 'wave-senegal' ? 211 : 213;
+            
+            console.log('[PAYOUT] Envoi à:', {
+              phone: vendorData.phone,
+              amount: montantVendeur,
+              serviceId,
+              walletType: vendorData.wallet_type
+            });
+
+            const response = await fetch(apiUrl('/api/payment/pixpay/payout'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ orderId: validationResult.id }),
+              body: JSON.stringify({ 
+                amount: montantVendeur,
+                phone: vendorData.phone,
+                orderId: validationResult.id,
+                type: 'vendor_payout',
+                walletType: vendorData.wallet_type
+              }),
             });
+            
             const result = await response.json();
             if (result.success) {
               toast({
                 title: "Paiement vendeur déclenché",
-                description: "Le paiement a été initié avec succès.",
+                description: `${montantVendeur} FCFA envoyé vers ${vendorData.wallet_type === 'wave-senegal' ? 'Wave' : 'Orange Money'}`,
               });
             } else {
               toast({
-                title: "Erreur PayDunya",
-                description: mapPaydunyaError(result.error || result.response_text || result.message || 'Erreur paiement vendeur'),
+                title: "Erreur paiement PixPay",
+                description: result.error || result.message || 'Erreur paiement vendeur',
                 variant: "destructive",
               });
             }
           } catch (err: unknown) {
-            let errorMessage = 'Erreur réseau PayDunya';
+            let errorMessage = 'Erreur paiement vendeur';
             if (err instanceof Error) {
               errorMessage = err.message;
             }
             toast({
-              title: "Erreur réseau PayDunya",
-              description: mapPaydunyaError(errorMessage || 'Impossible de contacter le serveur pour le paiement vendeur.'),
+              title: "Erreur paiement vendeur",
+              description: errorMessage,
               variant: "destructive",
             });
           } finally {
