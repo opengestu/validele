@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, Menu, UserCircle, CreditCard, Minus, Plus } from 'lucide-react';
+import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings } from 'lucide-react';
 import { PaymentForm } from '@/components/PaymentForm';
 import { PayDunyaService } from '@/services/paydunya';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +14,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { API_BASE, apiUrl } from '@/lib/api';
+import { toFrenchErrorMessage } from '@/lib/errors';
+import { Spinner } from '@/components/ui/spinner';
 import.meta.env;
 import waveLogo from '@/assets/wave.png';
 import orangeMoneyLogo from '@/assets/orange-money.png';
@@ -80,8 +82,6 @@ const BuyerDashboard = () => {
   // 1. Ajouter un nouvel état pour le modal de choix Orange Money
   const [showOrangeChoiceModal, setShowOrangeChoiceModal] = useState(false);
   const [onOrangeChoice, setOnOrangeChoice] = useState<((choice: 'qr' | 'otp') => void) | null>(null);
-
-  const [paymentStage, setPaymentStage] = useState<string>('');
 
   const fetchJsonWithTimeout = async <T = unknown>(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; data: T }> => {
     const controller = new AbortController();
@@ -417,9 +417,19 @@ const BuyerDashboard = () => {
   // Nouvelle version de handleCreateOrderAndShowPayment : tout se fait en un clic
   const handleCreateOrderAndShowPayment = async () => {
     if (!searchResult || !user) return;
+    
+    // Vérifier la connexion internet
+    if (!navigator.onLine) {
+      toast({
+        title: 'Pas de connexion',
+        description: 'Vérifiez votre connexion internet et réessayez.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
     try {
       setProcessingPayment(true);
-      setPaymentStage('Création de la commande...');
       const { res: response, data } = await fetchJsonWithTimeout<PayDunyaResponse>(
         apiUrl('/api/payments/create-order-and-invoice'),
         {
@@ -456,7 +466,6 @@ const BuyerDashboard = () => {
       const phone = userProfile?.phone || '';
       if (paymentMethod === 'wave') {
         // Paiement Wave : redirection immédiate
-        setPaymentStage('Ouverture du paiement Wave...');
         const { data: result } = await fetchJsonWithTimeout<SoftPayResponse>(
           apiUrl('/api/payments/softpay/wave'),
           {
@@ -480,7 +489,6 @@ const BuyerDashboard = () => {
           const phone = formatPhoneForOrangeMoney(userProfile?.phone || '');
           if (choice === 'qr') {
             // QR Code : redirection immédiate
-            setPaymentStage('Ouverture du paiement Orange Money...');
             const { data: result } = await fetchJsonWithTimeout<SoftPayResponse>(
               apiUrl('/api/payments/softpay/orange'),
               {
@@ -511,16 +519,22 @@ const BuyerDashboard = () => {
       }
     } catch (error) {
       const err = error as Error;
+      let errorMessage = err.message || 'Erreur lors de la création de la commande';
+      
+      // Vérifier si c'est une erreur de réseau
+      if (!navigator.onLine || err.name === 'TypeError' || err.message?.includes('fetch')) {
+        errorMessage = 'Connexion internet perdue. Vérifiez votre connexion et réessayez.';
+      } else if (err.name === 'AbortError') {
+        errorMessage = 'Le serveur met trop de temps à répondre. Réessayez.';
+      }
+      
       toast({
         title: 'Erreur',
-        description: err.name === 'AbortError'
-          ? "Le serveur met trop de temps à répondre. Réessayez (souvent dû au cold start)."
-          : (err.message || 'Erreur lors de la création de la commande'),
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
       setProcessingPayment(false);
-      setPaymentStage('');
     }
   };
 
@@ -549,10 +563,9 @@ const BuyerDashboard = () => {
         throw new Error(data?.message || 'Paiement échoué');
       }
     } catch (error) {
-      const err = error as Error;
       toast({
         title: 'Erreur',
-        description: err.message || 'Erreur lors du paiement',
+        description: toFrenchErrorMessage(error, 'Erreur lors du paiement'),
         variant: 'destructive',
       });
     } finally {
@@ -574,28 +587,36 @@ const BuyerDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header Acheteur moderne - dégradé vert-bleu avec avatar desktop & mobile */}
-      <header className="bg-gradient-to-r from-green-500 to-blue-400 rounded-b-2xl shadow-lg mb-6 relative">
+      {/* Overlay plein écran pendant le paiement */}
+      {processingPayment && (
+        <div className="fixed inset-0 z-[100] bg-white bg-opacity-95 flex items-center justify-center">
+          <Spinner size="xl" />
+        </div>
+      )}
+
+      {/* Header Client moderne - dégradé orange Validèl */}
+      <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6 relative">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
           </h1>
+          <p className="text-white/90 text-sm mt-1">Espace Client</p>
         </div>
         {/* Avatar desktop */}
         <button
-          className="hidden md:flex absolute top-6 right-8 items-center justify-center w-12 h-12 rounded-full bg-white bg-opacity-80 hover:bg-opacity-100 shadow-lg border border-gray-200"
+          className="hidden md:flex absolute top-6 right-8 items-center justify-center w-10 h-10 rounded-full hover:bg-white/10"
           onClick={() => { setDrawerOpen(true); setIsEditing(true); }}
-          aria-label="Profil"
+          aria-label="Paramètres"
         >
-          <UserCircle className="h-8 w-8 text-blue-500" />
+          <Settings className="h-5 w-5 text-white" />
         </button>
         {/* Hamburger mobile à gauche */}
         <button
-          className="md:hidden absolute top-6 left-6 flex items-center justify-center w-10 h-10 rounded-full bg-white bg-opacity-80 hover:bg-opacity-100 shadow-lg border border-gray-200"
+          className="md:hidden absolute top-6 left-6 flex items-center justify-center w-9 h-9 rounded-full hover:bg-white/10"
           onClick={() => { setDrawerOpen(true); setIsEditing(true); }}
-          aria-label="Menu"
+          aria-label="Paramètres"
         >
-          <Menu className="h-7 w-7 text-blue-500" />
+          <Settings className="h-5 w-5 text-white" />
         </button>
       </header>
 
@@ -638,7 +659,7 @@ const BuyerDashboard = () => {
                 required
               />
               <div className="flex gap-2 mt-4">
-                <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={savingProfile}>
+                <Button type="submit" className="flex-1 bg-green-500 hover:bg-green-600" disabled={savingProfile}>
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                 </Button>
                 <Button type="button" variant="outline" className="flex-1" onClick={() => { setDrawerOpen(false); setIsEditing(false); }}>
@@ -662,27 +683,52 @@ const BuyerDashboard = () => {
         <div className="md:hidden fixed inset-0 z-50 bg-black bg-opacity-40 flex justify-end">
           <div className="bg-white w-full max-w-xs h-full shadow-lg p-6 flex flex-col">
             <div className="flex flex-col items-center gap-2 mb-6">
-              <UserCircle className="h-12 w-12 text-blue-500 mb-2" />
+              <UserCircle className="h-12 w-12 text-green-500 mb-2" />
               <span className="font-bold text-lg">Mon profil</span>
-              <span className="text-base text-gray-700 font-semibold">{userProfile?.full_name || user?.email}</span>
-              <span className="text-sm text-gray-500">{user?.email}</span>
-              <span className="text-sm text-gray-500">{userProfile?.phone}</span>
             </div>
-            <Button
-              type="button"
-              className="w-full mt-2 bg-red-600 hover:bg-red-700"
-              onClick={handleSignOut}
-            >
-              Déconnexion
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full mt-2"
-              onClick={() => { setDrawerOpen(false); setIsEditing(false); }}
-            >
-              Fermer
-            </Button>
+            <form className="flex flex-col gap-3 flex-1" onSubmit={async (e) => { e.preventDefault(); await handleSaveProfile(); }}>
+              <input
+                className="border rounded px-3 py-2 text-sm"
+                name="full_name"
+                placeholder="Nom complet"
+                value={editProfile.full_name || ''}
+                onChange={e => setEditProfile(p => ({ ...p, full_name: e.target.value }))}
+                maxLength={40}
+                required
+              />
+              <input
+                className="border rounded px-3 py-2 text-sm"
+                name="phone"
+                placeholder="Téléphone"
+                value={editProfile.phone || ''}
+                onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
+                required
+              />
+              <input
+                className="border rounded px-3 py-2 text-sm"
+                name="email"
+                placeholder="Email"
+                type="email"
+                value={editProfile.email || ''}
+                onChange={e => setEditProfile(p => ({ ...p, email: e.target.value }))}
+                required
+              />
+              <div className="flex gap-2 mt-2">
+                <Button type="submit" className="flex-1 bg-green-500 hover:bg-green-600" disabled={savingProfile}>
+                  {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
+                </Button>
+                <Button type="button" variant="outline" className="flex-1" onClick={() => { setDrawerOpen(false); setIsEditing(false); }}>
+                  Annuler
+                </Button>
+              </div>
+              <Button
+                type="button"
+                className="w-full mt-2 bg-red-600 hover:bg-red-700"
+                onClick={handleSignOut}
+              >
+                Déconnexion
+              </Button>
+            </form>
           </div>
         </div>
       )}
@@ -739,7 +785,7 @@ const BuyerDashboard = () => {
                         <p className="text-sm text-gray-500">Vendeur: {searchResult.profiles?.full_name || searchResult.profiles?.company_name}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-2xl font-bold text-blue-600">{searchResult.price.toLocaleString()} FCFA</p>
+                        <p className="text-2xl font-bold text-green-600">{searchResult.price.toLocaleString()} FCFA</p>
                         <p className="text-sm text-gray-500">Code: {searchResult.code}</p>
                       </div>
                     </div>
@@ -812,30 +858,26 @@ const BuyerDashboard = () => {
                       </Select>
                     </div>
 
-                    {/* Indicateur de connexion serveur */}
-                    {!backendReady && (
-                      <p className="text-xs text-amber-600 text-center mb-2">
-                        ⏳ Connexion au serveur en cours...
-                      </p>
-                    )}
+                    {/* Indicateur de connexion serveur - masqué pour UX plus fluide */}
+                    {/* Le warm-up se fait en arrière-plan */}
 
                     {/* Bouton de paiement */}
                     {paymentMethod === 'wave' && (
                       <Button 
                         onClick={handleCreateOrderAndShowPayment}
                         disabled={processingPayment}
-                        className="w-full bg-green-600 hover:bg-green-700"
+                        className="w-full bg-green-500 hover:bg-green-600"
                       >
-                        {processingPayment ? (paymentStage || 'Traitement...') : "Payer avec Wave"}
+                        Payer avec Wave
                       </Button>
                     )}
                     {paymentMethod === 'orange_money' && (
                       <Button
                         onClick={handleCreateOrderAndShowPayment}
                         disabled={processingPayment}
-                        className="w-full bg-orange-600 hover:bg-orange-700"
+                        className="w-full bg-green-600 hover:bg-orange-700"
                       >
-                        {processingPayment ? (paymentStage || 'Traitement...') : "Payer avec Orange Money"}
+                        Payer avec Orange Money
                       </Button>
                     )}
                   </div>
@@ -854,62 +896,75 @@ const BuyerDashboard = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {ordersLoading ? (
-                  <div className="flex justify-center py-4">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                  </div>
-                ) : orders.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">Aucune commande pour le moment</p>
-                ) : (
-                  <div className="space-y-3">
-                    {(showAllOrders
-                      ? orders.filter(order => order.status !== 'pending')
-                      : orders.filter(order => order.status !== 'pending').slice(0, 5)
-                    ).map((order) => (
-                      <div key={order.id} className="order-card">
-                        <div>
-                          <b>{order.products?.name}</b> <span>{order.total_amount} FCFA</span>
-                          <span style={{marginLeft: 8, color: '#888'}}>Statut: {getStatusTextFr(order.status ?? '')}</span>
-                        </div>
-                        {/* Bouton pour voir le QR code */}
-                        <div style={{ margin: '8px 0' }}>
-                          {order.qr_code ? (
-                            <button
-                              style={{ fontSize: '0.9em', color: '#ff9800', border: '1px solid #ff9800', borderRadius: 4, padding: '2px 10px', background: 'white', cursor: 'pointer' }}
-                              onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
-                            >
-                              Voir QR code
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: '0.8em', color: '#888' }}>QR code indisponible</span>
-                          )}
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-semibold">{order.total_amount?.toLocaleString()} FCFA</p>
-                          <p className="text-xs text-gray-500">
-                            {order.status === 'paid' && (
-                              <span style={{ color: '#ff9800', fontSize: '0.85em', fontWeight: 500 }}>payée</span>
-                            )}
-                            {order.status === 'in_delivery' && (
-                              <span style={{ color: '#2196f3', fontSize: '0.85em', fontWeight: 500 }}>en livraison</span>
-                            )}
-                            {order.status === 'delivered' && (
-                              <span style={{ color: '#4caf50', fontSize: '0.85em', fontWeight: 500 }}>livrée</span>
-                            )}
-                            {['paid', 'in_delivery', 'delivered'].indexOf(order.status ?? '') === -1 && (
-                              <span>{order.status}</span>
-                            )}
-                          </p>
-                        </div>
+                {(() => {
+                  // Afficher un placeholder même si des commandes existent mais sont toutes en statut pending
+                  const displayedOrders = (showAllOrders
+                    ? orders.filter(order => order.status !== 'pending')
+                    : orders.filter(order => order.status !== 'pending').slice(0, 5)
+                  );
+
+                  if (ordersLoading) {
+                    return (
+                      <div className="flex justify-center py-4">
+                        <Spinner size="sm" />
                       </div>
-                    ))}
-                    {!showAllOrders && orders.filter(order => order.status !== 'pending').length > 5 && (
-                      <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAllOrders(true)}>
-                        Voir toutes les commandes
-                      </Button>
-                    )}
-                  </div>
-                )}
+                    );
+                  }
+
+                  if (displayedOrders.length === 0) {
+                    return (
+                      <p className="text-gray-500 text-center py-4">Aucune commande pour le moment</p>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {displayedOrders.map((order) => (
+                        <div key={order.id} className="order-card">
+                          <div>
+                            <b>{order.products?.name}</b> <span>{order.total_amount} FCFA</span>
+                            <span style={{ marginLeft: 8, color: '#888' }}>Statut: {getStatusTextFr(order.status ?? '')}</span>
+                          </div>
+                          {/* Bouton pour voir le QR code */}
+                          <div style={{ margin: '8px 0' }}>
+                            {order.qr_code ? (
+                              <button
+                                style={{ fontSize: '0.9em', color: '#ff9800', border: '1px solid #ff9800', borderRadius: 4, padding: '2px 10px', background: 'white', cursor: 'pointer' }}
+                                onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
+                              >
+                                Voir QR code
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: '0.8em', color: '#888' }}>QR code indisponible</span>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-semibold">{order.total_amount?.toLocaleString()} FCFA</p>
+                            <p className="text-xs text-gray-500">
+                              {order.status === 'paid' && (
+                                <span style={{ color: '#ff9800', fontSize: '0.85em', fontWeight: 500 }}>payée</span>
+                              )}
+                              {order.status === 'in_delivery' && (
+                                <span style={{ color: '#2196f3', fontSize: '0.85em', fontWeight: 500 }}>en livraison</span>
+                              )}
+                              {order.status === 'delivered' && (
+                                <span style={{ color: '#4caf50', fontSize: '0.85em', fontWeight: 500 }}>livrée</span>
+                              )}
+                              {['paid', 'in_delivery', 'delivered'].indexOf(order.status ?? '') === -1 && (
+                                <span>{order.status}</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                      {!showAllOrders && orders.filter(order => order.status !== 'pending').length > 5 && (
+                        <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAllOrders(true)}>
+                          Voir toutes les commandes
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
@@ -935,37 +990,27 @@ const BuyerDashboard = () => {
             <DialogHeader>
               <DialogTitle>Paiement sécurisé</DialogTitle>
             </DialogHeader>
-            <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
-              <b>Mode test PayDunya :</b> Utilisez les identifiants de test ci-dessous pour simuler un paiement.<br />
-              <b>Numéro :</b> 97403627<br />
-              <b>Email :</b> marnel.gnacadja@paydunya.com<br />
-              <b>Mot de passe/code secret :</b> Miliey@2121
-            </div>
-            <form id="direct-payment-form" onSubmit={async (e) => {
-              e.preventDefault();
-              const form = e.target as HTMLFormElement;
-              const phone = (form.elements.namedItem('phone') as HTMLInputElement).value;
-              const password = (form.elements.namedItem('password') as HTMLInputElement).value;
-              const email = (form.elements.namedItem('email') as HTMLInputElement).value;
-              await handleDirectPayment(phone, password, email);
-            }} className="space-y-4">
-              <Input name="email" type="email" placeholder="Email PayDunya" required defaultValue="marnel.gnacadja@paydunya.com" />
-              <Input name="phone" type="tel" placeholder="Numéro de téléphone" required defaultValue="97403627" />
-              <Input name="password" type="password" placeholder="Code secret/OTP" required defaultValue="Miliey@2121" />
-              <Button type="submit" className="w-full" disabled={processingPayment}>
-                {processingPayment ? 'Paiement en cours...' : 'Valider le paiement'}
-              </Button>
-              <Button type="button" variant="outline" className="w-full" onClick={() => {
-                const form = document.getElementById('direct-payment-form') as HTMLFormElement;
-                if (form) {
-                  (form.elements.namedItem('email') as HTMLInputElement).value = 'marnel.gnacadja@paydunya.com';
-                  (form.elements.namedItem('phone') as HTMLInputElement).value = '97403627';
-                  (form.elements.namedItem('password') as HTMLInputElement).value = 'Miliey@2121';
-                }
-              }}>
-                Remplir avec les identifiants de test
-              </Button>
-            </form>
+            <PaymentForm 
+              orderId={orderId || ''}
+              buyerPhone={userProfile?.phone || ''}
+              amount={currentOrder?.total_price || 0}
+              onPaymentSuccess={() => {
+                setShowDirectPaymentForm(false);
+                setPendingOrderToken(null);
+                navigate(orderId ? `/payment-success?order_id=${orderId}` : '/payment-success');
+              }}
+              onPaymentError={(error) => {
+                toast({
+                  title: 'Erreur',
+                  description: error,
+                  variant: 'destructive',
+                });
+              }}
+              paydunya={{
+                token: pendingOrderToken || '',
+                onDirectPayment: handleDirectPayment
+              }}
+            />
           </DialogContent>
         </Dialog>
       )}
@@ -1151,7 +1196,7 @@ const BuyerDashboard = () => {
               <DialogTitle>Choisissez le mode de paiement Orange Money</DialogTitle>
             </DialogHeader>
             <div className="flex flex-col gap-4 mt-4">
-              <Button className="w-full bg-orange-600 hover:bg-orange-700" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
+              <Button className="w-full bg-green-600 hover:bg-orange-700" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
                 Payer par QR Code
               </Button>
               <Button className="w-full bg-yellow-500 hover:bg-yellow-600" onClick={() => onOrangeChoice && onOrangeChoice('otp')}>

@@ -9,12 +9,16 @@ import { Loader2, CreditCard, Smartphone } from 'lucide-react';
 
 interface PaymentFormProps {
   amount: number;
-  description: string;
+  description?: string;
   storeName?: string;
   orderId?: string;
   buyerPhone?: string;
   onPaymentSuccess?: () => void;
   onPaymentError?: (error: string) => void;
+  paydunya?: {
+    token: string;
+    onDirectPayment: (phone: string, password: string, email: string) => Promise<void>;
+  };
 }
 
 export const PaymentForm = ({ 
@@ -24,7 +28,8 @@ export const PaymentForm = ({
   orderId,
   buyerPhone,
   onPaymentSuccess, 
-  onPaymentError 
+  onPaymentError,
+  paydunya
 }: PaymentFormProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,19 +77,30 @@ export const PaymentForm = ({
         
       } else {
         // Paiement PayDunya (existant)
-        const formData = new FormData(e.currentTarget as HTMLFormElement);
-        const paymentData = {
-          amount,
-          description,
-          storeName: storeName || 'Validel'
-        };
-
-        const invoiceResponse = await payDunyaService.createPayment(paymentData);
-
-        if (invoiceResponse.status === 'success' && invoiceResponse.redirect_url) {
-          window.location.href = invoiceResponse.redirect_url;
+        if (paydunya) {
+          // Mode direct payment (sandbox)
+          const formData = new FormData(e.currentTarget as HTMLFormElement);
+          const phone = formData.get('phone') as string;
+          const password = formData.get('password') as string;
+          const email = formData.get('email') as string;
+          
+          await paydunya.onDirectPayment(phone, password, email);
+          onPaymentSuccess?.();
         } else {
-          throw new Error(invoiceResponse.message || 'Erreur création paiement');
+          // Mode redirection (production)
+          const paymentData = {
+            amount,
+            description: description || 'Paiement',
+            storeName: storeName || 'Validel'
+          };
+
+          const invoiceResponse = await payDunyaService.createPayment(paymentData);
+
+          if (invoiceResponse.status === 'success' && invoiceResponse.redirect_url) {
+            window.location.href = invoiceResponse.redirect_url;
+          } else {
+            throw new Error(invoiceResponse.message || 'Erreur création paiement');
+          }
         }
       }
     } catch (err: any) {
@@ -168,36 +184,48 @@ export const PaymentForm = ({
       {/* Formulaire PayDunya */}
       {paymentMethod === 'paydunya' && (
         <div className="space-y-4 mt-4">
+          {paydunya && (
+            <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
+              <b>Mode test PayDunya :</b> Utilisez les identifiants ci-dessous<br />
+              <b>Email :</b> marnel.gnacadja@paydunya.com<br />
+              <b>Téléphone :</b> 97403627<br />
+              <b>Mot de passe :</b> Miliey@2121
+            </div>
+          )}
+          
           <div>
-            <Label htmlFor="email">Email du compte de test</Label>
+            <Label htmlFor="email">Email du compte{paydunya ? ' de test' : ''}</Label>
             <Input
               type="email"
               id="email"
               name="email"
               required
               placeholder="marnel.gnacadja@paydunya.com"
+              defaultValue={paydunya ? "marnel.gnacadja@paydunya.com" : ""}
             />
           </div>
 
           <div>
-            <Label htmlFor="paydunya-phone">Téléphone du compte de test</Label>
+            <Label htmlFor="paydunya-phone">Téléphone du compte{paydunya ? ' de test' : ''}</Label>
             <Input
               type="tel"
               id="paydunya-phone"
               name="phone"
               required
               placeholder="97403627"
+              defaultValue={paydunya ? "97403627" : ""}
             />
           </div>
 
           <div>
-            <Label htmlFor="password">Mot de passe du compte de test</Label>
+            <Label htmlFor="password">Mot de passe du compte{paydunya ? ' de test' : ''}</Label>
             <Input
               type="password"
               id="password"
               name="password"
               required
               placeholder="Miliey@2121"
+              defaultValue={paydunya ? "Miliey@2121" : ""}
             />
           </div>
         </div>
