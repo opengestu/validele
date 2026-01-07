@@ -262,7 +262,8 @@ async function initiateWavePayment(params) {
     console.log('[PIXPAY-WAVE] Réponse:', {
       transaction_id: response.data.data?.transaction_id,
       state: response.data.data?.state,
-      message: response.data.message
+      message: response.data.message,
+      sms_link: response.data.data?.sms_link
     });
 
     return {

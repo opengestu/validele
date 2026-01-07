@@ -566,6 +566,12 @@ const BuyerDashboard = () => {
         }
         
         // Initier le paiement Wave directement
+        console.log('[BuyerDashboard] Initiation paiement Wave avec:', {
+          amount: searchResult.price * purchaseQuantity,
+          phone: userProfile?.phone,
+          orderId: createdOrderId
+        });
+        
         const waveResult = await pixPayService.initiateWavePayment({
           amount: searchResult.price * purchaseQuantity,
           phone: userProfile?.phone || '',
@@ -575,6 +581,9 @@ const BuyerDashboard = () => {
             storeName: searchResult.profiles?.company_name || ''
           }
         });
+
+        console.log('[BuyerDashboard] Résultat Wave:', waveResult);
+        console.log('[BuyerDashboard] SMS Link:', waveResult.sms_link);
 
         if (waveResult.success && waveResult.sms_link) {
           // Ouvrir directement le lien Wave

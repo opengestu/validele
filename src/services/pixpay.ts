@@ -70,6 +70,8 @@ export class PixPayService {
 
       const result = await response.json();
 
+      console.log('[PixPay-Wave] Réponse reçue:', result);
+
       if (!response.ok) {
         throw new Error(result.error || 'Erreur lors de l\'initiation du paiement Wave');
       }
