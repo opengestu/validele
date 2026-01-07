@@ -36,6 +36,7 @@ export const PaymentForm = ({
   const [paymentMethod, setPaymentMethod] = useState<'orange_money' | 'wave' | 'paydunya'>('orange_money');
   const [phone, setPhone] = useState(buyerPhone || '');
   const [smsLink, setSmsLink] = useState<string | null>(null);
+  const [waveMessage, setWaveMessage] = useState<string | null>(null);
   
   const payDunyaService = new PayDunyaService();
   const pixPayService = new PixPayService();
@@ -92,8 +93,9 @@ export const PaymentForm = ({
 
         if (result.success) {
           // Wave PixPay génère une validation via le système Wave
-          // Le webhook mettra à jour le statut automatiquement
-          setSmsLink('validated'); // Marqueur pour afficher le message de succès
+          // Afficher le message retourné par PixPay
+          setWaveMessage(result.message || 'Paiement Wave initié. Validez sur votre téléphone.');
+          setSmsLink('validated'); // Marqueur pour afficher le message
         } else {
           throw new Error(result.error || result.message || 'Erreur paiement Wave');
         }
@@ -184,6 +186,22 @@ export const PaymentForm = ({
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Message Wave après initiation */}
+      {smsLink === 'validated' && paymentMethod === 'wave' && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-900 font-semibold">
+            📱 Paiement Wave initié !
+          </p>
+          <p className="text-sm text-blue-800 mt-2">
+            {waveMessage || "Validez l'opération en cliquant sur le lien. La session expire dans 15 min"}
+          </p>
+          <p className="text-xs text-blue-600 mt-2">
+            ⚠️ Consultez votre téléphone Wave pour valider le paiement.<br />
+            Votre commande sera automatiquement mise à jour après validation.
+          </p>
         </div>
       )}
 
