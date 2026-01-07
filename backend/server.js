@@ -446,7 +446,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     }
 
     // Si paiement réussi, mettre à jour la commande
-    if (state === 'SUCCESS' && orderId) {
+    if (state === 'SUCCESSFUL' && orderId) {
       // Récupérer l'order_code de la commande
       const { data: orderData } = await supabase
         .from('orders')
