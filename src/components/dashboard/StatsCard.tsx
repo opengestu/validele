@@ -25,9 +25,9 @@ const StatsCard: React.FC<StatsCardProps> = ({
 }) => {
   const colorConfig = {
     vendor: {
-      bg: 'from-orange-500 to-red-500',
-      text: 'text-orange-600',
-      bgLight: 'bg-orange-50'
+      bg: 'from-green-500 to-emerald-500',
+      text: 'text-green-600',
+      bgLight: 'bg-green-50'
     },
     buyer: {
       bg: 'from-green-500 to-emerald-500', 
@@ -35,9 +35,9 @@ const StatsCard: React.FC<StatsCardProps> = ({
       bgLight: 'bg-green-50'
     },
     delivery: {
-      bg: 'from-purple-500 to-violet-500',
-      text: 'text-purple-600', 
-      bgLight: 'bg-purple-50'
+      bg: 'from-green-500 to-emerald-500',
+      text: 'text-green-600', 
+      bgLight: 'bg-green-50'
     },
     default: {
       bg: 'from-gray-500 to-gray-600',

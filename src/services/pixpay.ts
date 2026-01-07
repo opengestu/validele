@@ -5,7 +5,7 @@ export interface PixPayInitiateRequest {
   amount: number;
   phone: string;
   orderId: string;
-  customData?: Record<string, any>;
+  customData?: Record<string, string | number | boolean | null>;
 }
 
 export interface PixPayInitiateResponse {

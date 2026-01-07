@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Product, Order } from '@/types/database';
+import { toFrenchErrorMessage } from '@/lib/errors';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 const VendorDashboard = () => {
@@ -203,7 +204,7 @@ const VendorDashboard = () => {
       setAddModalOpen(false);
       toast({ title: 'Produit ajouté', description: 'Produit créé avec succès.' });
     } catch (error: any) {
-      toast({ title: 'Erreur', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Erreur inconnue'), variant: 'destructive' });
     } finally {
       setAdding(false);
     }
@@ -294,8 +295,7 @@ const VendorDashboard = () => {
       setUserProfile({ ...userProfile, ...editProfile });
       setIsEditing(false);
     } catch (error: unknown) {
-      let errorMessage = 'Erreur inconnue';
-      if (error instanceof Error) errorMessage = error.message;
+      const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
       toast({ title: 'Erreur', description: errorMessage, variant: 'destructive' });
     } finally {
       setSavingProfile(false);
@@ -335,7 +335,7 @@ const VendorDashboard = () => {
       setEditModalOpen(false);
       toast({ title: 'Produit modifié', description: 'Les modifications ont été enregistrées.' });
     } catch (error: any) {
-      toast({ title: 'Erreur', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Erreur inconnue'), variant: 'destructive' });
     } finally {
       setSavingEdit(false);
     }
@@ -361,7 +361,7 @@ const VendorDashboard = () => {
       setDeleteDialogOpen(false);
       toast({ title: 'Produit supprimé', description: 'Le produit a été supprimé.' });
     } catch (error: any) {
-      toast({ title: 'Erreur', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Erreur inconnue'), variant: 'destructive' });
     } finally {
       setDeleting(false);
     }
@@ -379,7 +379,7 @@ const VendorDashboard = () => {
       setProducts(products => products.map(p => p.id === productId ? { ...p, stock_quantity: newStock } : p));
       toast({ title: 'Stock mis à jour', description: `Stock actuel : ${newStock}` });
     } catch (error: any) {
-      toast({ title: 'Erreur', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Erreur inconnue'), variant: 'destructive' });
     }
   };
 

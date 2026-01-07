@@ -65,11 +65,11 @@ const ColorDemo = () => {
               </div>
             </Card>
 
-            {/* Acheteur */}
+            {/* Client */}
             <Card className="card-buyer p-6">
               <div className="flex items-center gap-3 mb-4">
                 <Search className="h-8 w-8 text-validel-buyer" />
-                <h3 className="text-xl font-semibold">Acheteur</h3>
+                <h3 className="text-xl font-semibold">Client</h3>
               </div>
               <div className="space-y-3">
                 <Button className="btn-buyer w-full">
@@ -108,7 +108,7 @@ const ColorDemo = () => {
               Vendeur
             </div>
             <div className="h-24 bg-validel-buyer-gradient rounded-lg flex items-center justify-center text-white font-semibold">
-              Acheteur
+              Client
             </div>
             <div className="h-24 bg-validel-delivery-gradient rounded-lg flex items-center justify-center text-white font-semibold">
               Livreur

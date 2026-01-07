@@ -1,16 +1,19 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, QrCode, CheckCircle, AlertCircle, Camera, Package, Info, Loader2 } from 'lucide-react';
+import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info, Loader2 } from 'lucide-react';
+import valideLogo from '@/assets/validel-logo.png';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
+import { toFrenchErrorMessage } from '@/lib/errors';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { apiUrl } from '@/lib/api';
+import { notifyBuyerDeliveryStarted, notifyDeliveryCompleted } from '@/services/notifications';
 
 function Html5QrcodeReact({ onScan, onError }) {
   const divId = 'qr-reader-react';
@@ -130,8 +133,8 @@ function QRScanSection({
     <Card className="mb-8 rounded-3xl border-0 bg-white/80 backdrop-blur shadow-xl">
       <CardHeader>
         <CardTitle className="flex items-center text-xl">
-          <QrCode className="h-5 w-5 mr-2 text-purple-600" />
-          <span className="bg-gradient-to-r from-purple-600 to-sky-600 bg-clip-text text-transparent">Scanner de validation</span>
+          <QrCode className="h-5 w-5 mr-2 text-green-600" />
+          <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Scanner de validation</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -167,7 +170,7 @@ function QRScanSection({
                   <span className="font-semibold text-lg">QR code valide et correspond à la commande</span>
                 </div>
                 <Button
-                  className="bg-gradient-to-r from-purple-600 to-sky-600 hover:from-purple-700 hover:to-sky-700 text-white mt-2"
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white mt-2"
                   disabled={isConfirmingDelivery}
                   onClick={async () => {
                     await handleConfirmDelivery();
@@ -335,6 +338,13 @@ const QRScanner = () => {
 
       setCurrentOrder({ ...currentOrder, status: 'in_delivery', delivery_person_id: user.id });
       
+      // Notifier l'acheteur que la livraison est en cours
+      notifyBuyerDeliveryStarted(
+        currentOrder.buyer_id,
+        currentOrder.id,
+        currentOrder.order_code || undefined
+      ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+      
       console.log('Livraison démarrée avec succès');
       toast({
         title: "Livraison démarrée",
@@ -395,10 +405,7 @@ const QRScanner = () => {
       // setShowScanSection(false);
       // setScannedCode('');
     } catch (error) {
-      let errorMessage = 'Erreur inconnue';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
+      const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
       setValidationResult({
         status: 'invalid',
         code: codeToCheck,
@@ -433,6 +440,14 @@ const QRScanner = () => {
           .select();
         console.log('QRScanner: résultat update delivered', { error, data });
         if (error) throw error;
+
+        // Notifier vendeur + acheteur que la livraison est terminée
+        notifyDeliveryCompleted(
+          validationResult.vendor_id,
+          validationResult.buyer_id,
+          validationResult.id,
+          validationResult.order_code || undefined
+        ).catch(err => console.warn('Notification livraison terminée échouée:', err));
 
         // 1) Feedback immédiat de succès pour l'utilisateur
         toast({
@@ -533,12 +548,12 @@ const QRScanner = () => {
   }, [deliveryConfirmed, navigate]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-sky-100 flex flex-col items-center py-8 px-2 sm:px-0">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
       {/* Bandeau de progression paiement vendeur */}
       {isPayoutInProgress && (
         <div className="fixed top-0 left-0 right-0 z-50">
-          <div className="mx-auto max-w-2xl mt-2 px-4">
-            <div className="rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 text-white shadow-lg px-4 py-2 flex items-center justify-between">
+          <div className="mx-auto max-w-md mt-2 px-4">
+            <div className="rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg px-4 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <span>Paiement vendeur en cours…</span>
@@ -548,15 +563,18 @@ const QRScanner = () => {
           </div>
         </div>
       )}
-      {/* Header modernisé */}
-      <div className="w-full max-w-2xl flex items-center gap-2 mb-8">
-        <button onClick={() => navigate(-1)} className="p-2 rounded-xl hover:bg-indigo-100 transition" title="Retour au dashboard livreur">
-          <ArrowLeft className="h-6 w-6 text-indigo-600" />
-        </button>
-        <h1 className="text-2xl sm:text-3xl font-extrabold flex items-center gap-2 text-gray-900">
-          <QrCode className="h-7 w-7 text-purple-600" />
-          <span className="bg-gradient-to-r from-purple-700 to-sky-700 bg-clip-text text-transparent">Scanner QR Code</span>
-        </h1>
+      {/* Header */}
+      <div className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-sm">
+        <div className="max-w-md mx-auto px-4">
+          <div className="flex h-16 items-center justify-center gap-3">
+            <img
+              src={valideLogo}
+              alt="Validèl"
+              className="h-8 w-8 object-contain"
+            />
+            <h1 className="text-xl font-semibold tracking-tight text-white">Validèl</h1>
+          </div>
+        </div>
       </div>
 
       {/* Modal de détails commande */}
@@ -569,12 +587,12 @@ const QRScanner = () => {
                 <span className="font-semibold">Client:</span> {currentOrder?.buyer_profile?.full_name}<br />
                 <span className="font-semibold">Adresse:</span> {currentOrder?.delivery_address}<br />
                 <span className="font-semibold">Téléphone:</span> {currentOrder?.buyer_phone}<br />
-                <span className="font-semibold">Code commande:</span> <span className="bg-blue-100 text-blue-800 text-sm font-medium px-3 py-1 rounded">{currentOrder?.order_code}</span>
+                <span className="font-semibold">Code commande:</span> <span className="bg-green-100 text-green-800 text-sm font-medium px-3 py-1 rounded">{currentOrder?.order_code}</span>
               </div>
             </DialogDescription>
           </DialogHeader>
           {currentOrder?.status === 'paid' && (
-            <Button onClick={handleStartDelivery} className="w-full bg-blue-600 hover:bg-blue-700 mb-2">Commencer la livraison</Button>
+            <Button onClick={handleStartDelivery} className="w-full bg-green-600 hover:bg-green-700 mb-2">Commencer la livraison</Button>
           )}
           {currentOrder?.status === 'in_delivery' && currentOrder?.delivery_person_id === user?.id && (
             <div className="text-center mt-2">
@@ -583,7 +601,7 @@ const QRScanner = () => {
                 <span className="text-green-700 font-semibold text-lg">Livraison en cours</span>
               </div>
               <p className="text-gray-600 mb-4">Vous pouvez maintenant scanner le QR code du client</p>
-              <Button className="bg-purple-600 hover:bg-purple-700 mb-4" onClick={() => { setShowScanSection(true); setOrderModalOpen(false); }}>
+              <Button className="bg-green-600 hover:bg-green-700 mb-4" onClick={() => { setShowScanSection(true); setOrderModalOpen(false); }}>
                 <Camera className="h-4 w-4 mr-2" /> Scanner le QR code
               </Button>
             </div>
@@ -591,55 +609,78 @@ const QRScanner = () => {
         </DialogContent>
       </Dialog>
 
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="flex-1 w-full max-w-md mx-auto px-4 py-6">
         {deliveryConfirmed ? (
-          <div className="w-full bg-white/80 backdrop-blur rounded-3xl shadow-xl p-8 flex flex-col items-center ring-1 ring-emerald-100">
-            <CheckCircle className="h-16 w-16 text-emerald-600 mb-4" />
-            <h2 className="text-2xl font-bold text-emerald-700 mb-2">Commande livrée et confirmée !</h2>
-            <p className="text-emerald-800 text-lg mb-2 text-center">La livraison a bien été validée. Les fonds seront transférés au vendeur sous 24h.</p>
-            <Button className="mt-4 bg-gradient-to-r from-purple-600 to-sky-600 hover:from-purple-700 hover:to-sky-700 text-white" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
+          <div className="w-full bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center">
+            <CheckCircle className="h-16 w-16 text-green-600 mb-4" />
+            <h2 className="text-xl font-bold text-green-700 mb-2 text-center">Commande livrée et confirmée !</h2>
+            <p className="text-green-800 text-base mb-2 text-center">La livraison a bien été validée. Les fonds seront transférés au vendeur sous 24h.</p>
+            <Button className="mt-4 bg-green-600 hover:bg-green-700 text-white w-full" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
             <p className="text-sm text-gray-500 mt-2">Redirection automatique dans 3 secondes…</p>
           </div>
         ) : !showScanSection ? (
-          <>
-            {/* Recherche et infos commande */}
-            <div className="w-full max-w-2xl bg-white/80 backdrop-blur rounded-3xl shadow-xl p-6 mb-8 flex flex-col gap-4 items-center ring-1 ring-indigo-100">
-              <div className="flex items-center gap-3 mb-2">
-                <Package className="h-6 w-6 text-purple-500" />
-                <span className="text-lg font-semibold text-gray-900">Rechercher une commande</span>
-              </div>
-              <div className="w-full flex flex-col sm:flex-row gap-2 items-center">
-                <input
-                  type="text"
-                  className="flex-1 rounded-xl px-4 py-2 text-lg bg-white border border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder:text-gray-400"
-                  placeholder="Ex: CMD001"
-                  value={orderCode}
-                  onChange={e => setOrderCode(e.target.value)}
-                />
-                <Button className="bg-gradient-to-r from-purple-600 to-sky-600 hover:from-purple-700 hover:to-sky-700 text-white px-6 py-2 rounded-xl text-lg" onClick={handleSearchOrder}>
-                  Rechercher
-                </Button>
-              </div>
-            </div>
+          <div className="space-y-4">
+            {/* Recherche commande */}
+            <Card className="border-0 shadow-lg">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <Package className="h-5 w-5 text-green-600" />
+                  </div>
+                  <span className="text-lg font-semibold text-gray-900">Rechercher une commande</span>
+                </div>
+                <div className="space-y-3">
+                  <Input
+                    type="text"
+                    className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-green-500 focus:ring-green-500"
+                    placeholder="Ex: CMD001"
+                    value={orderCode}
+                    onChange={e => setOrderCode(e.target.value)}
+                  />
+                  <Button 
+                    className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
+                    onClick={handleSearchOrder}
+                  >
+                    Rechercher
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
-            {/* Instructions modernisées */}
-            <div className="w-full max-w-2xl bg-white/80 backdrop-blur rounded-3xl shadow p-6 mb-8 ring-1 ring-gray-100">
-              <div className="flex items-center gap-2 mb-3">
-                <Info className="h-5 w-5 text-indigo-400" />
-                <span className="text-lg font-semibold text-gray-800">Instructions d'utilisation</span>
-              </div>
-              <ol className="list-decimal list-inside space-y-2 text-gray-700 text-base pl-2">
-                <li><span className="font-medium">Récupérez le code de commande</span> auprès du vendeur</li>
-                <li><span className="font-medium">Recherchez la commande</span> et démarrez la livraison</li>
-                <li><span className="font-medium">Rendez-vous chez le client</span> à l'adresse indiquée</li>
-                <li><span className="font-medium">Demandez au client de présenter son QR code</span></li>
-                <li><span className="font-medium">Scannez le code</span> pour valider et libérer les fonds</li>
-              </ol>
-              <div className="mt-4 text-blue-700 text-sm font-medium">
-                <span className="font-bold">Note :</span> Les fonds seront automatiquement transférés au vendeur dans les 24h
-              </div>
-            </div>
-          </>
+            {/* Instructions */}
+            <Card className="border-0 shadow-lg">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <Info className="h-5 w-5 text-green-600" />
+                  </div>
+                  <span className="text-lg font-semibold text-gray-900">Instructions d'utilisation</span>
+                </div>
+                <ol className="space-y-3 text-gray-700 text-sm">
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                    <span><strong>Récupérez le code de commande</strong> auprès du vendeur</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
+                    <span><strong>Recherchez la commande</strong> et démarrez la livraison</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
+                    <span><strong>Rendez-vous chez le client</strong> à l'adresse indiquée</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">4</span>
+                    <span><strong>Demandez au client de présenter</strong> son QR code</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">5</span>
+                    <span><strong>Scannez le code</strong> pour valider et libérer les fonds</span>
+                  </li>
+                </ol>
+              </CardContent>
+            </Card>
+          </div>
         ) : (
           <QRScanSection
             scannedCode={scannedCode}
@@ -651,7 +692,6 @@ const QRScanner = () => {
             isConfirmingDelivery={isConfirmingDelivery}
           />
         )}
-        {/* Résultat de validation déjà inclus dans QRScanSection */}
       </div>
     </div>
   );

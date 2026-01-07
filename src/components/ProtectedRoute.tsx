@@ -2,6 +2,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { Spinner } from '@/components/ui/spinner';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -9,15 +10,36 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
-  const { user, userProfile, loading } = useAuth();
+  const { user, userProfile, loading, isOnline, refreshProfile } = useAuth();
 
-  // Affichage de chargement
+  // Affichage de chargement - attendre que l'authentification soit prête
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <Spinner size="lg" className="mx-auto mb-4" />
           <p className="text-gray-600">Chargement...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Hors connexion: afficher un message avant d'entrer dans les dashboards
+  if (!isOnline) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-sm px-6">
+          <p className="text-gray-900 font-medium">Pas de connexion</p>
+          <p className="text-gray-600 mt-2">
+            Vérifiez votre connexion Internet puis réessayez.
+          </p>
+          <button
+            type="button"
+            onClick={() => refreshProfile()}
+            className="mt-4 inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium"
+          >
+            Réessayer
+          </button>
         </div>
       </div>
     );
@@ -28,27 +50,11 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     return <Navigate to="/auth" replace />;
   }
 
-  // Si l'utilisateur est connecté mais n'a pas de profil, afficher un message d'erreur
-  if (!userProfile) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center p-8">
-          <div className="text-red-600 mb-4">
-            <svg className="h-16 w-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Erreur de profil</h2>
-          <p className="text-gray-600 mb-4">Impossible de charger votre profil utilisateur.</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-          >
-            Réessayer
-          </button>
-        </div>
-      </div>
-    );
+  // Si l'utilisateur est connecté mais n'a pas de profil complet,
+  // le rediriger vers la page d'authentification pour compléter son inscription
+  if (!userProfile || !userProfile.full_name) {
+    console.log('Profil incomplet, redirection vers /auth');
+    return <Navigate to="/auth" replace />;
   }
 
   // Vérification du rôle si requis

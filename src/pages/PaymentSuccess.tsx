@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import validelLogo from '@/assets/validel-logo.png';
+import { notifyVendorNewOrder } from '@/services/notifications';
 
 const PaymentSuccess = () => {
   const location = useLocation();
@@ -67,7 +68,7 @@ const PaymentSuccess = () => {
       // Met à jour le statut de la commande à 'paid' si ce n'est pas déjà fait
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
-        .select('status')
+        .select('status, vendor_id, buyer_id, total_amount, order_code, product_id')
         .eq('id', orderId)
         .single();
       if (!orderError && orderData && orderData.status !== 'paid') {
@@ -75,6 +76,21 @@ const PaymentSuccess = () => {
           .from('orders')
           .update({ status: 'paid' })
           .eq('id', orderId);
+        
+        // Récupérer le nom du produit et de l'acheteur pour la notification
+        const [productRes, buyerRes] = await Promise.all([
+          supabase.from('products').select('name').eq('id', orderData.product_id).single(),
+          supabase.from('profiles').select('full_name').eq('id', orderData.buyer_id).single()
+        ]);
+        
+        // Notifier le vendeur de la nouvelle commande payée
+        notifyVendorNewOrder(
+          orderData.vendor_id,
+          orderId,
+          buyerRes.data?.full_name || 'Client',
+          productRes.data?.name || 'Produit',
+          orderData.total_amount
+        ).catch(err => console.warn('Notification vendeur échouée:', err));
       }
     };
     updateOrderStatus();
@@ -96,7 +112,7 @@ const PaymentSuccess = () => {
     doc.text('Reçu de paiement', 70, 35);
     doc.setFontSize(12);
     doc.text(`Commande n°: ${order.order_code || order.id}`, 20, 55);
-    doc.text(`Acheteur: ${buyer?.full_name || ''}`, 20, 65);
+    doc.text(`Client: ${buyer?.full_name || ''}`, 20, 65);
     doc.text(`Email: ${buyer?.email || ''}`, 20, 75);
     doc.text(`Produit: ${product?.name || ''}`, 20, 85);
     doc.text(`Montant: ${order.total_amount} FCFA`, 20, 95);

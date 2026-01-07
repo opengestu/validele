@@ -5,6 +5,7 @@ import { ArrowLeft, Package, Clock, Truck, CheckCircle, QrCode } from 'lucide-re
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { Spinner } from '@/components/ui/spinner';
 
 const OrderTracking = () => {
   const { orderId } = useParams();
@@ -122,7 +123,7 @@ const OrderTracking = () => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <Spinner size="lg" className="mx-auto mb-4" />
           <p>Chargement...</p>
         </div>
       </div>

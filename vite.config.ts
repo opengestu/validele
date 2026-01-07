@@ -5,6 +5,7 @@ import path from 'path'; // Ajoutez ceci
 
 export default defineConfig({
   plugins: [react()],
+  base: './', // Important pour Capacitor - chemins relatifs
   server: {
     https: {
       key: fs.readFileSync('./localhost.key'),

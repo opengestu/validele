@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
 import AppResumeRefresher from "@/components/AppResumeRefresher";
+import PushNotificationSetup from "@/components/PushNotificationSetup";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
 import VendorDashboard from "@/components/VendorDashboard";
@@ -37,6 +38,7 @@ const App = () => (
           <BrowserRouter>
             <AppResumeRefresher />
             <ExitConfirmHandler />
+            <PushNotificationSetup />
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/auth" element={<AuthPage />} />

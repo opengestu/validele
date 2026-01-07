@@ -23,5 +23,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-"backend/.env" 
-"tes-wave/.env" 
+backend/.env
+tes-wave/.env
+
+# Firebase / Android secrets (DO NOT COMMIT)
+**/google-services.json
+backend/*adminsdk*.json

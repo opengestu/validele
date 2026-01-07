@@ -42,7 +42,7 @@ const ProductSearch = () => {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center space-x-4">
             <Link to="/">
-              <ArrowLeft className="h-6 w-6 text-gray-600 hover:text-blue-600" />
+              <ArrowLeft className="h-6 w-6 text-gray-600 hover:text-green-600" />
             </Link>
             <h1 className="text-2xl font-bold text-gray-900">Recherche de produit</h1>
           </div>
@@ -69,7 +69,7 @@ const ProductSearch = () => {
               <Button 
                 onClick={handleSearch}
                 disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="bg-green-600 hover:bg-green-700"
               >
                 <Search className="h-4 w-4 mr-2" />
                 {loading ? 'Recherche...' : 'Rechercher'}
@@ -117,7 +117,7 @@ const ProductSearch = () => {
                   </div>
                   
                   <div className="border-t pt-6">
-                    <p className="text-4xl font-bold text-blue-600 mb-6">
+                    <p className="text-4xl font-bold text-green-600 mb-6">
                       {searchResult.price.toLocaleString()} FCFA
                     </p>
                     
@@ -153,7 +153,7 @@ const ProductSearch = () => {
             <div className="grid md:grid-cols-3 gap-6 text-center">
               <div>
                 <div className="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-blue-600 font-bold">1</span>
+                  <span className="text-green-600 font-bold">1</span>
                 </div>
                 <h4 className="font-medium mb-2">Obtenez le code</h4>
                 <p className="text-sm text-gray-600">Le vendeur vous communique le code unique du produit</p>
@@ -167,7 +167,7 @@ const ProductSearch = () => {
               </div>
               <div>
                 <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-purple-600 font-bold">3</span>
+                  <span className="text-green-600 font-bold">3</span>
                 </div>
                 <h4 className="font-medium mb-2">Achetez</h4>
                 <p className="text-sm text-gray-600">Effectuez votre achat en toute sécurité</p>

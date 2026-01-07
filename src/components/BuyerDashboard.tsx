@@ -427,7 +427,68 @@ const BuyerDashboard = () => {
       });
       return;
     }
+
+    // Si c'est Orange Money, utiliser le nouveau flow PixPay
+    if (paymentMethod === 'orange_money') {
+      try {
+        setProcessingPayment(true);
+        
+        // Créer la commande d'abord
+        const { res: response, data } = await fetchJsonWithTimeout<any>(
+          apiUrl('/api/orders'),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buyer_id: user.id,
+              product_id: searchResult.id,
+              vendor_id: searchResult.vendor_id,
+              total_amount: searchResult.price * purchaseQuantity,
+              payment_method: 'orange_money',
+              buyer_phone: userProfile?.phone || '',
+              delivery_address: 'Adresse à définir',
+            })
+          },
+          30000
+        );
+
+        if (!response.ok) {
+          throw new Error(data?.message || 'Erreur création commande');
+        }
+
+        const createdOrderId = data?.id || data?.order_id;
+        setOrderId(createdOrderId);
+        
+        // Initialiser currentOrder pour PaymentForm
+        setCurrentOrder({
+          id: createdOrderId,
+          buyer_id: user.id,
+          vendor_id: searchResult.vendor_id,
+          product_id: searchResult.id,
+          total_amount: searchResult.price * purchaseQuantity,
+          payment_method: 'orange_money',
+          delivery_address: 'Adresse à définir',
+          buyer_phone: userProfile?.phone || '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        
+        setShowDirectPaymentForm(true);
+        
+      } catch (error) {
+        const err = error as Error;
+        toast({
+          title: 'Erreur',
+          description: err.message || 'Erreur lors de la création de la commande',
+          variant: 'destructive',
+        });
+      } finally {
+        setProcessingPayment(false);
+      }
+      return;
+    }
     
+    // Pour Wave et autres, continuer avec PayDunya
     try {
       setProcessingPayment(true);
       const { res: response, data } = await fetchJsonWithTimeout<PayDunyaResponse>(
@@ -984,7 +1045,7 @@ const BuyerDashboard = () => {
           </div>
         </div>
       )}
-      {showDirectPaymentForm && paydunyaMode === 'sandbox' && (
+      {showDirectPaymentForm && (
         <Dialog open={showDirectPaymentForm} onOpenChange={setShowDirectPaymentForm}>
           <DialogContent>
             <DialogHeader>
@@ -993,7 +1054,7 @@ const BuyerDashboard = () => {
             <PaymentForm 
               orderId={orderId || ''}
               buyerPhone={userProfile?.phone || ''}
-              amount={currentOrder?.total_price || 0}
+              amount={currentOrder?.total_amount || 0}
               onPaymentSuccess={() => {
                 setShowDirectPaymentForm(false);
                 setPendingOrderToken(null);

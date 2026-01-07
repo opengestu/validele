@@ -30,17 +30,17 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const roleConfig = {
     vendor: {
       color: 'validel-vendor',
-      gradient: 'from-orange-500 to-red-500',
+      gradient: 'from-green-500 to-emerald-500',
       title: 'Espace Vendeur'
     },
     buyer: {
       color: 'validel-buyer', 
       gradient: 'from-green-500 to-emerald-500',
-      title: 'Espace Acheteur'
+      title: 'Espace Client'
     },
     delivery: {
       color: 'validel-delivery',
-      gradient: 'from-purple-500 to-violet-500', 
+      gradient: 'from-green-500 to-emerald-500', 
       title: 'Espace Livreur'
     }
   };

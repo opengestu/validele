@@ -49,8 +49,22 @@ async function sendSMS(phone, message) {
     console.log('[DIRECT7] SMS envoyé avec succès:', response.data);
     return { success: true, data: response.data };
   } catch (error) {
-    console.error('[DIRECT7] Erreur envoi SMS:', error.response?.data || error.message);
-    throw new Error(error.response?.data?.detail || 'Erreur lors de l\'envoi du SMS');
+    const apiData = error?.response?.data;
+    const detail = apiData?.detail;
+
+    // Normaliser les erreurs Direct7 pour éviter "[object Object]"
+    const detailCode = typeof detail === 'object' && detail ? detail.code : undefined;
+    const detailMessage = typeof detail === 'object' && detail ? detail.message : undefined;
+    const fallbackMessage = typeof apiData?.message === 'string' ? apiData.message : undefined;
+    const finalMessage =
+      (typeof detailMessage === 'string' && detailMessage.trim()) ||
+      (typeof fallbackMessage === 'string' && fallbackMessage.trim()) ||
+      (typeof error?.message === 'string' && error.message.trim()) ||
+      "Erreur lors de l'envoi du SMS";
+
+    console.error('[DIRECT7] Erreur envoi SMS:', apiData || error?.message || error);
+    const prefix = detailCode ? `${detailCode}: ` : '';
+    throw new Error(`${prefix}${finalMessage}`);
   }
 }
 
@@ -83,7 +97,17 @@ async function sendOTP(phone) {
   // Envoyer le SMS
   const message = `Votre code de verification Validel est: ${otp}. Il expire dans 5 minutes.`;
   
-  await sendSMS(phone, message);
+  try {
+    await sendSMS(phone, message);
+  } catch (err) {
+    // Ne pas laisser un OTP en base si l'envoi SMS a échoué
+    try {
+      await supabase.from('otp_codes').delete().eq('phone', phone);
+    } catch (cleanupErr) {
+      console.error('[OTP] Erreur nettoyage OTP après échec SMS:', cleanupErr);
+    }
+    throw err;
+  }
 
   console.log(`[OTP] Code envoyé à ${phone}: ${otp} (expire à ${expiresAt})`);
   

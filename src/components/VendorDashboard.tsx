@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Spinner } from '@/components/ui/spinner';
 import { 
   Package, 
   Plus, 
@@ -12,8 +13,7 @@ import {
   DollarSign,
   Users,
   LogOut,
-  User,
-  Menu
+  User
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import {
   StatsCard, 
   StatusBadge
 } from '@/components/dashboard';
+import { toFrenchErrorMessage } from '@/lib/errors';
 
 type ProfileRow = {
   full_name: string | null;
@@ -84,12 +85,12 @@ const VendorDashboard = () => {
     if (!user) return;
 
     const walletColumnMissing = (err: { message?: string } | null) =>
-      Boolean(err?.message && err.message.includes("column 'walletType' does not exist"));
+      Boolean(err?.message && (err.message.includes("column") && err.message.includes("wallet")));
 
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, phone, walletType')
+        .select('full_name, phone, wallet_type')
         .eq('id', user.id)
         .single<ProfileRow>();
 
@@ -115,7 +116,7 @@ const VendorDashboard = () => {
         profileData = {
           full_name: data.full_name ?? null,
           phone: data.phone ?? null,
-          walletType: data.walletType ?? null
+          walletType: (data as unknown as { wallet_type?: string }).wallet_type ?? null
         };
       }
 
@@ -152,7 +153,16 @@ const VendorDashboard = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setProducts(data || []);
+      // Convertir null en undefined pour compatibilité avec le type Product
+      const mappedData = (data || []).map(p => ({
+        ...p,
+        description: p.description ?? undefined,
+        category: p.category ?? undefined,
+        image_url: p.image_url ?? undefined,
+        stock_quantity: p.stock_quantity ?? undefined,
+        is_available: p.is_available ?? true
+      })) as Product[];
+      setProducts(mappedData);
     } catch (error) {
       toast({
         title: "Erreur",
@@ -177,7 +187,20 @@ const VendorDashboard = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setOrders((data || []).filter(order => order.status !== 'pending'));
+      // Convertir null en undefined pour compatibilité avec le type Order
+      const mappedOrders = (data || []).map(o => ({
+        ...o,
+        delivery_person_id: o.delivery_person_id ?? undefined,
+        order_code: o.order_code ?? undefined,
+        qr_code: o.qr_code ?? undefined,
+        status: o.status ?? undefined,
+        payment_confirmed_at: o.payment_confirmed_at ?? undefined,
+        assigned_at: o.assigned_at ?? undefined,
+        delivered_at: o.delivered_at ?? undefined,
+        token: o.token ?? undefined,
+        profiles: o.profiles ? { full_name: o.profiles.full_name || '' } : undefined
+      })) as Order[];
+      setOrders(mappedOrders.filter(order => order.status !== 'pending'));
     } catch (error) {
       toast({
         title: "Erreur",
@@ -219,10 +242,11 @@ const VendorDashboard = () => {
   }, [user?.id, fetchOrders]);
 
   const generateProductCode = async () => {
+    if (!user?.id) throw new Error('User not authenticated');
     const { data: products } = await supabase
       .from('products')
       .select('code')
-      .eq('vendor_id', user?.id);
+      .eq('vendor_id', user.id);
     
     let nextNumber = 1;
     if (products && products.length > 0) {
@@ -249,11 +273,14 @@ const VendorDashboard = () => {
 
     setAdding(true);
     try {
+      if (!user?.id) {
+        throw new Error('User not authenticated');
+      }
       const code = await generateProductCode();
       const { error } = await supabase
         .from('products')
         .insert({
-          vendor_id: user?.id,
+          vendor_id: user.id,
           name: newProduct.name,
           price: parseInt(newProduct.price),
           description: newProduct.description,
@@ -356,17 +383,36 @@ const VendorDashboard = () => {
   };
 
   const handleSaveProfile = async () => {
+    if (!user?.id) {
+      toast({
+        title: 'Erreur',
+        description: 'Utilisateur non connecté',
+        variant: 'destructive'
+      });
+      return;
+    }
+    
     setSavingProfile(true);
     try {
-      const { error } = await supabase
+      console.log('Mise à jour profil vendeur pour user:', user.id);
+      console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType });
+      
+      const { data, error } = await supabase
         .from('profiles')
-        .upsert({
-          id: user?.id,
+        .update({
           full_name: editProfile.full_name,
           phone: editProfile.phone,
-        });
+          wallet_type: editProfile.walletType || null,
+        })
+        .eq('id', user.id)
+        .select();
 
-      if (error) throw error;
+      console.log('Résultat update:', { data, error });
+
+      if (error) {
+        console.error('Erreur Supabase:', error);
+        throw error;
+      }
 
       toast({
         title: 'Succès',
@@ -378,10 +424,12 @@ const VendorDashboard = () => {
         phone: editProfile.phone
       });
       setIsEditingProfile(false);
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('Erreur sauvegarde profil:', error);
+      const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
       toast({
         title: 'Erreur',
-        description: 'Impossible de mettre à jour le profil',
+        description: `Impossible de mettre à jour le profil: ${errorMessage}`,
         variant: 'destructive'
       });
     } finally {
@@ -400,23 +448,32 @@ const VendorDashboard = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+        <Spinner size="lg" />
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
+  // Fonction pour déconnexion
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/');
+  };
 
-      {/* Header Moderne */}
-      <header className="bg-gradient-to-r from-orange-500 via-gray-400 to-sky-400 rounded-b-2xl shadow-lg mb-6 relative">
+  return (
+    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
+
+      {/* Header Moderne - Style similaire à BuyerDashboard */}
+      <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
-          <h3 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg text-center tracking-tight">Commerçant(e)</h3>
+          <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
+            Validèl
+          </h1>
+          <p className="text-white/90 text-sm mt-1">Espace Vendeur</p>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
 
       {/* ...section stats supprimée... */}
 
@@ -444,7 +501,7 @@ const VendorDashboard = () => {
             <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
             <Button 
               onClick={() => setAddModalOpen(true)}
-              className="bg-gradient-to-r from-orange-500 via-gray-400 to-sky-400 text-white border-0 shadow-md hover:from-orange-600 hover:to-sky-500 flex-shrink-0 text-sm px-3 py-2"
+              className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
             >
               <Plus className="h-4 w-4 mr-2" />
               Ajouter
@@ -476,7 +533,7 @@ const VendorDashboard = () => {
                   <div className="space-y-2 mb-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Prix:</span>
-                      <span className="font-semibold text-orange-600">
+                      <span className="font-semibold text-green-600">
                         {product.price?.toLocaleString()} CFA
                       </span>
                     </div>
@@ -522,7 +579,7 @@ const VendorDashboard = () => {
               <p className="text-gray-500 mb-4">Commencez par ajouter votre premier produit</p>
               <Button 
                 onClick={() => setAddModalOpen(true)}
-                className="bg-orange-500 hover:bg-orange-600"
+                className="bg-green-500 hover:bg-green-600"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Ajouter un produit
@@ -558,7 +615,7 @@ const VendorDashboard = () => {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-orange-600">
+                      <p className="font-semibold text-green-600">
                         {order.total_amount?.toLocaleString()} CFA
                       </p>
                       <StatusBadge 
@@ -588,7 +645,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <TrendingUp className="h-5 w-5 mr-2 text-orange-500" />
+                  <TrendingUp className="h-5 w-5 mr-2 text-green-500" />
                   Performances
                 </CardTitle>
               </CardHeader>
@@ -613,7 +670,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-orange-500" />
+                  <Users className="h-5 w-5 mr-2 text-green-500" />
                   Clients
                 </CardTitle>
               </CardHeader>
@@ -667,7 +724,7 @@ const VendorDashboard = () => {
                     </div>
                     <Button 
                       onClick={() => setIsEditingProfile(true)}
-                      className="bg-orange-500 hover:bg-orange-600"
+                      className="bg-green-500 hover:bg-green-600"
                     >
                       Modifier le profil
                     </Button>
@@ -723,7 +780,7 @@ const VendorDashboard = () => {
                       <Button 
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
-                        className="bg-orange-500 hover:bg-orange-600"
+                        className="bg-green-500 hover:bg-green-600"
                       >
                         {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                       </Button>
@@ -787,9 +844,9 @@ const VendorDashboard = () => {
                   <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
                   <Button 
                     onClick={() => setAddModalOpen(true)}
-                className="bg-gradient-to-r from-orange-500 via-gray-400 to-sky-400 text-white border-0 shadow-md hover:from-orange-600 hover:to-sky-500 flex-shrink-0 text-xs px-2 py-1"
+                className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
                   >
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4 mr-1" />
                     Ajouter
                   </Button>
                 </div>
@@ -809,7 +866,7 @@ const VendorDashboard = () => {
                             </div>
                             
                             <div className="flex items-center justify-between mt-2">
-                              <span className="font-semibold text-orange-600">{product.price} CFA</span>
+                              <span className="font-semibold text-green-600">{product.price} CFA</span>
                               <StatusBadge 
                                 status={product.is_available ? 'active' : 'inactive'} 
                                 size="sm" 
@@ -918,7 +975,7 @@ const VendorDashboard = () => {
                         </div>
                         <Button 
                           onClick={() => setIsEditingProfile(true)}
-                          className="w-full bg-orange-500 hover:bg-orange-600"
+                          className="w-full bg-green-500 hover:bg-green-600"
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
@@ -972,7 +1029,7 @@ const VendorDashboard = () => {
                           <Button 
                             onClick={handleSaveProfile}
                             disabled={savingProfile}
-                            className="flex-1 bg-orange-500 hover:bg-orange-600"
+                            className="flex-1 bg-green-500 hover:bg-green-600"
                           >
                             {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                           </Button>
@@ -1001,29 +1058,29 @@ const VendorDashboard = () => {
           </div>
 
           {/* Bottom Navigation Bar - Fixed */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50">
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 shadow-lg">
             <TabsList className="w-full h-16 bg-white rounded-none border-0">
-              <div className="flex w-full h-16 bg-white justify-between items-center px-4">
+              <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                 <TabsTrigger 
                   value="products" 
-                  className="flex flex-col items-center justify-center space-y-1 h-full data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-sky-400 data-[state=active]:text-white px-4 rounded-lg"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <Package className="h-5 w-5" />
-                  <span className="text-xs">Produits</span>
+                  <span className="text-xs font-medium">Produits</span>
                 </TabsTrigger>
                 <TabsTrigger 
                   value="orders" 
-                  className="flex flex-col items-center justify-center space-y-1 h-full data-[state=active]:bg-orange-50 data-[state=active]:text-orange-600 px-4 rounded-lg"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <ShoppingCart className="h-5 w-5" />
-                  <span className="text-xs">Commandes</span>
+                  <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
                 <TabsTrigger 
                   value="profile" 
-                  className="flex flex-col items-center justify-center space-y-1 h-full data-[state=active]:bg-orange-50 data-[state=active]:text-orange-600 px-4 rounded-lg"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <User className="h-5 w-5" />
-                  <span className="text-xs">Compte</span>
+                  <span className="text-xs font-medium">Compte</span>
                 </TabsTrigger>
               </div>
             </TabsList>
@@ -1081,7 +1138,7 @@ const VendorDashboard = () => {
             <Button 
               onClick={handleAddProduct}
               disabled={adding}
-              className="bg-orange-500 hover:bg-orange-600"
+              className="bg-green-500 hover:bg-green-600"
             >
               {adding ? 'Ajout...' : 'Ajouter'}
             </Button>
@@ -1140,7 +1197,7 @@ const VendorDashboard = () => {
             <Button 
               onClick={handleEditProduct}
               disabled={editing}
-              className="bg-orange-500 hover:bg-orange-600"
+              className="bg-green-500 hover:bg-green-600"
             >
               {editing ? 'Modification...' : 'Modifier'}
             </Button>
