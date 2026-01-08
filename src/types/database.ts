@@ -41,6 +41,11 @@ export interface Order {
   };
   profiles?: {
     full_name: string;
+    phone?: string;
+  };
+  delivery_person?: {
+    full_name: string;
+    phone?: string;
   };
   token?: string;
 }

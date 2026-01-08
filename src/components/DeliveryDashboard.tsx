@@ -22,7 +22,8 @@ type DeliveryOrder = {
   status: string;
   order_code?: string | null;
   products?: { name?: string | null; code?: string | null } | null;
-  buyer_profile?: { full_name?: string | null } | null;
+  buyer_profile?: { full_name?: string | null; phone?: string | null } | null;
+  vendor_profile?: { full_name?: string | null; phone?: string | null } | null;
   delivery_address?: string | null;
   buyer_phone?: string | null;
   total_amount?: number | null;

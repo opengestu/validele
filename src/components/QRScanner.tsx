@@ -238,11 +238,18 @@ const QRScanner = () => {
       try {
         const { data, error } = await supabase
           .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name)`) 
+          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`) 
           .eq('id', orderId)
           .maybeSingle();
         if (!error && data) {
           setCurrentOrder(data);
+          console.log('Commande chargée depuis URL:', { 
+            id: data.id, 
+            vendor_id: data.vendor_id,
+            buyer_id: data.buyer_id,
+            vendor_profile: data.vendor_profile,
+            toutes_les_données: data
+          });
           // Si la commande est déjà en cours et assignée au livreur, on amène l'utilisateur au scan
           if (data.status === 'in_delivery' && data.delivery_person_id === user.id) {
             setOrderModalOpen(false);
@@ -277,7 +284,8 @@ const QRScanner = () => {
         .select(`
           *,
           products(name, code),
-          buyer_profile:profiles!orders_buyer_id_fkey(full_name)
+          buyer_profile:profiles!orders_buyer_id_fkey(full_name),
+          vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
         `)
         .ilike('order_code', orderCode.trim().replace(/\s/g, '').toUpperCase())
         .in('status', ['paid', 'in_delivery'])
@@ -396,7 +404,7 @@ const QRScanner = () => {
         status: 'valid',
         timestamp: new Date().toLocaleString()
       });
-      console.log('QRScanner: validation OK, commande id =', currentOrder.id);
+      console.log('QRScanner: validation OK, commande id =', currentOrder.id, 'vendor_profile:', currentOrder.vendor_profile);
       toast({
         title: "QR Code valide",
         description: `Livraison confirmée pour ${currentOrder.buyer_profile?.full_name}`,
@@ -430,6 +438,9 @@ const QRScanner = () => {
       try {
         setIsConfirmingDelivery(true);
         console.log('QRScanner: confirmation livraison, id =', validationResult.id);
+        console.log('QRScanner: vendor_id =', validationResult.vendor_id);
+        
+        // 1) Marquer la commande comme delivered
         const { error, data } = await supabase
           .from('orders')
           .update({ 
@@ -449,103 +460,114 @@ const QRScanner = () => {
           validationResult.order_code || undefined
         ).catch(err => console.warn('Notification livraison terminée échouée:', err));
 
-        // 1) Feedback immédiat de succès pour l'utilisateur
+        // 2) Déclencher le paiement vendeur
         toast({
           title: "Livraison confirmée",
-          description: "Validation effectuée. Paiement vendeur en cours…",
+          description: "Paiement vendeur en cours…",
         });
 
-        // 2) Mettre à jour l'UI tout de suite (pas d'attente du paiement vendeur)
-        setValidationResult(null);
-        setScannedCode('');
-        setOrderCode('');
-        setShowScanSection(false);
-        setDeliveryConfirmed(true);
+        setIsPayoutInProgress(true);
 
-        // 3) Déclencher le paiement vendeur en arrière-plan (non bloquant)
-        (async () => {
-          try {
-            setIsPayoutInProgress(true);
-            
-            console.log('[PAYOUT] Récupération infos vendeur, vendor_id:', validationResult.vendor_id);
-            
-            // Récupérer les infos vendeur pour le payout
-            const { data: vendorData, error: vendorError } = await supabase
-              .from('profiles')
-              .select('phone, wallet_type')
-              .eq('id', validationResult.vendor_id)
-              .single();
+        // 3) Récupérer le profil vendeur DIRECTEMENT par vendor_id
+        console.log('[PAYOUT] Récupération profil vendeur par vendor_id:', validationResult.vendor_id);
+        
+        const { data: vendorProfile, error: vendorError } = await supabase
+          .from('profiles')
+          .select('phone, wallet_type, full_name')
+          .eq('id', validationResult.vendor_id)
+          .maybeSingle();
+        
+        console.log('[PAYOUT] Résultat requête vendeur:', { vendorProfile, vendorError });
 
-            console.log('[PAYOUT] Données vendeur récupérées:', { vendorData, vendorError });
+        if (vendorError) {
+          throw new Error(`Erreur récupération vendeur: ${vendorError.message}`);
+        }
 
-            if (vendorError) {
-              throw new Error(`Erreur récupération vendeur: ${vendorError.message}`);
-            }
+        if (!vendorProfile) {
+          throw new Error(`Profil vendeur non trouvé pour vendor_id: ${validationResult.vendor_id}`);
+        }
 
-            if (!vendorData) {
-              throw new Error('Vendeur non trouvé dans la base de données');
-            }
+        console.log('[PAYOUT] Profil vendeur trouvé:', vendorProfile);
 
-            if (!vendorData.phone) {
-              throw new Error('Numéro de téléphone vendeur manquant');
-            }
+        if (!vendorProfile.phone) {
+          throw new Error(`Numéro de téléphone manquant pour le vendeur ${vendorProfile.full_name || validationResult.vendor_id}`);
+        }
 
-            if (!vendorData.wallet_type) {
-              throw new Error('Type de portefeuille vendeur non configuré (Wave ou Orange Money)');
-            }
+        if (!vendorProfile.wallet_type) {
+          throw new Error(`Type de portefeuille non configuré pour le vendeur ${vendorProfile.full_name || validationResult.vendor_id}`);
+        }
 
-            // Calculer montant vendeur (95% du total)
-            const montantVendeur = Math.round(validationResult.total_amount * 0.95);
+        // 4) Envoyer le paiement au vendeur
+        try {
+          // Calculer montant vendeur (95% du total)
+          const montantVendeur = Math.round(validationResult.total_amount * 0.95);
 
-            console.log('[PAYOUT] Envoi paiement à:', {
-              phone: vendorData.phone,
+          console.log('[PAYOUT] Envoi paiement à:', {
+            phone: vendorProfile.phone,
+            amount: montantVendeur,
+            walletType: vendorProfile.wallet_type
+          });
+
+          const response = await fetch(apiUrl('/api/payment/pixpay/payout'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
               amount: montantVendeur,
-              walletType: vendorData.wallet_type
-            });
-
-            const response = await fetch(apiUrl('/api/payment/pixpay/payout'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                amount: montantVendeur,
-                phone: vendorData.phone,
-                orderId: validationResult.id,
-                type: 'vendor_payout',
-                walletType: vendorData.wallet_type
-              }),
-            });
-            
-            const result = await response.json();
-            if (result.success) {
-              toast({
-                title: "Paiement vendeur déclenché",
-                description: `${montantVendeur} FCFA envoyé vers ${vendorData.wallet_type === 'wave-senegal' ? 'Wave' : 'Orange Money'}`,
-              });
-            } else {
-              toast({
-                title: "Erreur paiement PixPay",
-                description: result.error || result.message || 'Erreur paiement vendeur',
-                variant: "destructive",
-              });
-            }
-          } catch (err: unknown) {
-            let errorMessage = 'Erreur paiement vendeur';
-            if (err instanceof Error) {
-              errorMessage = err.message;
-            }
-            toast({
-              title: "Erreur paiement vendeur",
-              description: errorMessage,
-              variant: "destructive",
-            });
-          } finally {
-            // On peut nettoyer la commande courante après
+              phone: vendorProfile.phone,
+              orderId: validationResult.id,
+              type: 'vendor_payout',
+              walletType: vendorProfile.wallet_type
+            }),
+          });
+          
+          const result = await response.json();
+          console.log('[PAYOUT] Résultat API:', result);
+          
+          if (result.success) {
+            // Succès de l'initiation - afficher info et attendre validation vendeur
+            setValidationResult(null);
+            setScannedCode('');
+            setOrderCode('');
+            setShowScanSection(false);
+            setDeliveryConfirmed(true);
             setCurrentOrder(null);
-            setIsPayoutInProgress(false);
-          }
-        })();
+            
+            // Message selon si on a un lien SMS ou pas
+            const paymentMessage = result.sms_link 
+              ? `Paiement de ${montantVendeur} FCFA initié. Le vendeur ${vendorProfile.full_name} doit valider le SMS envoyé à ${vendorProfile.phone}`
+              : `Paiement de ${montantVendeur} FCFA envoyé au vendeur ${vendorProfile.full_name} via ${vendorProfile.wallet_type === 'wave-senegal' ? 'Wave' : 'Orange Money'}. Transaction: ${result.transaction_id}`;
+            
+            toast({
+              title: "✅ Livraison confirmée !",
+              description: paymentMessage,
+              duration: 8000, // 8 secondes pour lire
+            });
 
-        setIsConfirmingDelivery(false);
+            // Log pour debug
+            console.log('[PAYOUT] Transaction initiée:', {
+              transaction_id: result.transaction_id,
+              sms_link: result.sms_link,
+              message: result.message
+            });
+          } else {
+            // Échec paiement - afficher erreur et ne pas confirmer
+            throw new Error(result.error || result.message || 'Erreur paiement vendeur');
+          }
+        } catch (err: unknown) {
+          let errorMessage = 'Erreur paiement vendeur';
+          if (err instanceof Error) {
+            errorMessage = err.message;
+          }
+          console.error('[PAYOUT] Erreur:', errorMessage);
+          toast({
+            title: "❌ Échec du paiement vendeur",
+            description: `La livraison est marquée comme terminée mais le paiement a échoué: ${errorMessage}`,
+            variant: "destructive",
+          });
+        } finally {
+          setIsPayoutInProgress(false);
+          setIsConfirmingDelivery(false);
+        }
       } catch (error: unknown) {
         let errorMessage = 'Erreur inconnue';
         if (error instanceof Error) {
