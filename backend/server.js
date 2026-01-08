@@ -425,7 +425,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     }
 
     const orderId = customData.order_id;
-    console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state);
+    const transactionType = customData.type || 'payment'; // 'payment' ou 'payout'
+    console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state, '| Type:', transactionType);
 
     // Mettre à jour la transaction dans Supabase
     if (transaction_id) {
@@ -446,30 +447,36 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     }
 
     // Si paiement réussi, mettre à jour la commande
-    if (state === 'SUCCESSFUL' && orderId) {
+    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts
+    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout') {
       // Récupérer l'order_code de la commande
       const { data: orderData } = await supabase
         .from('orders')
-        .select('order_code')
+        .select('order_code, status')
         .eq('id', orderId)
         .single();
 
-      const { error: orderError } = await supabase
-        .from('orders')
-        .update({
-          status: 'paid', // Utiliser 'status' pas 'payment_status'
-          payment_confirmed_at: new Date().toISOString(),
-          qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
-        })
-        .eq('id', orderId);
-
-      if (orderError) {
-        console.error('[PIXPAY] Erreur update order:', orderError);
+      // Ne pas écraser le status si la commande est déjà delivered
+      if (orderData?.status === 'delivered') {
+        console.log('[PIXPAY] ⚠️ Commande déjà livrée, status non modifié');
       } else {
-        console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
-        
-        // TODO: Envoyer notification push au vendeur
+        const { error: orderError } = await supabase
+          .from('orders')
+          .update({
+            status: 'paid', // Utiliser 'status' pas 'payment_status'
+            payment_confirmed_at: new Date().toISOString(),
+            qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
+          })
+          .eq('id', orderId);
+
+        if (orderError) {
+          console.error('[PIXPAY] Erreur update order:', orderError);
+        } else {
+          console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
+        }
       }
+    } else if (state === 'SUCCESSFUL' && orderId && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
+      console.log('[PIXPAY] ✅ Payout vendeur réussi pour commande', orderId, '- Status non modifié (reste delivered)');
     }
 
     // Si échec, notifier
