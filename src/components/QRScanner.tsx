@@ -441,7 +441,7 @@ const QRScanner = () => {
         console.log('QRScanner: vendor_id =', validationResult.vendor_id);
         
         // 1) Marquer la commande comme delivered
-        const { error, data } = await supabase
+        const { error: updateError, data: updatedOrders } = await supabase
           .from('orders')
           .update({ 
             status: 'delivered',
@@ -449,8 +449,20 @@ const QRScanner = () => {
           })
           .eq('id', validationResult.id)
           .select();
-        console.log('QRScanner: résultat update delivered', { error, data });
-        if (error) throw error;
+        
+        console.log('QRScanner: résultat update delivered', { error: updateError, data: updatedOrders });
+        
+        if (updateError) {
+          console.error('QRScanner: ERREUR mise à jour statut delivered:', updateError);
+          throw new Error(`Erreur mise à jour statut: ${updateError.message}`);
+        }
+        
+        if (!updatedOrders || updatedOrders.length === 0) {
+          throw new Error('Commande non mise à jour - aucune donnée retournée. Vérifiez les politiques RLS.');
+        }
+        
+        const updatedOrder = updatedOrders[0];
+        console.log('QRScanner: ✅ Statut mis à jour avec succès:', updatedOrder.status);
 
         // Notifier vendeur + acheteur que la livraison est terminée
         notifyDeliveryCompleted(
@@ -549,6 +561,12 @@ const QRScanner = () => {
               sms_link: result.sms_link,
               message: result.message
             });
+            
+            // Rafraîchir les données du dashboard
+            if (onDeliveryConfirmed) {
+              console.log('QRScanner: Rafraîchissement des données dashboard');
+              onDeliveryConfirmed();
+            }
           } else {
             // Échec paiement - afficher erreur et ne pas confirmer
             throw new Error(result.error || result.message || 'Erreur paiement vendeur');
