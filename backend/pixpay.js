@@ -156,8 +156,10 @@ async function sendMoney(params) {
     })
   };
 
-  // NE PAS ajouter business_name_id pour les payouts (uniquement pour payin)
-  // Les payouts (210, 214) sont directs sans business_name_id
+  // Ajouter business_name_id pour Wave (nécessaire pour payin ET payout)
+  if (walletType === 'wave-senegal' && PIXPAY_CONFIG.wave_business_name_id) {
+    payload.business_name_id = PIXPAY_CONFIG.wave_business_name_id;
+  }
 
   console.log('[PIXPAY] Paiement vendeur/livreur:', {
     amount,
@@ -166,7 +168,8 @@ async function sendMoney(params) {
     type,
     walletType,
     service_id,
-    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (210) - Envoi direct' : 'Orange Money PAYOUT (214) - Envoi direct',
+    business_name_id: payload.business_name_id || 'N/A',
+    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (210)' : 'Orange Money PAYOUT (214)',
     payload: JSON.stringify(payload, null, 2)
   });
 
