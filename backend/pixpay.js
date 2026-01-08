@@ -14,9 +14,7 @@ const PIXPAY_CONFIG = {
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
   // Configuration Wave PixPay
   wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '211'),
-  wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || '',
-  wave_redirect_url: process.env.PIXPAY_WAVE_REDIRECT_URL || 'https://validele.onrender.com/payment-success',
-  wave_redirect_error_url: process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || 'https://validele.onrender.com/payment-error'
+  wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || ''
 };
 
 console.log('[PIXPAY] Configuration chargée:', {
@@ -252,8 +250,6 @@ async function initiateWavePayment(params) {
     service_id: PIXPAY_CONFIG.wave_service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
-    redirect_url: PIXPAY_CONFIG.wave_redirect_url,
-    redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url,
     custom_data: JSON.stringify({
       order_id: orderId,
       payment_method: 'wave',
