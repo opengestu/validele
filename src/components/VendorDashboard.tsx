@@ -185,6 +185,7 @@ const VendorDashboard = () => {
           delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
         `)
         .eq('vendor_id', user.id)
+        .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
         .order('created_at', { ascending: false });
 
       if (error) throw error;
