@@ -957,10 +957,9 @@ app.post('/api/orders', async (req, res) => {
 
     console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
 
-    // Générer un order_code unique basé sur timestamp + random
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const order_code = `CMD${timestamp.slice(-4)}${random.slice(0, 2)}`;
+    // Générer un order_code unique: CM + 4 chiffres aléatoires
+    const randomNumber = Math.floor(1000 + Math.random() * 9000);
+    const order_code = `CM${randomNumber}`;
 
     // Créer la commande dans Supabase
     const { data: order, error: orderError } = await supabase
@@ -1018,10 +1017,9 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
 
     console.log('[CREATE-ORDER] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
 
-    // Générer un order_code unique basé sur timestamp + random
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const order_code = `CMD${timestamp.slice(-4)}${random.slice(0, 2)}`;
+    // Générer un order_code unique: CM + 4 chiffres aléatoires
+    const randomNumber = Math.floor(1000 + Math.random() * 9000);
+    const order_code = `CM${randomNumber}`;
 
     // 1. Créer la commande dans Supabase
     const { data: order, error: orderError } = await supabase
