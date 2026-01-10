@@ -203,6 +203,20 @@ app.post('/api/sms/register', async (req, res) => {
 
     // Créer un user Supabase Auth (admin) avec email "virtuel".
     const virtualEmail = `${formattedPhone.replace('+', '')}@sms.validele.app`;
+    
+    // Vérifier si un utilisateur avec cet email virtuel existe déjà
+    const { data: existingUsers, error: userListError } = await supabase.auth.admin.listUsers();
+    if (userListError) {
+      console.error('[SMS] Erreur listage utilisateurs:', userListError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur (vérification utilisateur)' });
+    }
+    
+    const existingUser = existingUsers.users.find(u => u.email === virtualEmail);
+    if (existingUser) {
+      console.log('[SMS] Utilisateur existe déjà avec email virtuel:', virtualEmail);
+      return res.status(409).json({ success: false, error: 'Un compte existe déjà pour ce numéro' });
+    }
+
     const randomPassword = `Sms#${Math.random().toString(36).slice(2)}${Date.now()}`;
 
     const { data: created, error: createUserError } = await supabase.auth.admin.createUser({
@@ -219,6 +233,12 @@ app.post('/api/sms/register', async (req, res) => {
 
     if (createUserError || !created?.user?.id) {
       console.error('[SMS] Erreur création user:', createUserError);
+      
+      // Si l'erreur est "email exists", cela signifie qu'il y a une incohérence
+      if (createUserError?.code === 'email_exists') {
+        return res.status(409).json({ success: false, error: 'Un compte existe déjà pour ce numéro' });
+      }
+      
       return res.status(500).json({ success: false, error: 'Erreur serveur (création utilisateur)' });
     }
 
@@ -563,6 +583,137 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Erreur lors de l\'envoi d\'argent'
+    });
+  }
+});
+
+// Remboursement client (annulation commande)
+app.post('/api/payment/pixpay/refund', async (req, res) => {
+  try {
+    const { orderId, reason } = req.body;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'orderId requis'
+      });
+    }
+
+    console.log('[REFUND] Demande de remboursement:', { orderId, reason });
+
+    // 1) Récupérer la commande avec les infos de l'acheteur
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select(`
+        id, status, total_amount, buyer_id, payment_method,
+        buyer:profiles!orders_buyer_id_fkey(phone, wallet_type, full_name)
+      `)
+      .eq('id', orderId)
+      .single();
+
+    if (orderError || !order) {
+      console.error('[REFUND] Commande non trouvée:', orderError);
+      return res.status(404).json({
+        success: false,
+        error: 'Commande non trouvée'
+      });
+    }
+
+    // 2) Vérifier que la commande peut être remboursée (status = paid ou in_delivery)
+    if (!['paid', 'in_delivery'].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Impossible de rembourser une commande avec le statut: ${order.status}`
+      });
+    }
+
+    // 3) Récupérer le téléphone et wallet_type de l'acheteur
+    const buyerPhone = order.buyer?.phone;
+    // Déterminer le wallet_type à partir du payment_method de la commande
+    let walletType = order.buyer?.wallet_type;
+    if (!walletType && order.payment_method) {
+      // Mapper payment_method vers wallet_type
+      if (order.payment_method === 'wave') {
+        walletType = 'wave-senegal';
+      } else if (order.payment_method === 'orange_money') {
+        walletType = 'orange-senegal';
+      }
+    }
+
+    if (!buyerPhone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Numéro de téléphone de l\'acheteur non trouvé'
+      });
+    }
+
+    if (!walletType) {
+      return res.status(400).json({
+        success: false,
+        error: 'Type de portefeuille non déterminé pour le remboursement'
+      });
+    }
+
+    console.log('[REFUND] Infos acheteur:', { buyerPhone, walletType, amount: order.total_amount });
+
+    // 4) Effectuer le remboursement via PixPay
+    const result = await pixpaySendMoney({
+      amount: order.total_amount,
+      phone: buyerPhone,
+      orderId: orderId,
+      type: 'refund',
+      walletType: walletType
+    });
+
+    console.log('[REFUND] Résultat PixPay:', result);
+
+    // 5) Mettre à jour le statut de la commande
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason || 'Remboursement client'
+      })
+      .eq('id', orderId);
+
+    if (updateError) {
+      console.error('[REFUND] Erreur mise à jour commande:', updateError);
+    }
+
+    // 6) Enregistrer la transaction de remboursement
+    if (result.transaction_id) {
+      const { error: txError } = await supabase
+        .from('payment_transactions')
+        .insert({
+          transaction_id: result.transaction_id,
+          provider: 'pixpay',
+          order_id: orderId,
+          amount: order.total_amount,
+          phone: buyerPhone,
+          status: result.state || 'PENDING1',
+          transaction_type: 'refund',
+          raw_response: result.raw
+        });
+
+      if (txError) {
+        console.error('[REFUND] Erreur enregistrement transaction:', txError);
+      }
+    }
+
+    return res.json({
+      success: result.success,
+      transaction_id: result.transaction_id,
+      message: result.success 
+        ? `Remboursement de ${order.total_amount} FCFA initié vers ${buyerPhone}`
+        : result.message
+    });
+
+  } catch (error) {
+    console.error('[REFUND] Erreur:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors du remboursement'
     });
   }
 });
