@@ -34,7 +34,7 @@ async function sendSMS(phone, message) {
           }
         ],
         message_globals: {
-          originator: 'Validel',
+          originator: 'VALIDEL',
           report_url: null
         }
       },
@@ -95,7 +95,7 @@ async function sendOTP(phone) {
   }
 
   // Envoyer le SMS
-  const message = `Votre code de verification Validel est: ${otp}. Il expire dans 5 minutes.`;
+  const message = `Votre code de verification VALIDEL est: ${otp}. Il expire dans 5 minutes.`;
   
   try {
     await sendSMS(phone, message);
