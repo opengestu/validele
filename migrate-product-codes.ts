@@ -24,7 +24,7 @@ async function migrateProductCodes() {
 
   for (const [vendorId, prods] of byVendor.entries()) {
     for (let i = 0; i < prods.length; i++) {
-      if (i > 9999) throw new Error('Limite de 9999 produits atteinte pour ce vendeur');
+      if (i > 9999) throw new Error('Limite de 9999 produits atteinte pour ce vendeur(se)');
       const code = `pv${i.toString().padStart(4, '0')}`.toLowerCase();
       // ... update logic ...
     }

@@ -28,7 +28,7 @@ Transformer l'application Validèl d'un design fonctionnel basique vers une inte
 ```css
 --validel-primary: 34 197 94    /* vert sécurité */
 --validel-secondary: 59 130 246  /* bleu confiance */
---validel-vendor: 249 115 22     /* orange vendeur */
+--validel-vendor: 249 115 22     /* orange vendeur(se) */
 --validel-delivery: 168 85 247   /* violet livreur */
 --validel-accent: 14 165 233     /* bleu accent */
 ```

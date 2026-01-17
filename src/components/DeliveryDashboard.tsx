@@ -295,17 +295,17 @@ const DeliveryDashboard = () => {
             {delivery.buyer_profile?.phone && (
               <p className="text-xs text-gray-500">📞 {delivery.buyer_profile.phone}</p>
             )}
-            <p><span className="font-medium">Vendeur :</span> {delivery.vendor_profile?.full_name || 'N/A'}</p>
+            <p><span className="font-medium">Vendeur(se) :</span> {delivery.vendor_profile?.full_name || 'N/A'}</p>
             {delivery.vendor_profile?.phone && (
               <p className="text-xs text-gray-500">📞 {delivery.vendor_profile.phone}</p>
             )}
             <p>Adresse : {delivery.delivery_address}</p>
           </div>
-          {/* Affichage du statut de paiement vendeur */}
+          {/* Affichage du statut de paiement vendeur(se) */}
           {delivery.status === 'delivered' && payoutTransaction && (
             <div className="mt-2 p-2 bg-purple-50 rounded-md">
               <p className="text-xs font-medium text-purple-900">
-                💰 Paiement vendeur: 
+                💰 Paiement vendeur(se): 
                 <span className={`ml-2 px-2 py-0.5 rounded ${
                   payoutTransaction.status === 'SUCCESSFUL' ? 'bg-green-100 text-green-800' :
                   payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :

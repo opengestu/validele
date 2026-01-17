@@ -83,14 +83,14 @@ const PaymentSuccess = () => {
           supabase.from('profiles').select('full_name').eq('id', orderData.buyer_id).single()
         ]);
         
-        // Notifier le vendeur de la nouvelle commande payée
+        // Notifier le vendeur(se) de la nouvelle commande payée
         notifyVendorNewOrder(
           orderData.vendor_id,
           orderId,
           buyerRes.data?.full_name || 'Client',
           productRes.data?.name || 'Produit',
           orderData.total_amount
-        ).catch(err => console.warn('Notification vendeur échouée:', err));
+        ).catch(err => console.warn('Notification vendeur(se) échouée:', err));
       }
     };
     updateOrderStatus();

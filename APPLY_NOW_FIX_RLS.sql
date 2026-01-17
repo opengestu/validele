@@ -35,11 +35,11 @@ CREATE POLICY "orders_insert_policy"
 ON public.orders FOR INSERT 
 WITH CHECK (auth.uid() = buyer_id);
 
--- Politique de mise à jour: vendeurs ET livreurs peuvent mettre à jour
+-- Politique de mise à jour: vendeur(se)s ET livreurs peuvent mettre à jour
 CREATE POLICY "orders_update_policy" 
 ON public.orders FOR UPDATE 
 USING (
-  -- Vendeurs: peuvent modifier leurs propres commandes
+  -- Vendeur(se)s: peuvent modifier leurs propres commandes
   auth.uid() = vendor_id
   OR
   -- Livreurs: peuvent prendre des commandes ou modifier celles qui leur sont assignées
@@ -55,7 +55,7 @@ USING (
   )
 )
 WITH CHECK (
-  -- Vendeurs
+  -- Vendeur(se)s
   auth.uid() = vendor_id
   OR
   -- Livreurs: peuvent s'assigner ou changer le statut de leurs commandes

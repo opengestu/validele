@@ -9,7 +9,7 @@ DROP POLICY IF EXISTS "Delivery persons can take orders" ON public.orders;
 CREATE POLICY "Delivery persons can update assigned orders" 
 ON public.orders FOR UPDATE 
 USING (
-  -- Les vendeurs peuvent modifier leurs propres commandes
+  -- Les vendeur(se)s peuvent modifier leurs propres commandes
   (auth.uid() = vendor_id) OR
   -- Les livreurs peuvent s'assigner des commandes non assignées (status = 'paid' et delivery_person_id IS NULL)
   (

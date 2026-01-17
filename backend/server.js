@@ -160,7 +160,7 @@ app.post('/api/otp/verify', async (req, res) => {
 // Objectif: avoir un id présent dans auth.users pour satisfaire la FK profiles.id -> users.id.
 app.post('/api/sms/register', async (req, res) => {
   try {
-    const { full_name, phone, role, company_name, vehicle_info, pin } = req.body || {};
+    const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin } = req.body || {};
 
     if (!full_name || !phone || !role || !pin) {
       return res.status(400).json({ success: false, error: 'Champs requis manquants' });
@@ -255,6 +255,7 @@ app.post('/api/sms/register', async (req, res) => {
         role: safeRole,
         company_name: safeRole === 'vendor' ? (company_name || null) : null,
         vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
+        wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
         pin_hash: pin
       }, { onConflict: 'id' });
 
@@ -496,7 +497,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         }
       }
     } else if (state === 'SUCCESSFUL' && orderId && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
-      console.log('[PIXPAY] ✅ Payout vendeur réussi pour commande', orderId, '- Status non modifié (reste delivered)');
+      console.log('[PIXPAY] ✅ Payout vendeur(se) réussi pour commande', orderId, '- Status non modifié (reste delivered)');
     }
 
     // Si échec, notifier
@@ -523,7 +524,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
   }
 });
 
-// Envoyer de l'argent (payout vendeur/livreur)
+// Envoyer de l'argent (payout vendeur(se)/livreur)
 app.post('/api/payment/pixpay/payout', async (req, res) => {
   try {
     const { amount, phone, orderId, type, walletType } = req.body;
@@ -818,7 +819,7 @@ app.post('/api/notify/welcome', async (req, res) => {
   }
 });
 
-// Notifier le vendeur d'une nouvelle commande
+// Notifier le Vendeur(se) d'une nouvelle commande
 app.post('/api/notify/new-order', async (req, res) => {
   try {
     const { vendorId, orderId, buyerName, productName, amount } = req.body;
@@ -905,7 +906,7 @@ app.post('/api/notify/delivery-started', async (req, res) => {
   }
 });
 
-// Notifier la fin de livraison (vendeur + acheteur)
+// Notifier la fin de livraison (vendeur(se) + acheteur)
 app.post('/api/notify/delivery-completed', async (req, res) => {
   try {
     const { vendorId, buyerId, orderId, orderCode } = req.body;

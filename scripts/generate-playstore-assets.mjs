@@ -147,7 +147,7 @@ async function createPlayStoreAssets() {
   console.log(`Validèl est l'application de paiement sécurisé pour le Sénégal.
 
 🛡️ PAIEMENT SÉCURISÉ (ESCROW)
-L'argent est bloqué jusqu'à confirmation de la livraison. Acheteurs et vendeurs sont protégés.
+L'argent est bloqué jusqu'à confirmation de la livraison. Acheteurs et vendeur(se)s sont protégés.
 
 📱 MODES DE PAIEMENT
 • Wave Sénégal
@@ -161,7 +161,7 @@ Confirmation instantanée à la livraison grâce au scan QR code.
 
 👥 POUR QUI ?
 • Acheteurs : Payez en toute confiance
-• Vendeurs : Recevez vos paiements de façon sécurisée
+• Vendeur(se)s : Recevez vos paiements de façon sécurisée
 • Livreurs : Gérez vos livraisons facilement
 
 💚 FAIT AU SÉNÉGAL, POUR LE SÉNÉGAL

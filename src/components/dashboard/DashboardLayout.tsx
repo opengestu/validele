@@ -31,7 +31,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     vendor: {
       color: 'validel-vendor',
       gradient: 'from-green-500 to-emerald-500',
-      title: 'Espace Vendeur'
+      title: 'Espace Vendeur(se)'
     },
     buyer: {
       color: 'validel-buyer', 

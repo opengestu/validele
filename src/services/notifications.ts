@@ -8,7 +8,7 @@ interface NotifyResult {
 }
 
 /**
- * Notifier le vendeur d'une nouvelle commande
+ * Notifier le Vendeur(se) d'une nouvelle commande
  */
 export async function notifyVendorNewOrder(
   vendorId: string,
@@ -95,7 +95,7 @@ export async function notifyBuyerDeliveryStarted(
 }
 
 /**
- * Notifier la fin de livraison (vendeur + acheteur)
+ * Notifier la fin de livraison (vendeur(se) + acheteur)
  */
 export async function notifyDeliveryCompleted(
   vendorId: string,

@@ -26,7 +26,8 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
     companyName: '',
     vehicleInfo: '',
-    address: ''
+    address: '',
+    walletType: 'wave-senegal'
   });
   
   const navigate = useNavigate();
@@ -111,18 +112,9 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
               phone: formData.phone || null,
               role: formData.role,
               company_name: formData.role === 'vendor' ? formData.companyName || null : null,
-              vehicle_info: formData.role === 'delivery' ? formData.vehicleInfo || null : null
+              vehicle_info: formData.role === 'delivery' ? formData.vehicleInfo || null : null,
+              wallet_type: formData.role === 'vendor' ? formData.walletType || null : null
             }, { onConflict: 'id' });
-
-          if (profileError) {
-            console.error('Erreur lors de la mise à jour du profil:', profileError);
-            // Si erreur 409 (conflit), le profil existe déjà - on continue
-            if (profileError.code !== '23505') {
-              throw profileError;
-            } else {
-              console.log('Profil existant - mise à jour ignorée');
-            }
-          }
           
           console.log('Profil mis à jour avec le rôle:', formData.role);
 
@@ -298,7 +290,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="buyer">Client</SelectItem>
-                <SelectItem value="vendor">Vendeur</SelectItem>
+                <SelectItem value="vendor">Vendeur(se)</SelectItem>
                 <SelectItem value="delivery">Livreur</SelectItem>
               </SelectContent>
             </Select>
@@ -308,8 +300,10 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
             role={formData.role}
             companyName={formData.companyName}
             vehicleInfo={formData.vehicleInfo}
+            walletType={formData.walletType}
             onCompanyNameChange={(value) => handleInputChange('companyName', value)}
             onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
+            onWalletTypeChange={(value) => handleInputChange('walletType', value)}
             disabled={loading}
           />
           {formData.role === 'vendor' && (

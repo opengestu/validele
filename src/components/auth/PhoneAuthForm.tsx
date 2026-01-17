@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { sendOTP, verifyOTP as verifyOTPService } from '@/services/otp';
 import { apiUrl } from '@/lib/api';
+import RoleSpecificFields from './RoleSpecificFields';
 
 interface PhoneAuthFormProps {
   onSwitchToEmail: () => void;
@@ -29,7 +30,8 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
     companyName: '',
     vehicleInfo: '',
-    address: ''
+    address: '',
+    walletType: 'wave-senegal'
   });
   const [isNewUser, setIsNewUser] = useState(false);
   const [isResetPin, setIsResetPin] = useState(false);
@@ -591,6 +593,7 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
           role: formData.role,
           company_name: formData.companyName,
           vehicle_info: formData.vehicleInfo,
+          wallet_type: formData.role === 'vendor' ? formData.walletType : null,
           pin: formData.pin,
         }),
       });
@@ -1015,7 +1018,7 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
                   <SelectItem value="vendor">
                     <div className="flex items-center gap-3">
                       <span className="text-xl">🏪</span>
-                      <span>Vendeur</span>
+                      <span>Vendeur(se)</span>
                     </div>
                   </SelectItem>
                   <SelectItem value="delivery">
@@ -1030,12 +1033,17 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
 
             {formData.role === 'vendor' && (
               <>
-                <Input
-                  value={formData.companyName}
-                  onChange={(e) => handleInputChange('companyName', e.target.value)}
-                  placeholder="Nom de votre boutique (optionnel)"
-                  className="h-12 rounded-xl border-2 mb-2"
+                <RoleSpecificFields
+                  role="vendor"
+                  companyName={formData.companyName}
+                  vehicleInfo={formData.vehicleInfo}
+                  walletType={formData.walletType}
+                  onCompanyNameChange={(value) => handleInputChange('companyName', value)}
+                  onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
+                  onWalletTypeChange={(value) => handleInputChange('walletType', value)}
+                  disabled={loading}
                 />
+
                 <Input
                   value={formData.address}
                   onChange={(e) => handleInputChange('address', e.target.value)}

@@ -10,7 +10,7 @@ ON public.orders FOR SELECT
 USING (
   -- Les acheteurs peuvent voir leurs propres commandes
   (auth.uid() = buyer_id) OR
-  -- Les vendeurs peuvent voir leurs propres commandes  
+  -- Les vendeur(se)s peuvent voir leurs propres commandes  
   (auth.uid() = vendor_id) OR
   -- Les livreurs peuvent voir TOUTES les commandes
   (EXISTS (

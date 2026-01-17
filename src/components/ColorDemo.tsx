@@ -50,11 +50,11 @@ const ColorDemo = () => {
           <h2 className="text-2xl font-bold font-heading mb-6">Couleurs par Rôle Utilisateur</h2>
           <div className="grid md:grid-cols-3 gap-6">
             
-            {/* Vendeur */}
+            {/* Vendeur(se) */}
             <Card className="card-vendor p-6">
               <div className="flex items-center gap-3 mb-4">
                 <Package className="h-8 w-8 text-validel-vendor" />
-                <h3 className="text-xl font-semibold">Vendeur</h3>
+                <h3 className="text-xl font-semibold">Vendeur(se)</h3>
               </div>
               <div className="space-y-3">
                 <Button className="btn-vendor w-full">
@@ -105,7 +105,7 @@ const ColorDemo = () => {
               Validèl
             </div>
             <div className="h-24 bg-validel-vendor-gradient rounded-lg flex items-center justify-center text-white font-semibold">
-              Vendeur
+              Vendeur(se)
             </div>
             <div className="h-24 bg-validel-buyer-gradient rounded-lg flex items-center justify-center text-white font-semibold">
               Client

@@ -41,7 +41,7 @@ async function getUserPushToken(userId) {
 }
 
 /**
- * Notifier le vendeur d'une nouvelle commande
+ * Notifier le Vendeur(se) d'une nouvelle commande
  */
 async function notifyVendorNewOrder(vendorId, orderDetails) {
   const user = await getUserPushToken(vendorId);
@@ -58,10 +58,10 @@ async function notifyVendorNewOrder(vendorId, orderDetails) {
         click_action: 'OPEN_VENDOR_DASHBOARD'
       }
     );
-    console.log(`[NOTIF] Vendeur ${vendorId} notifié - nouvelle commande`);
+    console.log(`[NOTIF] Vendeur(se) ${vendorId} notifié - nouvelle commande`);
     return { sent: true, result };
   } catch (error) {
-    console.error(`[NOTIF] Erreur notification vendeur:`, error.message);
+    console.error(`[NOTIF] Erreur notification vendeur(se):`, error.message);
     return { sent: false, error: error.message };
   }
 }
@@ -77,7 +77,7 @@ async function notifyBuyerOrderConfirmed(buyerId, orderDetails) {
     const result = await sendPushNotification(
       user.token,
       '✅ Commande confirmée!',
-      `Votre commande ${orderDetails.orderCode || ''} a été confirmée par le vendeur.`,
+      `Votre commande ${orderDetails.orderCode || ''} a été confirmée par le vendeur(se).`,
       { 
         type: 'order_confirmed', 
         orderId: orderDetails.orderId,
@@ -145,12 +145,12 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
 }
 
 /**
- * Notifier que la livraison est terminée (vendeur + acheteur)
+ * Notifier que la livraison est terminée (vendeur(se) + acheteur)
  */
 async function notifyDeliveryCompleted(vendorId, buyerId, orderDetails) {
   const results = { vendor: null, buyer: null };
 
-  // Notifier le vendeur
+  // Notifier le vendeur(se)
   const vendor = await getUserPushToken(vendorId);
   if (vendor?.token) {
     try {
@@ -164,9 +164,9 @@ async function notifyDeliveryCompleted(vendorId, buyerId, orderDetails) {
           click_action: 'OPEN_VENDOR_DASHBOARD'
         }
       );
-      console.log(`[NOTIF] Vendeur ${vendorId} notifié - livraison terminée`);
+      console.log(`[NOTIF] Vendeur(se) ${vendorId} notifié - livraison terminée`);
     } catch (error) {
-      console.error(`[NOTIF] Erreur notification vendeur:`, error.message);
+      console.error(`[NOTIF] Erreur notification vendeur(se):`, error.message);
     }
   }
 

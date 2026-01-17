@@ -61,7 +61,7 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- Créer la table products pour les vendeurs
+-- Créer la table products pour les vendeur(se)s
 CREATE TABLE public.products (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   vendor_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,

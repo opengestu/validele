@@ -28,7 +28,7 @@ CREATE POLICY "Buyers can create orders"
 ON public.orders FOR INSERT 
 WITH CHECK (auth.uid() = buyer_id);
 
--- Politique pour orders - permettre aux vendeurs et livreurs de modifier
+-- Politique pour orders - permettre aux vendeur(se)s et livreurs de modifier
 CREATE POLICY "Vendors and delivery can update orders" 
 ON public.orders FOR UPDATE 
 USING (
@@ -61,7 +61,7 @@ CREATE POLICY "Anyone can view available products"
 ON public.products FOR SELECT 
 USING (is_available = true);
 
--- Politique pour products - permettre aux vendeurs de gérer leurs produits
+-- Politique pour products - permettre aux vendeur(se)s de gérer leurs produits
 CREATE POLICY "Vendors can manage their products" 
 ON public.products FOR ALL 
 USING (auth.uid() = vendor_id);

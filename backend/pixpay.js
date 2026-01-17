@@ -7,7 +7,7 @@ const PIXPAY_CONFIG = {
   business_name_id: process.env.PIXPAY_BUSINESS_ID || '',
   // Logique PixPay:
   // CASHOUT (213) = Client paie → argent entre dans notre compte PixPay
-  // CASHIN (214) = On paie vendeur/livreur → argent sort de notre compte PixPay
+  // CASHIN (214) = On paie vendeur(se)/livreur → argent sort de notre compte PixPay
   service_id_client_payment: parseInt(process.env.PIXPAY_SERVICE_ID_CLIENT_PAYMENT || '213'),
   service_id_vendor_payout: parseInt(process.env.PIXPAY_SERVICE_ID_VENDOR_PAYOUT || '214'),
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
@@ -113,7 +113,7 @@ async function initiatePayment(params) {
 }
 
 /**
- * Envoyer de l'argent (décaissement) - Payer un vendeur/livreur
+ * Envoyer de l'argent (décaissement) - Payer un vendeur(se)/livreur
  * @param {Object} params
  * @param {number} params.amount - Montant en FCFA
  * @param {string} params.phone - Numéro du bénéficiaire
@@ -131,7 +131,7 @@ async function sendMoney(params) {
   const formattedPhone = phone.replace(/^\+/, '');
 
   // Déterminer le service_id selon le type de wallet
-  // Pour les payouts vendeur (CASHIN):
+  // Pour les payouts vendeur(se) (CASHIN):
   // Wave: 210 (IN_WAVE_SN), Orange Money: 214 (IN_ORANGE_MONEY_SN)
   let service_id;
   if (walletType === 'wave-senegal') {
@@ -159,7 +159,7 @@ async function sendMoney(params) {
     payload.business_name_id = PIXPAY_CONFIG.wave_business_name_id;
   }
 
-  console.log('[PIXPAY] Paiement vendeur/livreur:', {
+  console.log('[PIXPAY] Paiement vendeur(se)/livreur:', {
     amount,
     phone: formattedPhone,
     orderId,

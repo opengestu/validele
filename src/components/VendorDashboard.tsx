@@ -491,7 +491,7 @@ const VendorDashboard = () => {
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
           </h1>
-          <p className="text-white/90 text-sm mt-1">Espace Vendeur</p>
+          <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
 

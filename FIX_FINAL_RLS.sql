@@ -40,7 +40,7 @@ ON public.orders
 FOR UPDATE 
 USING (true)  -- Permet de lire n'importe quelle ligne pour UPDATE
 WITH CHECK (
-  -- L'utilisateur doit être soit le vendeur, soit le livreur assigné, soit l'acheteur
+  -- L'utilisateur doit être soit le vendeur(se), soit le livreur assigné, soit l'acheteur
   auth.uid() = vendor_id 
   OR auth.uid() = delivery_person_id
   OR auth.uid() = buyer_id

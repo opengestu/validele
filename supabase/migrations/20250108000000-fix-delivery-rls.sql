@@ -10,7 +10,7 @@ ON public.orders FOR SELECT
 USING (
   -- Les acheteurs peuvent voir leurs propres commandes
   (auth.uid() = buyer_id) OR
-  -- Les vendeurs peuvent voir leurs propres commandes
+  -- Les vendeur(se)s peuvent voir leurs propres commandes
   (auth.uid() = vendor_id) OR
   -- Les livreurs peuvent voir toutes les commandes (pour pouvoir les prendre en charge)
   (EXISTS (
@@ -24,7 +24,7 @@ USING (
 CREATE POLICY "Delivery persons can take orders" 
 ON public.orders FOR UPDATE 
 USING (
-  -- Les vendeurs peuvent modifier leurs commandes
+  -- Les vendeur(se)s peuvent modifier leurs commandes
   (auth.uid() = vendor_id) OR
   -- Les livreurs peuvent modifier les commandes (pour s'assigner ou marquer comme livrées)
   (EXISTS (
@@ -59,7 +59,7 @@ ON public.products FOR SELECT
 USING (
   -- Tout le monde peut voir les produits disponibles
   (is_available = true) OR
-  -- Les vendeurs peuvent voir leurs propres produits
+  -- Les vendeur(se)s peuvent voir leurs propres produits
   (auth.uid() = vendor_id) OR
   -- Les livreurs peuvent voir tous les produits (pour les informations de livraison)
   (EXISTS (

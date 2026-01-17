@@ -84,7 +84,7 @@ export class PixPayService {
   }
 
   /**
-   * Envoyer de l'argent (payout vendeur/livreur)
+   * Envoyer de l'argent (payout vendeur(se)/livreur)
    */
   async sendPayout(data: PixPayPayoutRequest): Promise<PixPayInitiateResponse> {
     try {

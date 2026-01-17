@@ -236,7 +236,7 @@ const QRScanner = () => {
       return 'URL de callback inaccessible. Vérifiez votre tunnel HTTPS (ex: ngrok) et la variable PAYDUNYA_CALLBACK_URL.';
     }
     if (lower.includes('insufficient') || lower.includes('fond') || lower.includes('fund')) {
-      return 'Fonds insuffisants pour effectuer le paiement vendeur.';
+      return 'Fonds insuffisants pour effectuer le paiement vendeur(se).';
     }
     if (lower.includes('alias') || lower.includes('account') || lower.includes('numero') || lower.includes('numéro')) {
       return 'Compte bénéficiaire (alias/numéro) invalide ou non supporté pour le mode de retrait.';
@@ -330,12 +330,15 @@ const QRScanner = () => {
         else if (qrNorm && qrNorm.includes(cleaned)) matchType = 'qr_code';
 
         setLastMatchInfo({ type: matchType, code: (matchType === 'qr_code' && data.qr_code) ? data.qr_code : data.order_code || '' });
-        setShowScanSection(true);
-
-        console.log('Commande trouvée:', data, 'matchType:', matchType);
+        
+        console.log('Commande trouvée:', data, 'matchType:', matchType, 'statut:', data.status);
+        
+        // Afficher le modal avec les détails de la commande (pas le scan directement)
+        setOrderModalOpen(true);
+        
         toast({
           title: "Commande trouvée",
-          description: `Commande ${data.order_code} trouvée (${matchType === 'order_code' ? 'code commande' : matchType === 'qr_code' ? 'code QR' : 'correspondance partielle'}). Scannez le QR d'achat du client pour confirmer la livraison.`,
+          description: `Commande ${data.order_code} trouvée. Cliquez sur "Commencer à livrer" pour démarrer.`,
         });
       } else {
         console.log('Aucune commande trouvée avec le code:', orderCode.toUpperCase());
@@ -387,9 +390,14 @@ const QRScanner = () => {
       ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
       
       console.log('Livraison démarrée avec succès');
+      
+      // Fermer le modal et afficher le message + section de scan
+      setOrderModalOpen(false);
+      setShowScanSection(true);
+      
       toast({
-        title: "Livraison démarrée",
-        description: "Vous pouvez maintenant vous rendre chez le client",
+        title: "Livraison en cours",
+        description: "Veuillez scanner le QR code du client pour valider la livraison",
       });
     } catch (error) {
       console.error('Erreur lors du démarrage de la livraison:', error);
@@ -499,7 +507,7 @@ const QRScanner = () => {
         }
         
         const updatedOrder = updatedOrders[0];
-        console.log('QRScanner: ✅ Statut mis à jour avec succès:', updatedOrder.status);
+        console.log('QRScanner: ✅ Statut mis à jour avec succès - Commande livrée:', updatedOrder.status);
 
         // Notifier vendeur + acheteur que la livraison est terminée
         notifyDeliveryCompleted(
@@ -509,7 +517,13 @@ const QRScanner = () => {
           validationResult.order_code || undefined
         ).catch(err => console.warn('Notification livraison terminée échouée:', err));
 
-        // 2) Déclencher le paiement vendeur
+        // 2) Afficher message de succès immédiat
+        toast({
+          title: "✅ Livraison validée",
+          description: "La commande a été marquée comme livrée. Paiement vendeur en cours…",
+        });
+
+        // 3) Déclencher le paiement vendeur
         toast({
           title: "Livraison confirmée",
           description: "Paiement vendeur en cours…",
@@ -710,7 +724,12 @@ const QRScanner = () => {
             </DialogDescription>
           </DialogHeader>
           {currentOrder?.status === 'paid' && (
-            <Button onClick={handleStartDelivery} className="w-full bg-green-600 hover:bg-green-700 mb-2">Commencer la livraison</Button>
+            <div className="mt-2">
+              <p className="text-gray-600 mb-4 text-center">Cliquez sur le bouton ci-dessous pour commencer la livraison</p>
+              <Button onClick={handleStartDelivery} className="w-full bg-green-600 hover:bg-green-700">
+                Commencer à livrer
+              </Button>
+            </div>
           )}
           {currentOrder?.status === 'in_delivery' && currentOrder?.delivery_person_id === user?.id && (
             <div className="text-center mt-2">
@@ -718,9 +737,9 @@ const QRScanner = () => {
                 <CheckCircle className="h-5 w-5 text-green-600" />
                 <span className="text-green-700 font-semibold text-lg">Livraison en cours</span>
               </div>
-              <p className="text-gray-600 mb-4">Vous pouvez maintenant scanner le QR code du client</p>
-              <Button className="bg-green-600 hover:bg-green-700 mb-4" onClick={() => { setShowScanSection(true); setOrderModalOpen(false); }}>
-                <Camera className="h-4 w-4 mr-2" /> Scanner le QR code
+              <p className="text-gray-600 mb-4">Veuillez scanner le QR code du client pour valider la livraison</p>
+              <Button className="bg-green-600 hover:bg-green-700 w-full" onClick={() => { setShowScanSection(true); setOrderModalOpen(false); }}>
+                <Camera className="h-4 w-4 mr-2" /> Scanner le QR code maintenant
               </Button>
             </div>
           )}

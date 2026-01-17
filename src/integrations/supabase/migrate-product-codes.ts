@@ -18,14 +18,14 @@ async function migrateProductCodes() {
     return;
   }
 
-  // 2. Grouper par vendeur
+  // 2. Grouper par vendeur(se)
   const byVendor: Record<string, { id: string; created_at: string }[]> = {};
   for (const p of products!) {
     if (!byVendor[p.vendor_id]) byVendor[p.vendor_id] = [];
     byVendor[p.vendor_id].push({ id: p.id, created_at: p.created_at });
   }
 
-  // 3. Pour chaque vendeur, numéroter et mettre à jour les codes
+  // 3. Pour chaque vendeur(se), numéroter et mettre à jour les codes
   for (const [vendorId, prods] of Object.entries(byVendor)) {
     for (let i = 0; i < prods.length; i++) {
       const code = `pv${i.toString().padStart(3, '0')}`;

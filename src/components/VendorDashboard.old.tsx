@@ -172,7 +172,7 @@ const VendorDashboard = () => {
       }, 0);
       nextNumber = max + 1;
     }
-    if (nextNumber > 9999) throw new Error('Limite de 9999 produits atteinte pour ce vendeur');
+    if (nextNumber > 9999) throw new Error('Limite de 9999 produits atteinte pour ce vendeur(se)');
     return `pv${nextNumber.toString().padStart(4, '0')}`.toLowerCase();
   };
 

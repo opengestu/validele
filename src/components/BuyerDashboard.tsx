@@ -1146,7 +1146,7 @@ const BuyerDashboard = () => {
                       <div>
                         <h3 className="text-lg font-semibold">{searchResult.name}</h3>
                         <p className="text-gray-600">{searchResult.description}</p>
-                        <p className="text-sm text-gray-500">Vendeur: {searchResult.profiles?.full_name || searchResult.profiles?.company_name}</p>
+                        <p className="text-sm text-gray-500">Vendeur(se): {searchResult.profiles?.full_name || searchResult.profiles?.company_name}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-2xl font-bold text-green-600">{searchResult.price.toLocaleString()} FCFA</p>
@@ -1337,7 +1337,7 @@ const BuyerDashboard = () => {
                                 <div className="mt-2 space-y-1 text-sm text-gray-600">
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-3">
-                                      <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur:</span>
+                                      <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur(se):</span>
                                       <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
@@ -1347,7 +1347,7 @@ const BuyerDashboard = () => {
                                           <a
                                             href={`tel:${order.profiles.phone}`}
                                             className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
-                                            title="Appeler le vendeur"
+                                            title="Appeler le vendeur(se)"
                                           >
                                             <PhoneIcon className="h-4 w-4" size={14} />
                                             <span className="ml-1 text-[11px] leading-tight">Appeler</span>
@@ -1418,11 +1418,11 @@ const BuyerDashboard = () => {
                               </div>
                             )}
 
-                            {/* Affichage du statut de paiement vendeur après livraison */}
+                            {/* Affichage du statut de paiement vendeur(se) après livraison */}
                             {order.status === 'delivered' && payoutTransaction && (
                               <div className="rounded-md bg-purple-50 p-2">
                                 <p className="text-xs font-medium text-purple-700">
-                                  Paiement vendeur:
+                                  Paiement vendeur(se):
                                   <span
                                     className={
                                       `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +

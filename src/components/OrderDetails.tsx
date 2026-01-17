@@ -231,7 +231,7 @@ const OrderDetails = () => {
 
           {/* Colonne de droite */}
           <div className="space-y-6">
-            {/* Informations du vendeur */}
+            {/* Informations du vendeur(se) */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
