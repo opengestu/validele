@@ -28,7 +28,8 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
     fullName: '',
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
     companyName: '',
-    vehicleInfo: ''
+    vehicleInfo: '',
+    address: ''
   });
   const [isNewUser, setIsNewUser] = useState(false);
   const [isResetPin, setIsResetPin] = useState(false);
@@ -221,7 +222,7 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       const existingUser = existingProfiles && existingProfiles.length > 0 ? existingProfiles[0] : null;
 
       if (existingUser && existingUser.full_name) {
-        // Utilisateur existant - récupérer le PIN
+        // Utilisateur existant - demander directement le code PIN sans envoyer d'OTP
         let pinHash: string | null = null;
         try {
           const { data: pinData } = await supabase
@@ -235,42 +236,18 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
           console.log('Colonne pin_hash non disponible:', e);
         }
 
-        if (pinHash) {
-          // Utilisateur avec PIN - connexion directe
-          setExistingProfile({
-            id: existingUser.id,
-            full_name: existingUser.full_name,
-            role: existingUser.role,
-            pin_hash: pinHash
-          });
-          setStep('login-pin');
-          toast({
-            title: `Bonjour ${existingUser.full_name.split(' ')[0]} ! 👋`,
-            description: "Entrez votre code PIN pour vous connecter",
-          });
-        } else {
-          // Utilisateur existant SANS PIN - doit créer un PIN
-          // On envoie un OTP pour vérifier que c'est bien lui, puis création du PIN
-          setExistingProfile({
-            id: existingUser.id,
-            full_name: existingUser.full_name,
-            role: existingUser.role,
-            pin_hash: null
-          });
-          
-          // Utiliser Direct7Networks pour envoyer l'OTP
-          await sendOTP(formattedPhone);
-
-          setIsNewUser(false); // Pas un nouvel utilisateur, juste besoin de créer un PIN
-          toast({
-            title: "Vérification requise 📱",
-            description: "Confirmez votre numéro pour créer votre code PIN",
-          });
-
-          setStep('otp');
-          startResendCooldown();
-          setTimeout(() => otpRefs[0].current?.focus(), 100);
-        }
+        // Passer directement à l'étape login-pin pour tous les utilisateurs existants
+        setExistingProfile({
+          id: existingUser.id,
+          full_name: existingUser.full_name,
+          role: existingUser.role,
+          pin_hash: pinHash
+        });
+        setStep('login-pin');
+        toast({
+          title: `Bonjour ${existingUser.full_name.split(' ')[0]} ! 👋`,
+          description: "Entrez votre code PIN pour vous connecter",
+        });
       } else {
         // Nouvel utilisateur - envoyer OTP pour inscription
         // Utiliser Direct7Networks pour envoyer l'OTP
@@ -412,7 +389,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
 
     console.log('existingProfile:', existingProfile);
     console.log('PIN stocké:', existingProfile?.pin_hash);
-    console.log('Comparaison:', enteredPin, '===', existingProfile?.pin_hash, '?', enteredPin === existingProfile?.pin_hash);
 
     if (!existingProfile) {
       toast({
@@ -426,45 +402,65 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
 
     setLoading(true);
     try {
-      // Vérifier si le PIN correspond
-      if (existingProfile.pin_hash && enteredPin === existingProfile.pin_hash) {
-        console.log('PIN CORRECT !');
-        // PIN correct - vérifier si on a déjà une session Supabase active
-        const { data: { session } } = await supabase.auth.getSession();
-        console.log('Session Supabase:', session ? 'Active' : 'Inactive');
+      // Essayer d'abord la connexion via Supabase Auth (utilisateurs inscrits via backend SMS)
+      const formattedPhone = formatPhoneNumber(formData.phone);
+      const virtualEmail = formattedPhone.replace('+', '') + '@sms.validele.app';
+      
+      console.log('Tentative de connexion Supabase Auth avec:', virtualEmail);
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: virtualEmail,
+        password: enteredPin,
+      });
+
+      if (authData?.session && !authError) {
+        // Connexion réussie via Supabase Auth
+        console.log('Connexion réussie via Supabase Auth');
+        await refreshProfile();
         
-        if (session) {
-          // Session active - rafraîchir le profil et rediriger
-          await refreshProfile();
-          
-          toast({
-            title: "Bon retour ! 🎉",
-            description: `Content de vous revoir, ${existingProfile.full_name}`,
-          });
+        toast({
+          title: "Connexion réussie ! 🎉",
+          description: `Bienvenue ${existingProfile.full_name}`,
+        });
 
-          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
-                             existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-          navigate(redirectPath, { replace: true });
-        } else {
-          // Pas de session - on doit vérifier via OTP Direct7
-          await sendOTP(formData.phone);
+        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+        navigate(redirectPath, { replace: true });
+        return;
+      }
 
-          toast({
-            title: "PIN correct ! ✅",
-            description: "Entrez le code reçu par SMS pour finaliser",
-          });
+      // Si échec, essayer avec le PIN hash stocké (utilisateurs avec PIN)
+      if (existingProfile.pin_hash && enteredPin === existingProfile.pin_hash) {
+        console.log('PIN CORRECT (via pin_hash) !');
+        
+        // PIN correct - créer directement la session locale sans envoyer de SMS
+        // Stocker les infos de session dans localStorage
+        localStorage.setItem('sms_auth_session', JSON.stringify({
+          phone: formData.phone,
+          profileId: existingProfile.id,
+          role: existingProfile.role,
+          fullName: existingProfile.full_name,
+          loginTime: new Date().toISOString()
+        }));
 
-          // Passer à l'étape de vérification OTP pour login
-          setStep('otp');
-          setOtpDigits(['', '', '', '']);
-          startResendCooldown();
-          setTimeout(() => otpRefs[0].current?.focus(), 100);
-        }
+        toast({
+          title: "Connexion réussie ! 🎉",
+          description: `Content de vous revoir, ${existingProfile.full_name}`,
+        });
+
+        // Attendre un peu pour que le toast s'affiche
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+        
+        // Rafraîchir pour charger la session
+        window.location.href = redirectPath;
       } else {
         // PIN incorrect
         console.log('PIN INCORRECT !');
-        console.log('Attendu:', existingProfile.pin_hash);
-        console.log('Reçu:', enteredPin);
+        console.log('Auth error:', authError?.message);
+        console.log('PIN hash attendu:', existingProfile.pin_hash);
+        console.log('PIN reçu:', enteredPin);
         toast({
           title: "Code PIN incorrect",
           description: "Veuillez réessayer",
@@ -475,6 +471,12 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       }
     } catch (error) {
       console.error('Erreur dans handleLoginPin:', error);
+      toast({
+        title: "Erreur de connexion",
+        description: "Une erreur est survenue, veuillez réessayer",
+        variant: "destructive",
+      });
+      setLoginPinDigits(['', '', '', '']);
     } finally {
       setLoading(false);
     }
@@ -511,34 +513,44 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
   const handleSavePinForExistingUser = async () => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        throw new Error('Utilisateur non connecté');
+      // Utiliser l'ID du profil existant au lieu de dépendre de la session Supabase
+      if (!existingProfile?.id) {
+        throw new Error('Profil utilisateur introuvable');
       }
 
       // Mettre à jour uniquement le PIN (utiliser rpc ou raw query si la colonne n'est pas dans le type)
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ pin_hash: formData.pin } as Record<string, unknown>)
-        .eq('id', user.id);
+        .eq('id', existingProfile.id);
 
       if (updateError) throw updateError;
 
-      // Rafraîchir le profil dans le contexte d'authentification
-      await refreshProfile();
+      // Créer la session locale
+      localStorage.setItem('sms_auth_session', JSON.stringify({
+        phone: formData.phone,
+        profileId: existingProfile.id,
+        role: existingProfile.role,
+        fullName: existingProfile.full_name,
+        loginTime: new Date().toISOString()
+      }));
 
       toast({
         title: isResetPin ? "PIN réinitialisé ! 🎉" : "PIN créé ! 🎉",
-        description: isResetPin ? "Vous pouvez maintenant vous connecter" : `Bienvenue ${existingProfile?.full_name}`,
+        description: isResetPin ? "Vous pouvez maintenant vous connecter" : `Bienvenue ${existingProfile.full_name}`,
       });
+      
+      // Attendre un peu pour que le toast s'affiche
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       // Réinitialiser le mode reset
       setIsResetPin(false);
 
-      const redirectPath = existingProfile?.role === 'vendor' ? '/vendor' : 
-                         existingProfile?.role === 'delivery' ? '/delivery' : '/buyer';
-      navigate(redirectPath, { replace: true });
+      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+                         existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+      
+      // Rafraîchir pour charger la session
+      window.location.href = redirectPath;
 
     } catch (error: unknown) {
       console.error('Erreur mise à jour PIN:', error);
@@ -757,17 +769,14 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       {/* Étape 1: Numéro de téléphone */}
       {step === 'phone' && (
         <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-primary/10 rounded-full mb-4">
-              <Phone className="w-10 h-10 text-primary" />
-            </div>
-            <h3 className="text-xl font-bold">Entrez votre numéro</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Nous vous enverrons un code de vérification
-            </p>
-          </div>
-
           <div className="space-y-4">
+            <div className="text-center mb-4">
+              <h3 className="text-lg font-semibold mb-2">📱 Entrez votre numéro de téléphone</h3>
+              <p className="text-sm text-muted-foreground">
+                Nous allons vous envoyer un code de vérification par SMS
+              </p>
+            </div>
+            
             <div className="flex gap-2">
               <div className="flex items-center px-4 bg-muted rounded-xl border-2 border-transparent">
                 <span className="text-lg font-medium">🇸🇳 +221</span>
@@ -830,10 +839,13 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
             <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-4">
               <Check className="w-10 h-10 text-green-600" />
             </div>
-            <h3 className="text-xl font-bold">Vérification</h3>
+            <h3 className="text-xl font-bold">Vérification du code</h3>
             <p className="text-sm text-muted-foreground mt-2">
-              Code envoyé au<br />
+              Entrez le code à 4 chiffres reçu par SMS au<br />
               <span className="font-semibold text-foreground">{formData.phone}</span>
+            </p>
+            <p className="text-xs text-blue-600 mt-2">
+              💡 Le code peut prendre jusqu'à 30 secondes pour arriver
             </p>
           </div>
 
@@ -916,7 +928,10 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
             </div>
             <h3 className="text-xl font-bold">Créez votre code PIN</h3>
             <p className="text-sm text-muted-foreground mt-2">
-              Ce code sécurisera votre compte
+              Choisissez 4 chiffres pour sécuriser votre compte
+            </p>
+            <p className="text-xs text-blue-600 mt-2">
+              🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites
             </p>
           </div>
 
@@ -941,7 +956,10 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
             </div>
             <h3 className="text-xl font-bold">Confirmez votre PIN</h3>
             <p className="text-sm text-muted-foreground mt-2">
-              Entrez à nouveau votre code PIN
+              Entrez à nouveau votre code PIN pour le confirmer
+            </p>
+            <p className="text-xs text-orange-600 mt-2">
+              ⚠️ Assurez-vous d'entrer le même code que précédemment
             </p>
           </div>
 
@@ -1011,12 +1029,21 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
             </div>
 
             {formData.role === 'vendor' && (
-              <Input
-                value={formData.companyName}
-                onChange={(e) => handleInputChange('companyName', e.target.value)}
-                placeholder="Nom de votre boutique (optionnel)"
-                className="h-12 rounded-xl border-2"
-              />
+              <>
+                <Input
+                  value={formData.companyName}
+                  onChange={(e) => handleInputChange('companyName', e.target.value)}
+                  placeholder="Nom de votre boutique (optionnel)"
+                  className="h-12 rounded-xl border-2 mb-2"
+                />
+                <Input
+                  value={formData.address}
+                  onChange={(e) => handleInputChange('address', e.target.value)}
+                  placeholder="Adresse de la boutique (obligatoire)"
+                  className="h-12 rounded-xl border-2"
+                  required
+                />
+              </>
             )}
 
             {formData.role === 'delivery' && (

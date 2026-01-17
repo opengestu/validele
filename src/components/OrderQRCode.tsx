@@ -15,6 +15,12 @@ interface OrderQRCodeProps {
 const OrderQRCode = ({ qrCode, orderCode, productName, totalAmount }: OrderQRCodeProps) => {
   const { toast } = useToast();
 
+  const formatToken = (s: string) => {
+    if (!s) return '';
+    const cleaned = s.toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+    return cleaned.match(/.{1,4}/g)?.join('-') || cleaned;
+  }
+
   const generateQRCodeDataURL = (text: string) => {
     // Simulation d'un QR code avec du texte pour demo
     // En production, vous pourriez utiliser une librairie comme 'qrcode'
@@ -107,7 +113,7 @@ const OrderQRCode = ({ qrCode, orderCode, productName, totalAmount }: OrderQRCod
           <p className="text-sm text-gray-600">Produit: <span className="font-semibold">{productName}</span></p>
           <p className="text-sm text-gray-600">Montant: <span className="font-semibold text-green-600">{totalAmount.toLocaleString()} FCFA</span></p>
           <p className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
-            Code: {qrCode}
+            Code: {formatToken(qrCode)}
           </p>
         </div>
         
@@ -115,9 +121,10 @@ const OrderQRCode = ({ qrCode, orderCode, productName, totalAmount }: OrderQRCod
         <div className="bg-blue-50 p-4 rounded-lg">
           <p className="text-sm text-blue-800 font-medium mb-2">Instructions:</p>
           <ul className="text-xs text-blue-700 space-y-1 text-left">
-            <li>• Présentez ce QR code au livreur</li>
-            <li>• Le livreur le scannera pour valider la livraison</li>
-            <li>• Gardez ce code jusqu'à la livraison</li>
+            <li>• Donnez le code commande <strong>{orderCode}</strong> au vendeur</li>
+            <li>• Présentez ce QR code sécurisé au livreur lors de la livraison</li>
+            <li>• Le livreur le scannera pour valider la réception</li>
+            <li>• Gardez ce code jusqu'à la livraison complète</li>
           </ul>
         </div>
         

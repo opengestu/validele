@@ -109,8 +109,10 @@ function QRScanSection({
   validationResult,
   handleConfirmDelivery,
   resetScan,
-  isConfirmingDelivery
+  isConfirmingDelivery,
+  matchInfo
 }) {
+  // matchInfo: { type: 'order_code'|'qr_code'|'partial', code: string } | null
   const [cameraError, setCameraError] = useState(false);
   const [cameraErrorMsg, setCameraErrorMsg] = useState('');
   const [hasScanned, setHasScanned] = useState(false);
@@ -144,6 +146,18 @@ function QRScanSection({
             className={`rounded-2xl p-6 sm:p-8 text-center transition-opacity duration-300 ${(scanValid || hasScanned) ? 'opacity-0 pointer-events-none h-0 p-0 m-0' : 'opacity-100'} bg-gradient-to-br from-indigo-50 to-sky-50 ring-1 ring-indigo-100`}
             style={{ minHeight: (scanValid || hasScanned) ? 0 : 220 }}
           >
+            {/* Si on a déjà trouvé une correspondance via recherche manuelle, afficher une instruction */}
+            {matchInfo && !scanValid && !hasScanned && (
+              <div className="mb-4 text-left bg-white/60 p-3 rounded-md">
+                <p className="text-sm font-medium text-gray-800">✅ Commande {matchInfo.type === 'order_code' ? matchInfo.code : 'trouvée'}</p>
+                <p className="text-xs text-gray-600 mt-1">Veuillez maintenant scanner le <strong>QR code sécurisé</strong> présenté par le client pour valider la livraison.</p>
+                <div className="mt-3">
+                  <Button variant="outline" onClick={() => { setHasScanned(false); resetScan && resetScan(); }}>
+                    Scanner maintenant
+                  </Button>
+                </div>
+              </div>
+            )}
             {!cameraError && !scanValid && !hasScanned ? (
               <Html5QrcodeReact onScan={handleScan} onError={handleError} />
             ) : null}
@@ -208,6 +222,7 @@ const QRScanner = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [currentOrder, setCurrentOrder] = useState(null);
   const [showScanSection, setShowScanSection] = useState(false);
+  const [lastMatchInfo, setLastMatchInfo] = useState<{ type: 'order_code'|'qr_code'|'partial', code: string } | null>(null);
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
@@ -277,8 +292,11 @@ const QRScanner = () => {
     }
 
     try {
-      console.log('Recherche de la commande avec le code:', orderCode.toUpperCase());
-      
+      // Normalize input: remove spaces/dashes and uppercase for robust matching
+      const cleaned = orderCode.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+      console.log('Recherche de la commande avec le code (nettoyé):', cleaned);
+      const pattern = `%${cleaned}%`;
+
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -287,7 +305,7 @@ const QRScanner = () => {
           buyer_profile:profiles!orders_buyer_id_fkey(full_name),
           vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
         `)
-        .ilike('order_code', orderCode.trim().replace(/\s/g, '').toUpperCase())
+        .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
         .in('status', ['paid', 'in_delivery'])
         .maybeSingle();
 
@@ -300,14 +318,29 @@ const QRScanner = () => {
 
       if (data) {
         setCurrentOrder(data);
-        console.log('Commande trouvée:', data);
+        // Déterminer si la correspondance vient de order_code ou qr_code
+        const normalize = (s) => (s||'').toString().replace(/[^a-z0-9]/gi,'').toUpperCase();
+        const cleaned = orderCode.trim().replace(/[^a-z0-9]/gi,'').toUpperCase();
+        const orderCodeNorm = normalize(data.order_code);
+        const qrNorm = normalize(data.qr_code);
+        let matchType: 'order_code' | 'qr_code' | 'partial' = 'partial';
+        if (orderCodeNorm && orderCodeNorm === cleaned) matchType = 'order_code';
+        else if (qrNorm && qrNorm === cleaned) matchType = 'qr_code';
+        else if (orderCodeNorm && orderCodeNorm.includes(cleaned)) matchType = 'order_code';
+        else if (qrNorm && qrNorm.includes(cleaned)) matchType = 'qr_code';
+
+        setLastMatchInfo({ type: matchType, code: (matchType === 'qr_code' && data.qr_code) ? data.qr_code : data.order_code || '' });
+        setShowScanSection(true);
+
+        console.log('Commande trouvée:', data, 'matchType:', matchType);
         toast({
           title: "Commande trouvée",
-          description: `Commande ${data.order_code} prête pour livraison`,
+          description: `Commande ${data.order_code} trouvée (${matchType === 'order_code' ? 'code commande' : matchType === 'qr_code' ? 'code QR' : 'correspondance partielle'}). Scannez le QR d'achat du client pour confirmer la livraison.`,
         });
       } else {
         console.log('Aucune commande trouvée avec le code:', orderCode.toUpperCase());
         setCurrentOrder(null);
+        setLastMatchInfo(null);
         toast({
           title: "Commande non trouvée",
           description: "Aucune commande payée trouvée avec ce code. Vérifiez que la commande est bien payée.",
@@ -391,8 +424,12 @@ const QRScanner = () => {
 
     try {
       console.log('QRScanner: code scanné =', codeToCheck, 'QR attendu =', currentOrder.qr_code);
+      // Normaliser les codes (supprimer espaces, tirets et non-alphanumériques, mettre en majuscule)
+      const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+      const scannedNormalized = normalize(codeToCheck);
+      const expectedNormalized = normalize(currentOrder.qr_code);
       // Vérifier que le QR code correspond à la commande en cours
-      if (codeToCheck !== currentOrder.qr_code) {
+      if (scannedNormalized !== expectedNormalized) {
         throw new Error('QR code ne correspond pas à la commande');
       }
       // Vérifier que c'est bien le livreur assigné
@@ -562,11 +599,8 @@ const QRScanner = () => {
               message: result.message
             });
             
-            // Rafraîchir les données du dashboard
-            if (onDeliveryConfirmed) {
-              console.log('QRScanner: Rafraîchissement des données dashboard');
-              onDeliveryConfirmed();
-            }
+            // Marquer comme confirmé pour redirection
+            console.log('QRScanner: Livraison confirmée, redirection dans 3s');
           } else {
             // Échec paiement - afficher erreur et ne pas confirmer
             throw new Error(result.error || result.message || 'Erreur paiement vendeur');
@@ -717,16 +751,19 @@ const QRScanner = () => {
                   <Input
                     type="text"
                     className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-green-500 focus:ring-green-500"
-                    placeholder="Ex: CMD001"
+                    placeholder="Ex: CAB1234"
                     value={orderCode}
                     onChange={e => setOrderCode(e.target.value)}
                   />
-                  <Button 
-                    className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
-                    onClick={handleSearchOrder}
-                  >
-                    Rechercher
-                  </Button>
+                  <div className="flex flex-col gap-3">
+                    <Button 
+                      className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
+                      onClick={handleSearchOrder}
+                    >
+                      Rechercher
+                    </Button>
+
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -743,11 +780,11 @@ const QRScanner = () => {
                 <ol className="space-y-3 text-gray-700 text-sm">
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                    <span><strong>Récupérez le code de commande</strong> auprès du vendeur</span>
+                    <span><strong>Récupérez le code commande</strong> (format CAB1234) auprès du vendeur</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                    <span><strong>Recherchez la commande</strong> et démarrez la livraison</span>
+                    <span><strong>Tapez et recherchez</strong> ce code commande pour localiser la livraison</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
@@ -755,11 +792,11 @@ const QRScanner = () => {
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">4</span>
-                    <span><strong>Demandez au client de présenter</strong> son QR code</span>
+                    <span><strong>Demandez le QR code sécurisé</strong> affiché dans l'app du client</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">5</span>
-                    <span><strong>Scannez le code</strong> pour valider et libérer les fonds</span>
+                    <span><strong>Scannez le QR sécurisé</strong> pour valider et libérer les fonds au vendeur</span>
                   </li>
                 </ol>
               </CardContent>
@@ -774,6 +811,7 @@ const QRScanner = () => {
             handleConfirmDelivery={handleConfirmDelivery}
             resetScan={() => {}}
             isConfirmingDelivery={isConfirmingDelivery}
+            matchInfo={lastMatchInfo}
           />
         )}
       </div>

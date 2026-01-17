@@ -11,9 +11,9 @@ import {
   Truck,
   QrCode,
   CheckCircle,
-  Home,
-  Shield
+  Home
 } from 'lucide-react';
+import validelLogo from '@/assets/validel-logo.png';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -60,12 +60,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
     )}>
       {/* Logo */}
       <div className="flex items-center p-4 border-b border-gray-100">
-        <div className={cn(
-          "flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br shadow-md",
-          config.gradient
-        )}>
-          <Shield className="h-4 w-4 text-white" />
-        </div>
+        {userRole !== 'delivery' && (
+          <img src={validelLogo} alt="Validèl" className="w-10 h-10 object-contain rounded-lg shadow-md bg-white" />
+        )}
         {isOpen && (
           <div className="ml-3">
             <h2 className="text-lg font-bold text-gray-900">Validèl</h2>

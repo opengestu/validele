@@ -119,14 +119,31 @@ export class PixPayService {
     }
 
     try {
-      // Sur mobile, utiliser l'API Browser de Capacitor
+      // Sur mobile, utiliser l'API Browser de Capacitor en mode in-app
       if (Capacitor.isNativePlatform()) {
-        await Browser.open({ url: smsLink });
+        // Ajouter un listener pour détecter la fermeture du navigateur
+        const listener = await Browser.addListener('browserFinished', () => {
+          console.log('[PixPay] Navigateur in-app fermé par l\'utilisateur');
+          // L'utilisateur est revenu à l'application
+          // On pourrait rafraîchir les commandes ici
+        });
+
+        await Browser.open({ 
+          url: smsLink,
+          windowName: '_self',
+          presentationStyle: 'fullscreen',
+          toolbarColor: '#10b981'
+        });
+
+        // Nettoyer le listener après ouverture
+        setTimeout(() => {
+          listener.remove();
+        }, 1000);
       } else {
         // Sur web, utiliser window.open
         window.open(smsLink, '_blank');
       }
-      console.log('[PixPay] Lien de paiement ouvert:', smsLink);
+      console.log('[PixPay] Lien de paiement ouvert en mode in-app:', smsLink);
     } catch (error) {
       console.error('[PixPay] Erreur ouverture lien:', error);
       // Fallback: essayer window.open

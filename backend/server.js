@@ -957,11 +957,15 @@ app.post('/api/orders', async (req, res) => {
 
     console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
 
-    // Générer un order_code unique: CM + 4 chiffres aléatoires
-    const randomNumber = Math.floor(1000 + Math.random() * 9000);
-    const order_code = `CM${randomNumber}`;
+    // Générer un order_code au format demandé: 'C' + 2 lettres + 4 chiffres (ex: CAB1234)
+    const randLetter = () => String.fromCharCode(65 + Math.floor(Math.random()*26));
+    const randLetters = (n) => Array.from({length:n}).map(() => randLetter()).join('');
+    const randDigits = (n) => Math.floor(Math.random()*Math.pow(10,n)).toString().padStart(n,'0');
+    const order_code = `C${randLetters(2)}${randDigits(4)}`;
+    const crypto = require('crypto');
+    const tokenRaw = crypto.randomBytes(8).toString('hex').toUpperCase();
 
-    // Créer la commande dans Supabase
+    // Créer la commande dans Supabase (inclure le token sécurisé comme qr_code)
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -974,6 +978,7 @@ app.post('/api/orders', async (req, res) => {
         buyer_phone,
         delivery_address,
         order_code,
+        qr_code: tokenRaw,
       })
       .select()
       .single();
@@ -993,6 +998,7 @@ app.post('/api/orders', async (req, res) => {
       id: order.id, 
       order_id: order.id,
       order_code: order.order_code,
+      qr_code: order.qr_code,
       message: 'Commande créée avec succès'
     });
 
@@ -1017,9 +1023,30 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
 
     console.log('[CREATE-ORDER] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
 
-    // Générer un order_code unique: CM + 4 chiffres aléatoires
-    const randomNumber = Math.floor(1000 + Math.random() * 9000);
-    const order_code = `CM${randomNumber}`;
+    // Générer un order_code au format demandé: 'C' + 2 lettres + 4 chiffres (ex: CAB1234)
+    const randLetter = () => String.fromCharCode(65 + Math.floor(Math.random()*26));
+    const randLetters = (n) => Array.from({length:n}).map(() => randLetter()).join('');
+    const randDigits = (n) => Math.floor(Math.random()*Math.pow(10,n)).toString().padStart(n,'0');
+
+    let order_code;
+    let attempts = 0;
+    while (attempts < 10) {
+      const candidate = `C${randLetters(2)}${randDigits(4)}`;
+      const { data: existing, error: existingErr } = await supabase.from('orders').select('id').eq('order_code', candidate).limit(1);
+      if (existingErr) {
+        console.error('[CREATE-ORDER] Erreur vérification unicité order_code:', existingErr);
+        order_code = candidate; // fallback
+        break;
+      }
+      if (!existing || existing.length === 0) {
+        order_code = candidate;
+        break;
+      }
+      attempts++;
+    }
+    if (!order_code) {
+      order_code = `C${randLetters(2)}${randDigits(4)}`; // dernière tentative
+    }
 
     // 1. Créer la commande dans Supabase
     const { data: order, error: orderError } = await supabase
@@ -1076,21 +1103,22 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
       return res.status(400).json({ status: 'failed', message: invoiceData.response_text || "Erreur PayDunya" });
     }
 
-    // 3. Mettre à jour la commande avec le token PayDunya
+    // 3. Mettre à jour la commande avec le token PayDunya (et laisser le qr_code sur le token sécurisé)
     await supabase
       .from('orders')
-      .update({ token: invoiceData.token, qr_code: order_code })
+      .update({ token: invoiceData.token, qr_code: tokenRaw })
       .eq('id', order.id);
 
     console.log('[CREATE-ORDER] Token mis à jour pour commande', order.id);
 
-    // 4. Retourner la réponse
+    // 4. Retourner la réponse (inclure qr_code généré)
     return res.json({ 
       status: 'success', 
       redirect_url: invoiceData.response_text, 
       token: invoiceData.token, 
       receipt_url: invoiceData.receipt_url,
-      order_id: order.id 
+      order_id: order.id,
+      qr_code: tokenRaw
     });
 
   } catch (error) {

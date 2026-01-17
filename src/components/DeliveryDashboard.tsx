@@ -35,7 +35,9 @@ const DeliveryDashboard = () => {
   const [userProfile, setUserProfile] = useState<ProfileRow | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
   const [myDeliveries, setMyDeliveries] = useState<DeliveryOrder[]>([]);
+  const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [loading, setLoading] = useState(true);
+  const [takingOrderId, setTakingOrderId] = useState<string | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfile, setEditProfile] = useState<{ full_name: string; email: string; phone: string }>({
     full_name: '',
@@ -48,6 +50,7 @@ const DeliveryDashboard = () => {
   useEffect(() => {
     if (user) {
       fetchDeliveries();
+      fetchTransactions();
     }
   }, [user]);
 
@@ -75,8 +78,14 @@ const DeliveryDashboard = () => {
   useEffect(() => {
     const channel = supabase
       .channel('orders-changes-delivery')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+        console.log('DeliveryDashboard: Changement orders détecté', payload);
         fetchDeliveries();
+        fetchTransactions();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, (payload) => {
+        console.log('DeliveryDashboard: Changement transactions détecté', payload);
+        fetchTransactions();
       })
       .subscribe();
     return () => {
@@ -124,6 +133,28 @@ const DeliveryDashboard = () => {
       console.error('Erreur lors du chargement des livraisons:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTransactions = async () => {
+    if (!user?.id) return;
+    
+    try {
+      // Récupérer les transactions de paiement pour les livraisons de ce livreur
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('payment_transactions')
+        .select(`
+          *,
+          orders!inner(delivery_person_id, order_code, vendor_id, buyer_id)
+        `)
+        .eq('orders.delivery_person_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setTransactions(data || []);
+    } catch (error) {
+      console.error('Erreur lors du chargement des transactions:', error);
     }
   };
 
@@ -195,6 +226,41 @@ const DeliveryDashboard = () => {
     navigate('/');
   };
 
+  const handleTakeDelivery = async (orderId: string) => {
+    if (!user?.id) return;
+    setTakingOrderId(orderId);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          delivery_person_id: user.id,
+          status: 'assigned',
+          assigned_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .eq('status', 'paid')
+        .is('delivery_person_id', null);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Commande prise en charge',
+        description: 'La livraison a été assignée à votre compte.'
+      });
+
+      fetchDeliveries();
+    } catch (error) {
+      console.error('Erreur lors de la prise en charge:', error);
+      toast({
+        title: 'Erreur',
+        description: toFrenchErrorMessage(error, 'Impossible de prendre la commande'),
+        variant: 'destructive'
+      });
+    } finally {
+      setTakingOrderId(null);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'assigned':
@@ -208,6 +274,9 @@ const DeliveryDashboard = () => {
   };
 
   const renderDeliveryCard = (delivery: DeliveryOrder, variant: 'current' | 'completed') => {
+    // Trouver les transactions associées à cette livraison
+    const payoutTransaction = transactions.find(t => t.order_id === delivery.id && t.transaction_type === 'payout');
+    
     return (
       <Card key={delivery.id} className={`border ${variant === 'current' ? 'border-orange-200' : 'border-green-200'} shadow-sm`}>
         <CardContent className="p-4">
@@ -232,6 +301,23 @@ const DeliveryDashboard = () => {
             )}
             <p>Adresse : {delivery.delivery_address}</p>
           </div>
+          {/* Affichage du statut de paiement vendeur */}
+          {delivery.status === 'delivered' && payoutTransaction && (
+            <div className="mt-2 p-2 bg-purple-50 rounded-md">
+              <p className="text-xs font-medium text-purple-900">
+                💰 Paiement vendeur: 
+                <span className={`ml-2 px-2 py-0.5 rounded ${
+                  payoutTransaction.status === 'SUCCESSFUL' ? 'bg-green-100 text-green-800' :
+                  payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                }`}>
+                  {payoutTransaction.status === 'SUCCESSFUL' ? '✓ Effectué' :
+                   payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? '⏳ En cours' :
+                   '✗ Échoué'}
+                </span>
+              </p>
+            </div>
+          )}
           <div className="mt-3 text-lg font-bold text-green-600">
             {delivery.total_amount?.toLocaleString()} FCFA
           </div>
@@ -302,6 +388,14 @@ const DeliveryDashboard = () => {
             {/* En cours Tab */}
             <TabsContent value="in_progress" className="space-y-6">
               <h2 className="text-xl font-bold text-gray-900">Livraisons en cours</h2>
+              <div className="flex justify-end">
+                <Link to="/scanner">
+                  <Button className="bg-orange-500 hover:bg-orange-600 text-white">
+                    <QrCode className="h-4 w-4 mr-2" />
+                    Prendre une nouvelle commande
+                  </Button>
+                </Link>
+              </div>
 
               {deliveriesInProgress.length === 0 ? (
                 <Card className="border border-orange-100">
@@ -451,6 +545,14 @@ const DeliveryDashboard = () => {
               <TabsContent value="in_progress" className="mt-0">
                 <div className="space-y-4">
                   <h2 className="text-base font-semibold">En cours ({inProgressDeliveries})</h2>
+                  <div className="flex justify-end">
+                    <Link to="/scanner">
+                      <Button className="bg-orange-500 hover:bg-orange-600 text-white text-xs">
+                        <QrCode className="h-4 w-4 mr-1" />
+                        Prendre une nouvelle commande
+                      </Button>
+                    </Link>
+                  </div>
 
                   {deliveriesInProgress.length === 0 ? (
                     <Card className="border border-orange-100">

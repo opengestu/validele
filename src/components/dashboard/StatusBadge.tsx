@@ -2,7 +2,7 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 
 interface StatusBadgeProps {
-  status: 'pending' | 'confirmed' | 'delivered' | 'cancelled' | 'paid' | 'active' | 'inactive' | 'shipped' | 'processing';
+  status: 'pending' | 'confirmed' | 'delivered' | 'cancelled' | 'paid' | 'in_delivery' | 'active' | 'inactive' | 'shipped' | 'processing';
   size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
@@ -35,8 +35,13 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
     },
     paid: {
       label: 'Payé',
-      color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-      dot: 'bg-emerald-400'
+      color: 'bg-purple-100 text-purple-800 border-purple-200',
+      dot: 'bg-purple-400'
+    },
+    in_delivery: {
+      label: 'En cours de livraison',
+      color: 'bg-blue-100 text-blue-800 border-blue-200',
+      dot: 'bg-blue-400'
     },
     active: {
       label: 'Actif',

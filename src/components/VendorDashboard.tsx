@@ -29,6 +29,7 @@ import {
   StatsCard, 
   StatusBadge
 } from '@/components/dashboard';
+import validelLogo from '@/assets/validel-logo.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
 
 type ProfileRow = {
@@ -45,6 +46,7 @@ const VendorDashboard = () => {
   // States
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [loading, setLoading] = useState(true);
   
   // Modal states
@@ -212,17 +214,40 @@ const VendorDashboard = () => {
     }
   }, [user, toast]);
 
+  const fetchTransactions = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      // Récupérer les transactions de paiement (payouts) pour ce vendeur
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('payment_transactions')
+        .select(`
+          *,
+          orders!inner(vendor_id, order_code, buyer_id)
+        `)
+        .eq('orders.vendor_id', user.id)
+        .eq('transaction_type', 'payout')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setTransactions(data || []);
+    } catch (error) {
+      console.error('Erreur lors du chargement des transactions:', error);
+    }
+  }, [user]);
+
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      await Promise.all([fetchProfile(), fetchProducts(), fetchOrders()]);
+      await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
       setLoading(false);
     };
 
     if (user) {
       fetchData();
     }
-  }, [user, fetchProfile, fetchProducts, fetchOrders]);
+  }, [user, fetchProfile, fetchProducts, fetchOrders, fetchTransactions]);
 
   // Live updates: écoute les changements sur les commandes du vendeur
   useEffect(() => {
@@ -232,8 +257,18 @@ const VendorDashboard = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders', filter: `vendor_id=eq.${user.id}` },
-        () => {
+        (payload) => {
+          console.log('VendorDashboard: Changement orders détecté', payload);
           fetchOrders();
+          fetchTransactions();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payment_transactions' },
+        (payload) => {
+          console.log('VendorDashboard: Changement transactions détecté', payload);
+          fetchTransactions();
         }
       )
       .subscribe();
@@ -241,26 +276,12 @@ const VendorDashboard = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.id, fetchOrders]);
+  }, [user?.id, fetchOrders, fetchTransactions]);
 
   const generateProductCode = async () => {
-    if (!user?.id) throw new Error('User not authenticated');
-    const { data: products } = await supabase
-      .from('products')
-      .select('code')
-      .eq('vendor_id', user.id);
-    
-    let nextNumber = 1;
-    if (products && products.length > 0) {
-      const codes = products.map(p => p.code).filter(Boolean);
-      const numbers = codes.map(code => {
-        const match = code.match(/^pv(\d{4})$/i);
-        return match ? parseInt(match[1], 10) : 0;
-      });
-      nextNumber = Math.max(...numbers, 0) + 1;
-    }
-    
-    return `pv${nextNumber.toString().padStart(4, '0')}`;
+    // Générer un code produit unique: PD + 4 chiffres aléatoires
+    const randomNumber = Math.floor(1000 + Math.random() * 9000);
+    return `PD${randomNumber}`;
   };
 
   const handleAddProduct = async () => {
@@ -600,7 +621,11 @@ const VendorDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {orders.map((order) => (
+                {orders.map((order) => {
+                  // Trouver la transaction de paiement associée à cette commande
+                  const payoutTransaction = transactions.find(t => t.order_id === order.id);
+                  
+                  return (
                   <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
                     <div className="flex-1">
                       <h4 className="font-medium">{order.products?.name}</h4>
@@ -623,6 +648,28 @@ const VendorDashboard = () => {
                           {order.delivery_person.phone && ` - ${order.delivery_person.phone}`}
                         </p>
                       )}
+                      {/* Affichage du statut de paiement vendeur */}
+                      {order.status === 'delivered' && payoutTransaction && (
+                        <div className="mt-2 p-2 bg-blue-50 rounded-md">
+                          <p className="text-xs font-medium text-blue-900">
+                            💰 Paiement vendeur: 
+                            <span className={`ml-2 px-2 py-0.5 rounded ${
+                              payoutTransaction.status === 'SUCCESSFUL' ? 'bg-green-100 text-green-800' :
+                              payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {payoutTransaction.status === 'SUCCESSFUL' ? '✓ Payé' :
+                               payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? '⏳ En cours' :
+                               '✗ Échoué'}
+                            </span>
+                          </p>
+                          {payoutTransaction.amount && (
+                            <p className="text-xs text-gray-600 mt-1">
+                              Montant: {payoutTransaction.amount.toLocaleString()} FCFA
+                            </p>
+                          )}
+                        </div>
+                      )}
                       <p className="text-sm text-gray-500">
                         {new Date(order.created_at).toLocaleDateString()}
                       </p>
@@ -637,7 +684,8 @@ const VendorDashboard = () => {
                       />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {orders.length === 0 && (

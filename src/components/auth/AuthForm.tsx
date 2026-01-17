@@ -25,7 +25,8 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     phone: '',
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
     companyName: '',
-    vehicleInfo: ''
+    vehicleInfo: '',
+    address: ''
   });
   
   const navigate = useNavigate();
@@ -49,28 +50,14 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     console.log('Début inscription EMAIL...');
     
     try {
-      // Vérifier si l'email existe déjà AVANT de se déconnecter
-      const { data: existingUser, error: checkError } = await supabase
-        .from('profiles')
-        .select('id, email')
-        .eq('email', formData.email)
-        .maybeSingle();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        console.error('Erreur vérification email:', checkError);
-      }
-
-      if (existingUser) {
-        toast({
-          title: "Email déjà utilisé",
-          description: "Ce compte existe déjà. Connectez-vous ou utilisez un autre email.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
-      }
+      // Note: Ne vérifions pas dans profiles car l'email n'y est pas stocké
+      // Le check se fera directement via auth.signUp qui retournera une erreur si l'email existe
       
-      // D'abord, déconnecter toute session existante (notamment SMS) pour éviter les conflits
+      // Déconnecter d'abord pour éviter les conflits
+      // Note: Ne vérifions pas dans profiles car l'email n'y est pas stocké
+      // Le check se fera directement via auth.signUp qui retournera une erreur si l'email existe
+      
+      // Déconnecter d'abord pour éviter les conflits
       const { data: session } = await supabase.auth.getSession();
       if (session?.session) {
         console.log('Déconnexion session existante pour inscription EMAIL');
@@ -99,6 +86,12 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
           const seconds = match ? match[1] : '60';
           throw new Error(`Trop de tentatives. Réessayez dans ${seconds} secondes.`);
         }
+        
+        // Gérer l'erreur "User already registered"
+        if (error.message?.includes('already registered') || error.message?.includes('already been registered')) {
+          throw new Error('Ce compte existe déjà. Veuillez vous connecter.');
+        }
+        
         throw error;
       }
       console.log('Compte EMAIL créé avec succès');
@@ -241,6 +234,16 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
 
   return (
     <div className="space-y-4">
+      {isLogin && (
+        <p className="text-sm text-muted-foreground text-center mb-4">
+          Utilisez vos identifiants pour vous connecter
+        </p>
+      )}
+      {!isLogin && (
+        <p className="text-sm text-muted-foreground text-center mb-4">
+          Créez votre compte en quelques étapes
+        </p>
+      )}
       <div>
         <Label htmlFor="email">Email</Label>
         <Input
@@ -309,6 +312,19 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
             onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
             disabled={loading}
           />
+          {formData.role === 'vendor' && (
+            <div>
+              <Label htmlFor="address">Adresse de la boutique *</Label>
+              <Input
+                id="address"
+                value={formData.address}
+                onChange={(e) => handleInputChange('address', e.target.value)}
+                placeholder="Adresse de la boutique"
+                disabled={loading}
+                required
+              />
+            </div>
+          )}
         </>
       )}
 

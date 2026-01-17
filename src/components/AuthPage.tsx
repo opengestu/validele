@@ -55,36 +55,21 @@ const AuthPage = () => {
         <Card className="bg-background/75 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <CardHeader className="pb-4">
             <CardTitle className="text-center text-xl">
-              Bienvenue sur Validèl
+              {isLogin ? 'Connexion' : 'Inscription'}
             </CardTitle>
-            <p className="text-center text-sm text-muted-foreground">
-              Connectez-vous pour continuer
-            </p>
           </CardHeader>
           <CardContent>
             <Tabs value={authMethod} onValueChange={(v) => setAuthMethod(v as 'phone' | 'email')} className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-6">
                 <TabsTrigger value="phone" className="flex items-center gap-2">
                   <Phone className="w-4 h-4" />
-                  <span>SMS</span>
+                  <span>Téléphone</span>
                 </TabsTrigger>
                 <TabsTrigger value="email" className="flex items-center gap-2">
                   <Mail className="w-4 h-4" />
                   <span>Email</span>
                 </TabsTrigger>
               </TabsList>
-              
-              {/* Avertissement pour éviter la confusion entre méthodes */}
-              <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                <p className="text-xs text-amber-700 dark:text-amber-300 text-center">
-                  {authMethod === 'phone' 
-                    ? "📱 Connexion par SMS : utilisez votre numéro sénégalais"
-                    : "📧 Connexion par Email : utilisez votre adresse email"}
-                </p>
-                <p className="text-xs text-amber-600 dark:text-amber-400 text-center mt-1">
-                  ⚠️ Chaque méthode crée un compte séparé
-                </p>
-              </div>
               
               <TabsContent value="phone" className="mt-0">
                 <PhoneAuthForm onSwitchToEmail={() => setAuthMethod('email')} />

@@ -123,7 +123,7 @@ export default function HomePage() {
                         src={validelLogo} 
                         alt="Validèl" 
                         className={cn(
-                          "mx-auto mb-4 h-20 w-20 object-contain",
+                          "mx-auto mb-6 h-24 w-24 object-contain drop-shadow-lg",
                           "transition-transform duration-500",
                           isActive ? "scale-100" : "scale-90"
                         )}

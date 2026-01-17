@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings } from 'lucide-react';
+import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
+import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
 import { PaymentForm } from '@/components/PaymentForm';
 import { PayDunyaService } from '@/services/paydunya';
 import { PixPayService } from '@/services/pixpay';
+import { PaymentWebView } from '@/components/PaymentWebView';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +25,19 @@ import.meta.env;
 import waveLogo from '@/assets/wave.png';
 import orangeMoneyLogo from '@/assets/orange-money.png';
 
+// Fonction utilitaire pour fetch avec timeout (générique TypeScript)
+async function fetchJsonWithTimeout<T = unknown>(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; data: T }> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const data = await res.json();
+    return { res, data };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 type PaymentMethod = 'wave' | 'orange_money';
 
 // Interfaces pour les réponses API
@@ -30,6 +47,7 @@ interface PayDunyaResponse {
   message?: string;
   receipt_url?: string;
   order_id?: string;
+  qr_code?: string;
 }
 
 interface SoftPayResponse {
@@ -43,6 +61,7 @@ interface CreateOrderResponse {
   id?: string;
   order_id?: string;
   order_code?: string;
+  qr_code?: string;
   message?: string;
 }
 
@@ -53,6 +72,7 @@ const BuyerDashboard = () => {
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
@@ -92,42 +112,28 @@ const BuyerDashboard = () => {
   // 1. Ajouter un nouvel état pour le modal de choix Orange Money
   const [showOrangeChoiceModal, setShowOrangeChoiceModal] = useState(false);
   const [onOrangeChoice, setOnOrangeChoice] = useState<((choice: 'qr' | 'otp') => void) | null>(null);
+  
+  // États pour le remboursement
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundLoading, setRefundLoading] = useState(false);
 
-  const fetchJsonWithTimeout = async <T = unknown>(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; data: T }> => {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { ...init, signal: controller.signal });
-      const text = await res.text();
-      let data: unknown = null;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = text;
-      }
-      return { res, data: data as T };
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-  };
+  // États pour la WebView de paiement
+  const [showPaymentWebView, setShowPaymentWebView] = useState(false);
+  const [paymentWebViewUrl, setPaymentWebViewUrl] = useState('');
 
+  // Fonction pour charger les commandes de l'acheteur (doit être dans le composant pour accéder à user, setOrders...)
   const fetchOrders = useCallback(async () => {
     if (!user) return;
-    
     setOrdersLoading(true);
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          products(name),
-          profiles!orders_vendor_id_fkey(full_name, phone),
-          delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
-        `)
+        .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
         .eq('buyer_id', user.id)
-        .in('status', ['paid', 'in_delivery', 'delivered'])  // Seulement les commandes payées
-        .order('created_at', { ascending: false })
-        .limit(50); // Limite augmentée pour debug
+        .in('status', ['paid', 'in_delivery', 'delivered', 'cancelled'])
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       // Normaliser null → undefined pour correspondre au type Order
@@ -150,9 +156,66 @@ const BuyerDashboard = () => {
     }
   }, [user, toast]);
 
+
+  const fetchTransactions = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      // Étape 1: récupérer les commandes de l'acheteur pour éviter un JOIN FK manquant
+      const { data: orderRows, error: ordersError } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('buyer_id', user.id);
+
+      if (ordersError) throw ordersError;
+
+      const orderIds = (orderRows || []).map((row) => row.id);
+      if (orderIds.length === 0) {
+        setTransactions([]);
+        return;
+      }
+
+      // Étape 2: récupérer les transactions liées aux commandes de l'acheteur
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('payment_transactions')
+        .select('*')
+        .in('order_id', orderIds)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setTransactions((data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>);
+    } catch (error) {
+      console.error('Erreur lors du chargement des transactions:', error);
+    }
+  }, [user]);
+
   useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+    fetchTransactions();
+  }, [fetchOrders, fetchTransactions]);
+
+  // Listener pour rafraîchir les commandes quand l'utilisateur revient du navigateur de paiement
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const setupBrowserListener = async () => {
+      const listener = await Browser.addListener('browserFinished', () => {
+        console.log('[BuyerDashboard] Utilisateur revenu du paiement, rafraîchissement...');
+        // Rafraîchir les commandes après 1 seconde
+        setTimeout(() => {
+          fetchOrders();
+          fetchTransactions();
+        }, 1000);
+      });
+
+      return () => {
+        listener.remove();
+      };
+    };
+
+    setupBrowserListener();
+  }, [fetchOrders, fetchTransactions]);
 
   // Warm up the backend (Render cold start) - faire plusieurs tentatives pour réveiller le serveur
   const [backendReady, setBackendReady] = useState(false);
@@ -213,13 +276,18 @@ const BuyerDashboard = () => {
     const channel = supabase
       .channel('orders-changes-buyer')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
+        console.log('BuyerDashboard: Changement orders détecté', payload);
         fetchOrders();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, payload => {
+        console.log('BuyerDashboard: Changement transactions détecté', payload);
+        fetchTransactions();
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchOrders]);
+  }, [fetchOrders, fetchTransactions]);
 
   const handleSearch = async () => {
     if (!searchCode.trim()) {
@@ -239,7 +307,7 @@ const BuyerDashboard = () => {
           *,
           profiles(full_name, company_name)
         `)
-        .eq('code', searchCode.trim().toLowerCase())
+        .ilike('code', searchCode.trim())
         .eq('is_available', true)
         .single();
 
@@ -275,27 +343,8 @@ const BuyerDashboard = () => {
     }
   };
 
-  // Génère un code de commande unique CMD0001, CMD0002, ...
-  const generateOrderCode = async () => {
-    const { data: orders, error } = await supabase
-      .from('orders')
-      .select('order_code')
-      .order('created_at', { ascending: true });
-    let nextNumber = 1;
-    if (orders && orders.length > 0) {
-      const max = orders.reduce((acc, o) => {
-        const match = o.order_code && o.order_code.match(/^CMD(\d{4})$/i);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          return num > acc ? num : acc;
-        }
-        return acc;
-      }, 0);
-      nextNumber = max + 1;
-    }
-    if (nextNumber > 9999) throw new Error('Limite de 9999 commandes atteinte');
-    return `CMD${nextNumber.toString().padStart(4, '0')}`.toUpperCase();
-  };
+  // Les codes de commande sont maintenant générés côté serveur pour garantir l'unicité et l'atomicité.
+  // La génération côté client a été supprimée pour éviter les collisions et les conditions de concurrence.
 
   // Polling du statut de la commande après paiement
   const pollOrderStatus = (orderId: string) => {
@@ -395,6 +444,7 @@ const BuyerDashboard = () => {
   };
 
   const [showAllOrders, setShowAllOrders] = useState(false);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
   const [isRedirecting, setIsRedirecting] = useState(false);
   const paydunyaMode = import.meta.env.VITE_PAYDUNYA_MODE || 'prod';
   const [wavePassword, setWavePassword] = useState('');
@@ -481,6 +531,13 @@ const BuyerDashboard = () => {
         if (!createdOrderId) {
           throw new Error('ID de commande non reçu du serveur');
         }
+
+        // Récupérer le code renvoyé par le serveur et afficher le QR code sécurisé
+        setOrderId(data?.id || data?.order_id || createdOrderId);
+        if (data?.qr_code) {
+          setQrModalValue(data.qr_code);
+          setQrModalOpen(true);
+        }
         
         // Initier le paiement Orange Money directement
         const orangeResult = await pixPayService.initiatePayment({
@@ -562,7 +619,14 @@ const BuyerDashboard = () => {
         if (!createdOrderId) {
           throw new Error('ID de commande non reçu du serveur');
         }
-        
+
+        // Récupérer le code renvoyé par le serveur et afficher le QR code sécurisé
+        setOrderId(data?.id || data?.order_id || createdOrderId);
+        if (data?.qr_code) {
+          setQrModalValue(data.qr_code);
+          setQrModalOpen(true);
+        }
+
         // Initier le paiement Wave directement
         console.log('[BuyerDashboard] Initiation paiement Wave avec:', {
           amount: searchResult.price * purchaseQuantity,
@@ -640,6 +704,11 @@ const BuyerDashboard = () => {
       setPendingOrderToken(data.token || null);
       setReceiptUrl(data.receipt_url || null);
       setOrderId(data.order_id || null);
+      // Afficher le QR code sécurisé pour le client
+      if (data.qr_code) {
+        setQrModalValue(data.qr_code);
+        setQrModalOpen(true);
+      }
       if (paydunyaMode === 'sandbox') {
         setShowDirectPaymentForm(true);
         return;
@@ -761,11 +830,122 @@ const BuyerDashboard = () => {
   const getStatusTextFr = (status: string) => {
     switch (status) {
       case 'pending': return 'En attente';
-      case 'paid': return 'Payée';
-      case 'in_delivery': return 'En livraison';
-      case 'delivered': return 'Livrée';
+      case 'paid': return 'Payé';
+      case 'in_delivery': return 'En cours de livraison';
+      case 'delivered': return 'Livré';
       case 'cancelled': return 'Annulée';
+      case 'refunded': return 'Remboursée';
       default: return status;
+    }
+  };
+
+  const renderStatusBadge = (status?: string) => {
+    if (!status) return null;
+    const text = getStatusTextFr(status);
+    // mapping to styles
+    let bg = 'bg-gray-100 text-gray-700';
+    let dot = 'bg-gray-400';
+    if (status === 'in_delivery') { bg = 'bg-blue-100 text-blue-700'; dot = 'bg-blue-500'; }
+    else if (status === 'paid') { bg = 'bg-purple-100 text-purple-700'; dot = 'bg-purple-500'; }
+    else if (status === 'delivered') { bg = 'bg-green-100 text-green-700'; dot = 'bg-green-500'; }
+    else if (status === 'pending') { bg = 'bg-yellow-100 text-yellow-700'; dot = 'bg-yellow-500'; }
+    else if (status === 'cancelled') { bg = 'bg-red-100 text-red-700'; dot = 'bg-red-500'; }
+
+    return (
+      <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${bg}`} role="status" aria-label={text}>
+        <span className={`w-2 h-2 rounded-full ${dot} flex-shrink-0`} />
+        <span className="leading-none">{text}</span>
+      </span>
+    );
+  };
+
+  // Fonction de demande de remboursement
+  const handleRequestRefund = async () => {
+    if (!refundOrder) return;
+
+    setRefundLoading(true);
+    try {
+      console.log('[REFUND] Demande de remboursement pour commande:', refundOrder.id);
+      
+      const response = await fetch(apiUrl('/api/payment/pixpay/refund'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: refundOrder.id,
+          reason: refundReason || 'Non satisfaction client'
+        }),
+      });
+
+      const result = await response.json();
+      console.log('[REFUND] Résultat:', result);
+
+      if (result.success) {
+        toast({
+          title: "✅ Remboursement initié",
+          description: result.message || `Remboursement de ${refundOrder.total_amount} FCFA en cours`,
+          duration: 6000,
+        });
+        
+        // Fermer le modal et rafraîchir les commandes
+        setShowRefundModal(false);
+        setRefundOrder(null);
+        setRefundReason('');
+        fetchOrders();
+        fetchTransactions();
+      } else {
+        throw new Error(result.error || 'Erreur lors du remboursement');
+      }
+    } catch (error) {
+      console.error('[REFUND] Erreur:', error);
+      toast({
+        title: "❌ Échec du remboursement",
+        description: error instanceof Error ? error.message : 'Erreur inconnue',
+        variant: "destructive",
+      });
+    } finally {
+      setRefundLoading(false);
+    }
+  };
+
+  // Ouvrir le modal de remboursement
+  const openRefundModal = (order: Order) => {
+    setRefundOrder(order);
+    setRefundReason('');
+    setShowRefundModal(true);
+  };
+
+  // Helper pour ouvrir les liens de paiement avec WebView intégrée
+  const openPaymentLink = async (url: string) => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        // Sur mobile: ouvrir dans une WebView intégrée sans navigateur externe
+        setPaymentWebViewUrl(url);
+        setShowPaymentWebView(true);
+      } else {
+        // Sur web: ouvrir dans un nouvel onglet
+        window.open(url, '_blank');
+      }
+    } catch (error) {
+      console.error('Erreur ouverture lien paiement:', error);
+      // Fallback
+      window.open(url, '_blank');
+    }
+  };
+
+  // Fonction appelée quand le paiement est validé dans la WebView
+  const handlePaymentWebViewSuccess = (completedOrderId?: string) => {
+    setShowPaymentWebView(false);
+    setPaymentWebViewUrl('');
+    
+    const finalOrderId = completedOrderId || orderId;
+    if (finalOrderId) {
+      navigate(`/payment-success?order_id=${finalOrderId}`);
+    } else {
+      toast({
+        title: "Succès",
+        description: "Paiement effectué avec succès",
+      });
+      fetchOrders();
     }
   };
 
@@ -922,14 +1102,14 @@ const BuyerDashboard = () => {
           {/* Colonne de gauche - Recherche et produit */}
           <div className="lg:col-span-2 space-y-6">
             {/* Recherche de produit */}
-            <Card>
+            <Card className="w-full">
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                   <Search className="h-5 w-5 text-gray-500" />
                   <span>Rechercher un produit</span>
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-3 sm:px-6">
                 <form className="flex items-center gap-2 w-full" onSubmit={e => { e.preventDefault(); handleSearch(); }}>
                   <Input
                     className="flex-1 min-w-0 text-base px-3 py-2 rounded-md"
@@ -1047,22 +1227,40 @@ const BuyerDashboard = () => {
 
                     {/* Bouton de paiement */}
                     {paymentMethod === 'wave' && (
-                      <Button 
-                        onClick={handleCreateOrderAndShowPayment}
-                        disabled={processingPayment}
-                        className="w-full bg-green-500 hover:bg-green-600"
-                      >
-                        Payer avec Wave
-                      </Button>
+                      <>
+                        <Button 
+                          onClick={handleCreateOrderAndShowPayment}
+                          disabled={processingPayment}
+                          className="w-full bg-green-500 hover:bg-green-600"
+                        >
+                          Payer avec Wave
+                        </Button>
+                        <button
+                          type="button"
+                          className="w-full mt-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                          onClick={() => { setSearchResult(null); setPurchaseQuantity(1); setPaymentMethod('wave'); setSearchCode(''); }}
+                        >
+                          Annuler
+                        </button>
+                      </>
                     )}
                     {paymentMethod === 'orange_money' && (
-                      <Button
-                        onClick={handleCreateOrderAndShowPayment}
-                        disabled={processingPayment}
-                        className="w-full bg-green-600 hover:bg-orange-700"
-                      >
-                        Payer avec Orange Money
-                      </Button>
+                      <>
+                        <Button
+                          onClick={handleCreateOrderAndShowPayment}
+                          disabled={processingPayment}
+                          className="w-full bg-green-600 hover:bg-orange-700"
+                        >
+                          Payer avec Orange Money
+                        </Button>
+                        <button
+                          type="button"
+                          className="w-full mt-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                          onClick={() => { setSearchResult(null); setPurchaseQuantity(1); setPaymentMethod('wave'); setSearchCode(''); }}
+                        >
+                          Annuler
+                        </button>
+                      </>
                     )}
                   </div>
                 </CardContent>
@@ -1103,60 +1301,213 @@ const BuyerDashboard = () => {
 
                   return (
                     <div className="space-y-3">
-                      {displayedOrders.map((order) => (
-                        <div key={order.id} className="order-card">
-                          <div>
-                            <b>{order.products?.name}</b> <span>{order.total_amount} FCFA</span>
-                            <div style={{ marginTop: 4 }}>
-                              <p style={{ fontSize: '0.85em', color: '#555' }}>
-                                <b>Vendeur:</b> {order.profiles?.full_name || 'N/A'}
-                                {order.profiles?.phone && <span style={{ marginLeft: 8 }}>📞 {order.profiles.phone}</span>}
-                              </p>
-                              {order.delivery_person && (
-                                <p style={{ fontSize: '0.85em', color: '#555' }}>
-                                  <b>Livreur:</b> {order.delivery_person.full_name}
-                                  {order.delivery_person.phone && <span style={{ marginLeft: 8 }}>📞 {order.delivery_person.phone}</span>}
-                                </p>
-                              )}
+                      {displayedOrders.map((order) => {
+                        // Trouver les transactions associées à cette commande
+                        const orderTransactions = transactions.filter(t => t.order_id === order.id);
+                        const paymentTransaction = orderTransactions.find(t => t.transaction_type !== 'payout');
+                        const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
+                        const isExpanded = expandedOrderIds.has(order.id);
+                        const toggleDetails = () => {
+                          setExpandedOrderIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(order.id)) {
+                              next.delete(order.id);
+                            } else {
+                              next.add(order.id);
+                            }
+                            return next;
+                          });
+                        };
+                        
+                        return (
+                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md w-full">
+                          <div className="flex flex-col gap-3">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-semibold text-gray-900 break-words text-sm max-w-[220px] xs:max-w-[260px] sm:max-w-none truncate">
+                                    {order.products?.name || 'Commande'}
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-semibold text-green-600">
+                                      {order.total_amount?.toLocaleString()} FCFA
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 space-y-1 text-sm text-gray-600">
+                                  <div className="flex flex-col gap-2 pb-2">
+                                    <div className="flex items-center gap-3">
+                                      <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur:</span>
+                                      <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
+                                    </div>
+                                    {order.profiles?.phone && (
+                                      <div className="flex items-center gap-3 text-sm">
+                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
+                                        <div className="flex items-center gap-2">
+                                          <a
+                                            href={`tel:${order.profiles.phone}`}
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                            title="Appeler le vendeur"
+                                          >
+                                            <PhoneIcon className="h-4 w-4" size={14} />
+                                            <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                          </a>
+                                          <a
+                                            href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 text-green-700 text-[11px] font-medium hover:bg-green-100 transition min-w-[56px]"
+                                            title="Contacter sur WhatsApp"
+                                          >
+                                            <WhatsAppIcon className="h-4 w-4" size={14} />
+                                            <span className="ml-1 text-[11px] leading-tight">WhatsApp</span>
+                                          </a>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {order.delivery_person && (
+                                    <div className="flex flex-col gap-1 mt-3">
+                                      <div className="flex items-center gap-3">
+                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
+                                        <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person.full_name}</span>
+                                      </div>
+                                      {order.delivery_person.phone && (
+                                        <div className="flex items-center gap-3 text-sm">
+                                          <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
+                                          <div className="flex items-center gap-2">
+                                            <a
+                                              href={`tel:${order.delivery_person.phone}`}
+                                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                              title="Appeler le livreur"
+                                            >
+                                              <PhoneIcon className="h-4 w-4" size={14} />
+                                              <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                            </a>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                            <span style={{ marginLeft: 0, marginTop: 4, display: 'block', color: '#888' }}>
-                              {order.payment_method === 'orange_money' && '🟠 '}
-                              {order.payment_method === 'wave' && '💙 '}
-                              Statut: {getStatusTextFr(order.status ?? '')}
-                            </span>
-                          </div>
-                          {/* Bouton pour voir le QR code */}
-                          <div style={{ margin: '8px 0' }}>
-                            {order.qr_code ? (
-                              <button
-                                style={{ fontSize: '0.9em', color: '#ff9800', border: '1px solid #ff9800', borderRadius: 4, padding: '2px 10px', background: 'white', cursor: 'pointer' }}
-                                onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
-                              >
-                                Voir QR code
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: '0.8em', color: '#888' }}>QR code indisponible</span>
+
+                            {/* Affichage du statut de paiement */}
+                            {paymentTransaction && (
+                              <div className="rounded-md bg-blue-50 p-2">
+                                <p className="text-xs font-medium text-blue-700">
+                                  Mon paiement:
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (paymentTransaction.status === 'SUCCESSFUL'
+                                        ? 'bg-green-100 text-green-700'
+                                        : paymentTransaction.status === 'PENDING1' || paymentTransaction.status === 'PENDING'
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-red-100 text-red-700')
+                                    }
+                                  >
+                                    {paymentTransaction.status === 'SUCCESSFUL'
+                                      ? '✓ Payé'
+                                      : paymentTransaction.status === 'PENDING1' || paymentTransaction.status === 'PENDING'
+                                        ? '⏳ En attente'
+                                        : '✗ Échoué'}
+                                  </span>
+                                </p>
+                              </div>
                             )}
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-semibold">{order.total_amount?.toLocaleString()} FCFA</p>
-                            <p className="text-xs text-gray-500">
-                              {order.status === 'paid' && (
-                                <span style={{ color: '#ff9800', fontSize: '0.85em', fontWeight: 500 }}>payée</span>
+
+                            {/* Affichage du statut de paiement vendeur après livraison */}
+                            {order.status === 'delivered' && payoutTransaction && (
+                              <div className="rounded-md bg-purple-50 p-2">
+                                <p className="text-xs font-medium text-purple-700">
+                                  Paiement vendeur:
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (payoutTransaction.status === 'SUCCESSFUL'
+                                        ? 'bg-green-100 text-green-700'
+                                        : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-red-100 text-red-700')
+                                    }
+                                  >
+                                    {payoutTransaction.status === 'SUCCESSFUL'
+                                      ? '✓ Effectué'
+                                      : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                        ? '⏳ En cours'
+                                        : '✗ Échoué'}
+                                  </span>
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Affichage du remboursement si existant */}
+                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
+                              <div className="rounded-md bg-orange-50 p-2">
+                                <p className="text-xs font-medium text-orange-700">
+                                  💸 Remboursement:
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-yellow-100 text-yellow-700')
+                                    }
+                                  >
+                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                      ? '✓ Effectué'
+                                      : '⏳ En cours'}
+                                  </span>
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="text-sm flex items-center gap-2">
+                              {renderStatusBadge(order.status)}
+                            </div>
+
+                            {/* Boutons d'action */}
+                            <div className="flex flex-wrap gap-2">
+                              {order.qr_code ? (
+                                <button
+                                  className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
+                                  onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
+                                >
+                                  Voir QR code
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">QR code indisponible</span>
                               )}
-                              {order.status === 'in_delivery' && (
-                                <span style={{ color: '#2196f3', fontSize: '0.85em', fontWeight: 500 }}>en livraison</span>
-                              )}
-                              {order.status === 'delivered' && (
-                                <span style={{ color: '#4caf50', fontSize: '0.85em', fontWeight: 500 }}>livrée</span>
-                              )}
-                              {['paid', 'in_delivery', 'delivered'].indexOf(order.status ?? '') === -1 && (
-                                <span>{order.status}</span>
-                              )}
-                            </p>
+                              <button
+                                className="rounded-md border border-blue-500 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50"
+                                onClick={toggleDetails}
+                              >
+                                {isExpanded ? 'Masquer les détails' : 'Détails'}
+                              </button>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="flex flex-wrap gap-2">
+                                {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
+                                {(order.status === 'paid' || order.status === 'in_delivery') && (
+                                  <button
+                                    className="flex items-center gap-1 rounded-md border border-red-500 px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50"
+                                    onClick={() => openRefundModal(order)}
+                                  >
+                                    <XCircle size={14} />
+                                    Annuler / Remboursement
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Suppression du doublon prix/statut */}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       {!showAllOrders && orders.filter(order => order.status !== 'pending').length > 5 && (
                         <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAllOrders(true)}>
                           Voir toutes les commandes
@@ -1257,7 +1608,7 @@ const BuyerDashboard = () => {
                     const data = await res.json();
                     if (data.success && data.url) {
                       setSoftPayRedirectUrl(data.url);
-                      window.open(data.url, '_blank');
+                      await openPaymentLink(data.url);
                       setShowSoftPayModal(false);
                     } else {
                       throw new Error(data.message || 'Erreur paiement Wave');
@@ -1277,7 +1628,7 @@ const BuyerDashboard = () => {
                     const data = await res.json();
                     if (data.success && data.url) {
                       setSoftPayQrUrl(data.url);
-                      window.open(data.url, '_blank');
+                      await openPaymentLink(data.url);
                       setShowSoftPayModal(false);
                     } else {
                       throw new Error(data.message || 'Erreur paiement Orange Money QR');
@@ -1416,6 +1767,100 @@ const BuyerDashboard = () => {
           </a>
         </div>
       )}
+
+      {/* Modal de remboursement/annulation */}
+      {showRefundModal && refundOrder && (
+        <Dialog open={showRefundModal} onOpenChange={setShowRefundModal}>
+          <DialogContent className="w-full max-w-lg mx-4 sm:mx-auto max-h-[90vh] overflow-auto p-4 sm:p-6">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+                Annuler et demander un remboursement
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {/* Résumé de la commande */}
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="font-semibold">{refundOrder.products?.name}</p>
+                <p className="text-sm text-gray-600">Montant: {refundOrder.total_amount?.toLocaleString()} FCFA</p>
+                <p className="text-sm text-gray-600">Statut: {getStatusTextFr(refundOrder.status ?? '')}</p>
+              </div>
+
+              {/* Avertissement */}
+              <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  <strong>⚠️ Attention:</strong> Cette action est irréversible. Le montant sera remboursé sur votre compte 
+                  {refundOrder.payment_method === 'wave' ? ' Wave' : ' Orange Money'}.
+                </p>
+              </div>
+
+              {/* Raison du remboursement */}
+              <div>
+                <label htmlFor="refund-reason" className="block text-sm font-medium mb-2">Raison de l'annulation (optionnel)</label>
+                <select 
+                  id="refund-reason"
+                  title="Raison de l'annulation"
+                  className="w-full border rounded-lg p-2"
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                >
+                  <option value="">Sélectionner une raison</option>
+                  <option value="Produit non conforme">Produit non conforme</option>
+                  <option value="Délai de livraison trop long">Délai de livraison trop long</option>
+                  <option value="Erreur de commande">Erreur de commande</option>
+                  <option value="Changement d'avis">Changement d'avis</option>
+                  <option value="Autre">Autre</option>
+                </select>
+              </div>
+
+              {/* Boutons */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <Button 
+                  variant="outline" 
+                  className="w-full sm:flex-1"
+                  onClick={() => {
+                    setShowRefundModal(false);
+                    setRefundOrder(null);
+                    setRefundReason('');
+                  }}
+                  disabled={refundLoading}
+                >
+                  Annuler
+                </Button>
+                <Button 
+                  className="w-full sm:flex-1 bg-red-600 hover:bg-red-700"
+                  onClick={handleRequestRefund}
+                  disabled={refundLoading}
+                >
+                  {refundLoading ? (
+                    <>
+                      <Spinner size="sm" className="mr-2" />
+                      Traitement...
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Confirmer le remboursement
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* WebView pour le paiement intégré (mobile uniquement) */}
+      <PaymentWebView
+        url={paymentWebViewUrl}
+        isOpen={showPaymentWebView}
+        onClose={() => {
+          setShowPaymentWebView(false);
+          setPaymentWebViewUrl('');
+        }}
+        onSuccess={handlePaymentWebViewSuccess}
+        orderId={orderId || undefined}
+      />
     </div>
   );
 };
