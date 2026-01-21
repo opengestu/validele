@@ -904,9 +904,30 @@ app.post('/api/notify/delivery-started', async (req, res) => {
       return res.status(400).json({ success: false, error: 'buyerId et orderId requis' });
     }
 
+    // Aller chercher le nom du produit et le numéro du livreur
+    let productName = null;
+    let deliveryPersonPhone = null;
+    let order_code = orderCode;
+    try {
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .select('order_code, product:products(name), delivery_person:profiles!orders_delivery_person_id_fkey(phone)')
+        .eq('id', orderId)
+        .single();
+      if (!orderError && order) {
+        if (order.product && order.product.name) productName = order.product.name;
+        if (order.delivery_person && order.delivery_person.phone) deliveryPersonPhone = order.delivery_person.phone;
+        if (order.order_code) order_code = order.order_code;
+      }
+    } catch (e) {
+      console.error('[NOTIFY] Erreur récupération infos commande pour SMS:', e);
+    }
+
     const result = await notificationService.notifyBuyerDeliveryStarted(buyerId, {
       orderId,
-      orderCode
+      orderCode: order_code,
+      productName,
+      deliveryPersonPhone
     });
 
     res.json({ success: true, ...result });

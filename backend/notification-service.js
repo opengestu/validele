@@ -187,7 +187,8 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
   // Envoi SMS
   if (phone) {
     try {
-      const smsText = `Votre commande${orderDetails.orderCode ? ' ' + orderDetails.orderCode : ''}${orderDetails.productName ? ' (' + orderDetails.productName + ')' : ''} est en cours de livraison. Numéro livreur : ${orderDetails.deliveryPersonPhone || 'non disponible'}`;
+      // SMS format: Votre commande [nom du produit] sur VALIDEL est en cours de livraison. Numero livreur : [numéro]
+      const smsText = `Votre commande ${orderDetails.productName || ''} sur VALIDEL est en cours de livraison. Numero livreur : ${orderDetails.deliveryPersonPhone || 'non disponible'}`;
       smsResult = await sendD7SMSNotify(phone, smsText);
       console.log(`[NOTIF] Acheteur ${buyerId} notifié (SMS) - livraison en cours`, smsResult);
     } catch (error) {
