@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL as string | undefined;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY as string | undefined; // service role key required for server
-const D7_API_KEY = process.env.D7_API_KEY as string | undefined;
+const D7_API_KEY = process.env.D7_API_KEY_NOTIFY as string | undefined;
 const D7_SMS_URL = process.env.D7_SMS_URL || 'https://api.direct7networks.com/sms/send';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
