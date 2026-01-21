@@ -10,8 +10,7 @@ const PIXPAY_CONFIG = {
   // CASHIN (214) = On paie vendeur(se)/livreur → argent sort de notre compte PixPay
   service_id_client_payment: parseInt(process.env.PIXPAY_SERVICE_ID_CLIENT_PAYMENT || '213'),
   service_id_vendor_payout: parseInt(process.env.PIXPAY_SERVICE_ID_VENDOR_PAYOUT || '214'),
-  wave_service_id_payin: 80, // Wave → PixPay
-  wave_service_id_payout: 79, // PixPay → Wave
+  // Les service_id Wave sont forcés dans le code, ne pas utiliser ces variables
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
   // Configuration Wave PixPay
@@ -137,7 +136,7 @@ async function sendMoney(params) {
   // Wave: 210 (IN_WAVE_SN), Orange Money: 214 (IN_ORANGE_MONEY_SN)
   let service_id;
   if (walletType === 'wave-senegal') {
-    service_id = PIXPAY_CONFIG.wave_service_id_payout; // 80 : PixPay → Wave
+    service_id = 79; // Forcé : PixPay → Wave
   } else if (walletType === 'orange-senegal') {
     service_id = 214; // Orange Money CASHIN
   } else {
@@ -249,7 +248,7 @@ async function initiateWavePayment(params) {
     amount: parseInt(amount),
     destination: formattedPhone,  // Numéro du client Wave
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: PIXPAY_CONFIG.wave_service_id_payin, // 79 : Wave → PixPay
+    service_id: 80, // Forcé : Wave → PixPay
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
