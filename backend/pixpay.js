@@ -2,6 +2,9 @@
 const axios = require('axios');
 
 // Configuration PixPay
+// Rappel :
+//   - service_id 79 : Wave → PixPay (le client paie, argent entre sur PixPay)
+//   - service_id 80 : PixPay → Wave (PixPay paie, argent sort vers Wave)
 const PIXPAY_CONFIG = {
   api_key: process.env.PIXPAY_API_KEY || '',
   business_name_id: process.env.PIXPAY_BUSINESS_ID || '',
@@ -248,7 +251,7 @@ async function initiateWavePayment(params) {
     amount: parseInt(amount),
     destination: formattedPhone,  // Numéro du client Wave
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: 80, // Forcé : Wave → PixPay
+    service_id: 80, // Forcé : PixPay → Wave (sortie d'argent)
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
@@ -258,11 +261,12 @@ async function initiateWavePayment(params) {
     })
   };
 
+  // Affiche le vrai service_id envoyé (80)
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,
     destination: formattedPhone,
     orderId,
-    service_id: PIXPAY_CONFIG.wave_service_id,
+    service_id: payload.service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`
   });
