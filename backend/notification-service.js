@@ -1,15 +1,30 @@
 // Fonction d'envoi de SMS via D7Direct (token notification)
 async function sendD7SMSNotify(to, text) {
   const D7_API_KEY = process.env.D7_API_KEY_NOTIFY;
-  const D7_SMS_URL = process.env.D7_SMS_URL || 'https://api.direct7networks.com/sms/send';
+  const D7_SMS_URL = process.env.D7_SMS_URL || 'https://api.d7networks.com/messages/v1/send';
   if (!D7_API_KEY) throw new Error('D7_API_KEY_NOTIFY not configured');
+  const data = {
+    messages: [
+      {
+        channel: "sms",
+        recipients: [to],
+        content: text,
+        msg_type: "text",
+        data_coding: "text"
+      }
+    ],
+    message_globals: {
+      originator: "VALIDEL"
+    }
+  };
   const res = await fetch(D7_SMS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       'Authorization': `Bearer ${D7_API_KEY}`,
     },
-    body: JSON.stringify({ to, text }),
+    body: JSON.stringify(data),
   });
   const json = await res.json().catch(() => ({ status: res.status }));
   return { ok: res.ok, status: res.status, body: json };
