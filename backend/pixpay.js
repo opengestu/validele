@@ -10,8 +10,8 @@ const PIXPAY_CONFIG = {
   // CASHIN (214) = On paie vendeur(se)/livreur → argent sort de notre compte PixPay
   service_id_client_payment: parseInt(process.env.PIXPAY_SERVICE_ID_CLIENT_PAYMENT || '213'),
   service_id_vendor_payout: parseInt(process.env.PIXPAY_SERVICE_ID_VENDOR_PAYOUT || '214'),
-  wave_service_id_payin: 79, // Wave → PixPay
-  wave_service_id_payout: 80, // PixPay → Wave
+  wave_service_id_payin: 80, // Wave → PixPay
+  wave_service_id_payout: 79, // PixPay → Wave
   base_url: process.env.PIXPAY_BASE_URL || 'https://proxy-coreapi.pixelinnov.net/api_v1',
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
   // Configuration Wave PixPay
