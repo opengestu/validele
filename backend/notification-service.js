@@ -1,3 +1,19 @@
+// Fonction d'envoi de SMS via D7Direct (token notification)
+async function sendD7SMSNotify(to, text) {
+  const D7_API_KEY = process.env.D7_API_KEY_NOTIFY;
+  const D7_SMS_URL = process.env.D7_SMS_URL || 'https://api.direct7networks.com/sms/send';
+  if (!D7_API_KEY) throw new Error('D7_API_KEY_NOTIFY not configured');
+  const res = await fetch(D7_SMS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${D7_API_KEY}`,
+    },
+    body: JSON.stringify({ to, text }),
+  });
+  const json = await res.json().catch(() => ({ status: res.status }));
+  return { ok: res.ok, status: res.status, body: json };
+}
 // backend/notification-service.js
 // Service de notifications automatiques pour les événements de commande
 
@@ -123,25 +139,49 @@ async function notifyDeliveryPersonAssigned(deliveryPersonId, orderDetails) {
  */
 async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
   const user = await getUserPushToken(buyerId);
-  if (!user?.token) return { sent: false, reason: 'no_token' };
-
-  try {
-    const result = await sendPushNotification(
-      user.token,
-      '🚗 Livraison en cours!',
-      `Votre commande ${orderDetails.orderCode || ''} est en route vers vous.`,
-      { 
-        type: 'delivery_started', 
-        orderId: orderDetails.orderId,
-        click_action: 'OPEN_ORDER_TRACKING'
-      }
-    );
-    console.log(`[NOTIF] Acheteur ${buyerId} notifié - livraison en cours`);
-    return { sent: true, result };
-  } catch (error) {
-    console.error(`[NOTIF] Erreur notification acheteur:`, error.message);
-    return { sent: false, error: error.message };
+  let pushResult = null;
+  let smsResult = null;
+  let phone = null;
+  if (supabase) {
+    // Récupérer le numéro de téléphone du profil
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('phone')
+      .eq('id', buyerId)
+      .single();
+    if (!error && data?.phone) phone = data.phone;
   }
+  // Envoi push
+  if (user?.token) {
+    try {
+      pushResult = await sendPushNotification(
+        user.token,
+        '🚗 Livraison en cours!',
+        `Votre commande ${orderDetails.orderCode || ''} est en route vers vous.`,
+        { 
+          type: 'delivery_started', 
+          orderId: orderDetails.orderId,
+          click_action: 'OPEN_ORDER_TRACKING'
+        }
+      );
+      console.log(`[NOTIF] Acheteur ${buyerId} notifié (push) - livraison en cours`);
+    } catch (error) {
+      console.error(`[NOTIF] Erreur notification push acheteur:`, error.message);
+    }
+  }
+  // Envoi SMS
+  if (phone) {
+    try {
+      const smsText = `Votre commande${orderDetails.orderCode ? ' ' + orderDetails.orderCode : ''} est en cours de livraison.`;
+      smsResult = await sendD7SMSNotify(phone, smsText);
+      console.log(`[NOTIF] Acheteur ${buyerId} notifié (SMS) - livraison en cours`, smsResult);
+    } catch (error) {
+      console.error(`[NOTIF] Erreur SMS livraison acheteur:`, error.message);
+    }
+  } else {
+    console.warn(`[NOTIF] Pas de numéro pour user ${buyerId}, SMS non envoyé.`);
+  }
+  return { sent: !!(pushResult || smsResult), pushResult, smsResult };
 }
 
 /**
