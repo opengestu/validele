@@ -10,9 +10,9 @@ import { notifyVendorNewOrder } from '@/services/notifications';
 const PaymentSuccess = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [order, setOrder] = React.useState(null);
-  const [buyer, setBuyer] = React.useState(null);
-  const [product, setProduct] = React.useState(null);
+  const [order, setOrder] = React.useState<any | null>(null);
+  const [buyer, setBuyer] = React.useState<any | null>(null);
+  const [product, setProduct] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
   const confettiRef = useRef(null);

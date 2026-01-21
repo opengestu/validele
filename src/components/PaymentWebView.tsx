@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
+import OverlaySpinner from '@/components/ui/overlay-spinner';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 
@@ -85,12 +86,7 @@ export const PaymentWebView: React.FC<PaymentWebViewProps> = ({
 
           {/* Spinner de chargement */}
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white z-20">
-              <div className="text-center">
-                <Spinner size="xl" />
-                <p className="mt-4 text-gray-600">Chargement du paiement...</p>
-              </div>
-            </div>
+            <OverlaySpinner message="Chargement du paiement..." visible />
           )}
 
           {/* iFrame pour afficher la page de paiement */}

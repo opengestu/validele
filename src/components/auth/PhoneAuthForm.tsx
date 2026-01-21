@@ -1,23 +1,32 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, ArrowRight, RefreshCw, Lock, User, Check } from 'lucide-react';
+import { ArrowRight, RefreshCw, Lock, User, Check, Clipboard, ShoppingCart, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+// INSPECT: using supabase client import
 import { supabase } from '@/integrations/supabase/client';
+// INSPECT: importing otp services
 import { sendOTP, verifyOTP as verifyOTPService } from '@/services/otp';
 import { apiUrl } from '@/lib/api';
 import RoleSpecificFields from './RoleSpecificFields';
+import validelLogo from '@/assets/validel-logo.png';
 
 interface PhoneAuthFormProps {
-  onSwitchToEmail: () => void;
+  initialPhone?: string;
+  onBack?: () => void;
+  onStepChange?: (step: 'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile') => void;
+  className?: string;
+  /** Show the "Continuer" CTA in the keypad. Default: false. */
+  showContinue?: boolean;
 }
 
-const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
+export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false }) => {
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -28,6 +37,7 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
     confirmPin: '',
     fullName: '',
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
+   
     companyName: '',
     vehicleInfo: '',
     address: '',
@@ -40,36 +50,53 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [confirmPinDigits, setConfirmPinDigits] = useState(['', '', '', '']);
   const [loginPinDigits, setLoginPinDigits] = useState(['', '', '', '']);
-  
+ 
   // Refs stables pour les inputs
   const otpRef0 = useRef<HTMLInputElement>(null);
   const otpRef1 = useRef<HTMLInputElement>(null);
   const otpRef2 = useRef<HTMLInputElement>(null);
   const otpRef3 = useRef<HTMLInputElement>(null);
   const otpRefs = [otpRef0, otpRef1, otpRef2, otpRef3];
-  
+ 
   const pinRef0 = useRef<HTMLInputElement>(null);
   const pinRef1 = useRef<HTMLInputElement>(null);
   const pinRef2 = useRef<HTMLInputElement>(null);
   const pinRef3 = useRef<HTMLInputElement>(null);
   const pinRefs = [pinRef0, pinRef1, pinRef2, pinRef3];
-  
+ 
   const confirmPinRef0 = useRef<HTMLInputElement>(null);
   const confirmPinRef1 = useRef<HTMLInputElement>(null);
   const confirmPinRef2 = useRef<HTMLInputElement>(null);
   const confirmPinRef3 = useRef<HTMLInputElement>(null);
   const confirmPinRefs = [confirmPinRef0, confirmPinRef1, confirmPinRef2, confirmPinRef3];
-  
+ 
   const loginPinRef0 = useRef<HTMLInputElement>(null);
   const loginPinRef1 = useRef<HTMLInputElement>(null);
   const loginPinRef2 = useRef<HTMLInputElement>(null);
   const loginPinRef3 = useRef<HTMLInputElement>(null);
   const loginPinRefs = [loginPinRef0, loginPinRef1, loginPinRef2, loginPinRef3];
-  
+ 
   const navigate = useNavigate();
   const { toast } = useToast();
   const { refreshProfile } = useAuth();
-
+  // Ref pour éviter d'auto-démarrer plusieurs fois
+  const autoStartedRef = useRef(false);
+  // Préremplir le téléphone si fourni via props (ex: navigation state)
+  useEffect(() => {
+    if (initialPhone) {
+      setFormData(prev => ({ ...prev, phone: initialPhone }));
+      // afficher immédiatement l'UI PIN pour que l'utilisateur saisisse son code
+      setStep('login-pin');
+      // déclencher automatiquement l'envoi du code comme si l'utilisateur avait appuyé sur "Continuer"
+      if (!autoStartedRef.current) {
+        autoStartedRef.current = true;
+        setTimeout(() => handleSendOTP(initialPhone), 120);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPhone]);
+  // length du numéro (9 chiffres attendus, sans espaces)
+  const phoneLen = formData.phone.replace(/\D/g, '').length;
   // Auto-focus sur le premier champ OTP quand on arrive à l'étape OTP
   useEffect(() => {
     if (step === 'otp') {
@@ -83,14 +110,31 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
     }
   }, [step]);
 
+  // Inform parent page of the current step so it can hide/show contextual headers
+  useEffect(() => {
+    onStepChange?.(step);
+  }, [step, onStepChange]);
+
+  // Bloquer le scroll quand on charge (overlay global)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (loading) {
+      document.body.style.overflow = 'hidden';
+      document.body.classList.add('has-global-spinner');
+    } else {
+      document.body.style.overflow = '';
+      document.body.classList.remove('has-global-spinner');
+    }
+    return () => { document.body.style.overflow = ''; document.body.classList.remove('has-global-spinner'); };
+  }, [loading]);
   // Format du numéro de téléphone sénégalais
   const formatPhoneNumber = (phone: string): string => {
     let cleaned = phone.replace(/\s/g, '').replace(/-/g, '');
-    
+   
     if (cleaned.startsWith('0')) {
       cleaned = '+221' + cleaned.substring(1);
     }
-    
+   
     if (!cleaned.startsWith('+')) {
       if (cleaned.startsWith('221')) {
         cleaned = '+' + cleaned;
@@ -98,19 +142,20 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         cleaned = '+221' + cleaned;
       }
     }
-    
+   
     return cleaned;
   };
-
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
+  // Ajout : gestion centralisée du clavier pour router les touches
+  /* keypad helpers removed */
 
   // Gestion des inputs à 4 chiffres (style Wave)
   const handleDigitInput = (
-    index: number, 
-    value: string, 
-    digits: string[], 
+    index: number,
+    value: string,
+    digits: string[],
     setDigits: React.Dispatch<React.SetStateAction<string[]>>,
     refs: React.RefObject<HTMLInputElement | null>[],
     onComplete: (code: string) => void
@@ -128,25 +173,21 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       }
       return;
     }
-
     const newDigits = [...digits];
     newDigits[index] = value.replace(/\D/g, '');
     setDigits(newDigits);
-
     // Passer au champ suivant
     if (value && index < 3) {
       refs[index + 1].current?.focus();
     }
-
     // Vérifier si le code est complet
     const fullCode = newDigits.join('');
     if (fullCode.length === 4 && !newDigits.includes('')) {
       onComplete(fullCode);
     }
   };
-
   const handleDigitKeyDown = (
-    index: number, 
+    index: number,
     e: React.KeyboardEvent,
     digits: string[],
     setDigits: React.Dispatch<React.SetStateAction<string[]>>,
@@ -159,7 +200,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setDigits(newDigits);
     }
   };
-
   // Démarrer le cooldown pour le renvoi du code
   const startResendCooldown = () => {
     setResendCooldown(60);
@@ -173,10 +213,10 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       });
     }, 1000);
   };
-
   // Envoyer le code OTP (uniquement pour inscription)
-  const handleSendOTP = async () => {
-    if (!formData.phone) {
+  const handleSendOTP = async (phoneOverride?: string) => {
+    const phoneToUse = phoneOverride ?? formData.phone;
+    if (!phoneToUse) {
       toast({
         title: "Erreur",
         description: "Veuillez entrer votre numéro de téléphone",
@@ -184,9 +224,8 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       });
       return;
     }
-
-    const formattedPhone = formatPhoneNumber(formData.phone);
-    
+    const formattedPhone = formatPhoneNumber(phoneToUse);
+   
     if (!formattedPhone.match(/^\+221[0-9]{9}$/)) {
       toast({
         title: "Numéro invalide",
@@ -195,10 +234,8 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       });
       return;
     }
-
     setLoading(true);
     setFormData(prev => ({ ...prev, phone: formattedPhone }));
-
     try {
       // Vérifier si une session email existe déjà (conflit potentiel)
       const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -207,22 +244,17 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         console.log('Session email détectée, déconnexion pour éviter conflits:', currentSession.user.email);
         await supabase.auth.signOut();
       }
-
       // D'abord vérifier si ce numéro existe déjà dans la base
       const { data: existingProfiles, error: searchError } = await supabase
         .from('profiles')
         .select('id, full_name, role')
         .eq('phone', formattedPhone)
         .limit(1);
-
       if (searchError) {
         console.error('Erreur recherche profil:', searchError);
       }
-
       console.log('Recherche profil pour:', formattedPhone, 'Résultat:', existingProfiles);
-
       const existingUser = existingProfiles && existingProfiles.length > 0 ? existingProfiles[0] : null;
-
       if (existingUser && existingUser.full_name) {
         // Utilisateur existant - demander directement le code PIN sans envoyer d'OTP
         let pinHash: string | null = null;
@@ -237,7 +269,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         } catch (e) {
           console.log('Colonne pin_hash non disponible:', e);
         }
-
         // Passer directement à l'étape login-pin pour tous les utilisateurs existants
         setExistingProfile({
           id: existingUser.id,
@@ -254,12 +285,10 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         // Nouvel utilisateur - envoyer OTP pour inscription
         // Utiliser Direct7Networks pour envoyer l'OTP
         await sendOTP(formattedPhone);
-
         toast({
           title: "Code envoyé ! 📱",
           description: "Vérifiez vos SMS pour valider votre numéro",
         });
-
         setStep('otp');
         startResendCooldown();
         setTimeout(() => otpRefs[0].current?.focus(), 100);
@@ -276,20 +305,17 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Vérifier le code OTP (pour inscription OU connexion utilisateur existant)
   const handleVerifyOTP = async (code?: string) => {
     const otpCode = code || otpDigits.join('');
-    
+   
     if (otpCode.length !== 4) {
       return;
     }
-
     setLoading(true);
     try {
       // Vérifier l'OTP via notre backend Direct7Networks
       const result = await verifyOTPService(formData.phone, otpCode);
-
       if (result.valid) {
         // OTP validé - vérifier si c'est une réinitialisation de PIN
         if (isResetPin) {
@@ -303,13 +329,13 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
           setTimeout(() => pinRefs[0].current?.focus(), 100);
           return;
         }
-        
+       
         // Vérifier si c'est un utilisateur existant avec PIN (connexion normale)
         if (existingProfile && existingProfile.pin_hash) {
           // OTP validé + profil existant avec PIN - connexion réussie !
           // Pour les utilisateurs SMS : on utilise localStorage pour maintenir la session
           // car ils n'ont pas de compte Supabase Auth (email/password)
-          
+         
           // Stocker les infos de session dans localStorage
           localStorage.setItem('sms_auth_session', JSON.stringify({
             phone: formData.phone,
@@ -318,26 +344,23 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
             fullName: existingProfile.full_name,
             loginTime: new Date().toISOString()
           }));
-
           toast({
             title: "Connexion réussie ! 🎉",
             description: `Bienvenue ${existingProfile.full_name}`,
           });
-
           // Attendre un peu pour que le toast s'affiche
           await new Promise(resolve => setTimeout(resolve, 500));
-
-          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                              existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-          
+         
           // Rafraîchir pour charger la session
           window.location.href = redirectPath;
           return;
         }
-        
+       
         // Sinon, passer à la création du PIN
         setStep('pin');
-        
+       
         if (existingProfile && !existingProfile.pin_hash) {
           // Utilisateur existant sans PIN
           toast({
@@ -366,32 +389,28 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Créer le PIN
   const handleCreatePin = (code?: string) => {
     const pin = code || pinDigits.join('');
     if (pin.length !== 4) return;
-    
+   
     setFormData(prev => ({ ...prev, pin }));
     setStep('confirm-pin');
     setTimeout(() => confirmPinRefs[0].current?.focus(), 100);
   };
-
   // Vérifier le PIN pour la connexion (utilisateurs existants)
   const handleLoginPin = async (code?: string) => {
     const enteredPin = code || loginPinDigits.join('');
     console.log('=== handleLoginPin appelé ===');
     console.log('PIN entré:', enteredPin);
     console.log('Longueur PIN:', enteredPin.length);
-    
+   
     if (enteredPin.length !== 4) {
       console.log('PIN incomplet, retour');
       return;
     }
-
     console.log('existingProfile:', existingProfile);
     console.log('PIN stocké:', existingProfile?.pin_hash);
-
     if (!existingProfile) {
       toast({
         title: "Erreur",
@@ -401,39 +420,35 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setStep('phone');
       return;
     }
-
     setLoading(true);
     try {
       // Essayer d'abord la connexion via Supabase Auth (utilisateurs inscrits via backend SMS)
       const formattedPhone = formatPhoneNumber(formData.phone);
       const virtualEmail = formattedPhone.replace('+', '') + '@sms.validele.app';
-      
+     
       console.log('Tentative de connexion Supabase Auth avec:', virtualEmail);
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: virtualEmail,
         password: enteredPin,
       });
-
       if (authData?.session && !authError) {
         // Connexion réussie via Supabase Auth
         console.log('Connexion réussie via Supabase Auth');
         await refreshProfile();
-        
+       
         toast({
           title: "Connexion réussie ! 🎉",
           description: `Bienvenue ${existingProfile.full_name}`,
         });
-
-        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                            existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
         navigate(redirectPath, { replace: true });
         return;
       }
-
       // Si échec, essayer avec le PIN hash stocké (utilisateurs avec PIN)
       if (existingProfile.pin_hash && enteredPin === existingProfile.pin_hash) {
         console.log('PIN CORRECT (via pin_hash) !');
-        
+       
         // PIN correct - créer directement la session locale sans envoyer de SMS
         // Stocker les infos de session dans localStorage
         localStorage.setItem('sms_auth_session', JSON.stringify({
@@ -443,18 +458,15 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
           fullName: existingProfile.full_name,
           loginTime: new Date().toISOString()
         }));
-
         toast({
           title: "Connexion réussie ! 🎉",
           description: `Content de vous revoir, ${existingProfile.full_name}`,
         });
-
         // Attendre un peu pour que le toast s'affiche
         await new Promise(resolve => setTimeout(resolve, 500));
-
-        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                            existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-        
+       
         // Rafraîchir pour charger la session
         window.location.href = redirectPath;
       } else {
@@ -483,12 +495,10 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Confirmer le PIN
   const handleConfirmPin = (code?: string) => {
     const confirmPin = code || confirmPinDigits.join('');
     if (confirmPin.length !== 4) return;
-
     if (confirmPin !== formData.pin) {
       toast({
         title: "Les codes ne correspondent pas",
@@ -499,9 +509,8 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       confirmPinRefs[0].current?.focus();
       return;
     }
-
     setFormData(prev => ({ ...prev, confirmPin }));
-    
+   
     // Si c'est une réinitialisation de PIN ou utilisateur existant sans PIN
     if (isResetPin || (existingProfile && !existingProfile.pin_hash)) {
       handleSavePinForExistingUser();
@@ -510,7 +519,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setStep('profile');
     }
   };
-
   // Sauvegarder le PIN pour un utilisateur existant
   const handleSavePinForExistingUser = async () => {
     setLoading(true);
@@ -519,15 +527,12 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       if (!existingProfile?.id) {
         throw new Error('Profil utilisateur introuvable');
       }
-
       // Mettre à jour uniquement le PIN (utiliser rpc ou raw query si la colonne n'est pas dans le type)
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ pin_hash: formData.pin } as Record<string, unknown>)
         .eq('id', existingProfile.id);
-
       if (updateError) throw updateError;
-
       // Créer la session locale
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
@@ -536,24 +541,21 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         fullName: existingProfile.full_name,
         loginTime: new Date().toISOString()
       }));
-
       toast({
         title: isResetPin ? "PIN réinitialisé ! 🎉" : "PIN créé ! 🎉",
         description: isResetPin ? "Vous pouvez maintenant vous connecter" : `Bienvenue ${existingProfile.full_name}`,
       });
-      
+     
       // Attendre un peu pour que le toast s'affiche
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+     
       // Réinitialiser le mode reset
       setIsResetPin(false);
-
-      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' : 
+      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                          existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-      
+     
       // Rafraîchir pour charger la session
       window.location.href = redirectPath;
-
     } catch (error: unknown) {
       console.error('Erreur mise à jour PIN:', error);
       toast({
@@ -565,7 +567,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Compléter le profil
   const handleCompleteProfile = async () => {
     if (!formData.fullName) {
@@ -576,7 +577,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       });
       return;
     }
-
     setLoading(true);
     try {
       // IMPORTANT: profiles.id est lié à auth.users(id) dans Supabase.
@@ -597,23 +597,19 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
           pin: formData.pin,
         }),
       });
-
       if (response.status === 404) {
         throw new Error(
           "Backend non à jour : l'endpoint /api/sms/register est introuvable. Mettez à jour / redéployez le backend (Render) puis réessayez."
         );
       }
-
       const created = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(created?.error || 'Erreur lors de la création du profil');
       }
-
       const newProfileId = created?.profileId;
       if (!newProfileId) {
         throw new Error('Réponse serveur invalide (profileId manquant)');
       }
-
       // Créer une session SMS dans localStorage
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
@@ -622,18 +618,15 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         fullName: formData.fullName,
         loginTime: new Date().toISOString()
       }));
-
       toast({
         title: "Compte créé ! 🎊",
         description: "Bienvenue sur Validèl",
       });
-
-      const redirectPath = formData.role === 'vendor' ? '/vendor' : 
+      const redirectPath = formData.role === 'vendor' ? '/vendor' :
                          formData.role === 'delivery' ? '/delivery' : '/buyer';
-      
+     
       // Utiliser window.location pour forcer le rechargement et détecter la session
       window.location.href = redirectPath;
-
     } catch (error: unknown) {
       console.error('Erreur création profil:', error);
       const errorMessage = toFrenchErrorMessage(error, 'Erreur lors de la création du profil');
@@ -646,20 +639,17 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Gérer le PIN oublié
   const handleForgotPin = async () => {
     setLoading(true);
     try {
       // Envoyer un OTP via Direct7 pour vérifier l'identité
       await sendOTP(formData.phone);
-
       setIsResetPin(true);
       toast({
         title: "Code envoyé ! 📱",
         description: "Entrez le code SMS pour réinitialiser votre PIN",
       });
-
       setStep('otp');
       setOtpDigits(['', '', '', '']);
       startResendCooldown();
@@ -676,12 +666,11 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setLoading(false);
     }
   };
-
   // Renvoyer le code OTP
   const handleResendOTP = async () => {
     if (resendCooldown > 0) return;
     setOtpDigits(['', '', '', '']);
-    
+   
     // Si on est en mode reset PIN, ne pas rappeler handleSendOTP complet
     if (isResetPin) {
       await handleForgotPin();
@@ -689,7 +678,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       await handleSendOTP();
     }
   };
-
   // Retourner à l'étape précédente
   const handleBack = () => {
     if (step === 'otp') {
@@ -722,7 +710,6 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
       setStep('confirm-pin');
     }
   };
-
   // Fonction pour rendre les 4 champs de saisie
   const renderDigitInputs = (
     digits: string[],
@@ -736,305 +723,444 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
         <input
           key={index}
           ref={refs[index] as React.RefObject<HTMLInputElement>}
-          type={hidden ? "password" : "tel"}
-          inputMode="numeric"
+          type={hidden ? "password" : "text"}
+          inputMode="none"
+          readOnly
           pattern="[0-9]*"
           maxLength={1}
           value={digits[index]}
           onChange={(e) => handleDigitInput(index, e.target.value, digits, setDigits, refs, onComplete)}
           onKeyDown={(e) => handleDigitKeyDown(index, e, digits, setDigits, refs)}
-          onFocus={(e) => e.target.select()}
-          className="w-14 h-14 text-center text-2xl font-bold border-2 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all bg-background"
+          onFocus={(e) => e.currentTarget.blur()}
+          onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+            const pasted = e.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 4);
+            if (pasted) {
+              const newDigits = [...digits];
+              pasted.split('').forEach((d, i) => { if (i < newDigits.length) newDigits[i] = d; });
+              setDigits(newDigits);
+              if (newDigits.join('').length === refs.length) onComplete?.(newDigits.join(''));
+            }
+            e.preventDefault();
+          }}
+          aria-label={`Chiffre ${index + 1}`}
+          className="w-16 h-16 text-center text-3xl font-bold md:w-20 md:h-20 md:text-4xl border-2 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all bg-white/95 shadow-md"
           autoComplete="one-time-code"
         />
       ))}
     </div>
   );
 
-  return (
-    <div className="space-y-6">
-      {/* Indicateur de progression style Wave */}
-      {step !== 'phone' && step !== 'login-pin' && (
-        <div className="flex justify-center gap-2 mb-4">
-          {['otp', 'pin', 'confirm-pin', 'profile'].map((s, i) => (
+  // Helper: add/remove digits via on-screen keypad
+  const addDigitToGroup = (
+    digit: string,
+    digits: string[],
+    setDigits: React.Dispatch<React.SetStateAction<string[]>>,
+    refs: React.RefObject<HTMLInputElement | null>[],
+    onComplete?: (code: string) => void
+  ) => {
+    const idx = digits.findIndex(d => d === '');
+    if (idx === -1) return;
+    const newDigits = [...digits];
+    newDigits[idx] = digit;
+    setDigits(newDigits);
+    // focus next
+    if (idx < refs.length - 1) {
+      refs[idx + 1].current?.focus();
+    }
+    const full = newDigits.join('');
+    if (full.length === refs.length && onComplete) onComplete(full);
+  };
+
+  const removeLastFromGroup = (
+    digits: string[],
+    setDigits: React.Dispatch<React.SetStateAction<string[]>>,
+    refs: React.RefObject<HTMLInputElement | null>[]
+  ) => {
+    // find last non-empty
+    let pos = -1;
+    for (let i = digits.length - 1; i >= 0; i--) {
+      if (digits[i] !== '') { pos = i; break; }
+    }
+    if (pos === -1) return;
+    const newDigits = [...digits];
+    newDigits[pos] = '';
+    setDigits(newDigits);
+    refs[pos].current?.focus();
+  };
+
+  const formatLocalPhone = (digitsOnly: string) => {
+    const parts: string[] = [];
+    if (digitsOnly.length > 0) parts.push(digitsOnly.slice(0,2));
+    if (digitsOnly.length > 2) parts.push(digitsOnly.slice(2,5));
+    if (digitsOnly.length > 5) parts.push(digitsOnly.slice(5,7));
+    if (digitsOnly.length > 7) parts.push(digitsOnly.slice(7,9));
+    return parts.join(' ');
+  };
+
+  const handleKeypadDigit = (digit: string) => {
+    if (step === 'phone') {
+      const only = (formData.phone || '').toString().replace(/\D/g, '');
+      if (only.length >= 9) return;
+      const newDigits = only + digit;
+      setFormData(prev => ({ ...prev, phone: formatLocalPhone(newDigits) }));
+      return;
+    }
+    if (step === 'otp') return addDigitToGroup(digit, otpDigits, setOtpDigits, otpRefs, handleVerifyOTP);
+    if (step === 'login-pin') return addDigitToGroup(digit, loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin);
+    if (step === 'pin') return addDigitToGroup(digit, pinDigits, setPinDigits, pinRefs, handleCreatePin);
+    if (step === 'confirm-pin') return addDigitToGroup(digit, confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin);
+  };
+
+  const handleKeypadBackspace = () => {
+    if (step === 'phone') {
+      const only = (formData.phone || '').toString().replace(/\D/g, '');
+      const newDigits = only.slice(0, -1);
+      setFormData(prev => ({ ...prev, phone: formatLocalPhone(newDigits) }));
+      return;
+    }
+    if (step === 'otp') return removeLastFromGroup(otpDigits, setOtpDigits, otpRefs);
+    if (step === 'login-pin') return removeLastFromGroup(loginPinDigits, setLoginPinDigits, loginPinRefs);
+    if (step === 'pin') return removeLastFromGroup(pinDigits, setPinDigits, pinRefs);
+    if (step === 'confirm-pin') return removeLastFromGroup(confirmPinDigits, setConfirmPinDigits, confirmPinRefs);
+  };
+
+  // Haptic feedback helper (small vibration on supported devices)
+  const provideHaptic = () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (typeof window !== 'undefined' && 'navigator' in window && (navigator as any).vibrate) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (navigator as any).vibrate(10);
+      }
+    } catch (e) {
+      // ignore if vibrate not supported or throws
+    }
+  };
+
+  // Detect Android to apply larger bottom offset (nav bar) on some devices
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  
+
+  const renderNumericKeypad = () => {
+    const canContinue = (() => {
+      if (step === 'phone') return phoneLen >= 9;
+      if (step === 'otp') return otpDigits.join('').length === 4;
+      if (step === 'login-pin') return loginPinDigits.join('').length === 4;
+      if (step === 'pin') return pinDigits.join('').length === 4;
+      if (step === 'confirm-pin') return confirmPinDigits.join('').length === 4;
+      return false;
+    })();
+
+    return (
+      <>
+        {/* Desktop / tablet keypad (hidden on small screens) */}
+        <div className="hidden sm:block mt-3 pb-3 sm:pb-0">
+          <div className="grid grid-cols-3 gap-3">
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <button
+                key={n}
+                type="button"
+                aria-label={`Num ${n}`}
+                onPointerDown={provideHaptic}
+                onClick={() => handleKeypadDigit(String(n))}
+                className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
+              >{n}</button>
+            ))} 
+            {/* Left cell intentionally left empty to keep 0 and X on the right */}
+            <div />
+            <button type="button" aria-label="Num 0" onPointerDown={provideHaptic} onClick={() => handleKeypadDigit('0')} className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center transition-transform active:scale-95">0</button>
+            <button
+              type="button"
+              aria-label="Effacer"
+              title="Effacer"
+              onPointerDown={provideHaptic}
+              onClick={handleKeypadBackspace}
+              className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <span className="text-2xl md:text-3xl">⌫</span>
+            </button>
+          </div>
+
+          {showContinue && step === 'phone' && (
+            <div className="mt-4">
+              <button
+                type="button"
+                onPointerDown={provideHaptic}
+                onClick={() => {
+                  if (step === 'phone') handleSendOTP();
+                }}
+                disabled={!canContinue || loading}
+                className="w-full h-12 rounded-2xl bg-[#24BD5C] text-white flex items-center justify-center font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+              >
+                {loading ? <Spinner size="sm" className="text-white local-spinner" /> : 'Continuer'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Mobile fixed keypad (anchors to bottom) */}
+        <div className="sm:hidden">
+          <div
+            className="fixed left-0 right-0 z-50 flex justify-center"
+            style={{
+              bottom: isAndroid ? '0px' : '8px',
+              paddingBottom: isAndroid ? 'calc(env(safe-area-inset-bottom) + 48px)' : 'calc(env(safe-area-inset-bottom) + 24px)'
+            }}
+          >
             <div
-              key={s}
-              className={`h-1 w-8 rounded-full transition-all ${
-                ['otp', 'pin', 'confirm-pin', 'profile'].indexOf(step) >= i
-                  ? 'bg-primary'
-                  : 'bg-muted'
-              }`}
-            />
-          ))}
+              className="bg-background/90 backdrop-blur-md p-3 rounded-none sm:rounded-2xl shadow-lg border border-muted/20 w-full max-w-none"
+              style={isAndroid ? { boxShadow: 'none', border: 'none', background: 'rgba(255,255,255,0.97)', width: '100vw', borderRadius: 0 } : {}}
+            >
+              <div className="grid grid-cols-3 gap-3">
+                {[1,2,3,4,5,6,7,8,9].map(n => (
+                  <button
+                    key={`m-${n}`}
+                    type="button"
+                    aria-label={`Num ${n}`}
+                    onPointerDown={provideHaptic}
+                    onClick={() => handleKeypadDigit(String(n))}
+                    className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
+                  >{n}</button>
+                ))}
+                <div />
+                <button type="button" aria-label="Num 0" onPointerDown={provideHaptic} onClick={() => handleKeypadDigit('0')} className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center transition-transform active:scale-95">0</button>
+                <button
+                  type="button"
+                  aria-label="Effacer"
+                  title="Effacer"
+                  onPointerDown={provideHaptic}
+                  onClick={handleKeypadBackspace}
+                  className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center active:scale-95 transition-transform"
+                >
+                  <span className="text-2xl">⌫</span>
+                </button>
+              </div>
+
+              {showContinue && step === 'phone' && (
+                <div className="mt-3 mb-1">
+                  <button
+                    type="button"
+                    onPointerDown={provideHaptic}
+                    onClick={() => {
+                      if (step === 'phone') handleSendOTP();
+                    }}
+                    disabled={!canContinue || loading}
+                    className="w-full h-12 rounded-2xl bg-[#24BD5C] text-white flex items-center justify-center font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+                    style={{ position: 'relative', zIndex: 2 }}
+                  >
+                    {loading ? <Spinner size="sm" className="text-white local-spinner" /> : 'Continuer'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <>
+      {loading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pointer-events-auto">
+          <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
+            <Spinner size="lg" className="text-white" />
+            <div className="text-white text-sm">Chargement...</div>
+          </div>
         </div>
       )}
+      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 py-2 ${className ?? ''}`}>
+      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg border border-muted/20 space-y-3 max-h-[90vh] overflow-y-auto mt-0 pb-64 sm:pb-4">
 
-      {/* Étape 1: Numéro de téléphone */}
-      {step === 'phone' && (
-        <>
-          <div className="space-y-4">
-            <div className="text-center mb-4">
-              <h3 className="text-lg font-semibold mb-2">📱 Entrez votre numéro de téléphone</h3>
-              <p className="text-sm text-muted-foreground">
-                Nous allons vous envoyer un code de vérification par SMS
-              </p>
-            </div>
-            
-            <div className="flex gap-2">
-              <div className="flex items-center px-4 bg-muted rounded-xl border-2 border-transparent">
-                <span className="text-lg font-medium">🇸🇳 +221</span>
-              </div>
-              <Input
-                type="tel"
-                value={formData.phone.replace('+221', '').replace(/^0/, '')}
-                onChange={(e) => {
-                  const value = e.target.value.replace(/\D/g, '').slice(0, 9);
-                  handleInputChange('phone', value);
-                }}
-                placeholder="77 123 45 67"
-                className="flex-1 h-12 text-lg rounded-xl border-2"
-                maxLength={12}
-              />
-            </div>
 
-            <Button 
-              onClick={handleSendOTP}
-              className="w-full h-12 text-lg rounded-xl"
-              disabled={loading || formData.phone.replace(/\D/g, '').length < 9}
-            >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  <span>Envoi...</span>
+        {/* Étape : téléphone */}
+        {step === 'phone' && (
+          <div className="space-y-2">
+            <div className="w-full flex justify-center">
+              <div className="w-full max-w-[280px]">
+                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 shadow-sm mb-[160px] sm:mb-10 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`} style={{ marginBottom: isAndroid ? '220px' : undefined }}>
+                  <div className="flex items-center gap-1 px-2 py-1 shrink-0 border-r border-muted/20">
+                    <span className="text-base md:text-lg">🇸🇳</span>
+                    <span className="text-base md:text-lg text-muted-foreground font-medium">+221</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="phone"
+                      type="tel"
+                      value={formData.phone.replace('+221', '').replace(/^0/, '')}
+                      onChange={(e) => handleInputChange('phone', e.target.value)}
+                      placeholder="77 123 45 67"
+                      inputMode="none"
+                      readOnly
+                      onPointerDown={(e) => { e.preventDefault(); provideHaptic(); }}
+                      onTouchStart={(e) => { e.preventDefault(); provideHaptic(); }}
+                      onFocus={(e) => e.currentTarget.blur()}
+                      onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                        const pasted = e.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 9);
+                        if (pasted) {
+                          setFormData(prev => ({ ...prev, phone: formatLocalPhone(pasted) }));
+                        }
+                        e.preventDefault();
+                      }}
+                      className="flex-1 h-12 text-lg md:h-14 md:text-xl pl-2 border-0 bg-transparent placeholder:text-base md:placeholder:text-lg placeholder:text-muted-foreground caret-transparent select-none focus:outline-none"
+                      maxLength={12}
+                    />
+
+                    {/* Mobile-only paste button: reads clipboard and fills phone */}
+                    <button
+                      type="button"
+                      onClick={() => { /* intentionally no-op */ }}
+                      className="ml-2 w-6 h-6 sm:hidden opacity-0 bg-transparent rounded-md p-0 m-0 border-0"
+                      aria-label="Coller le numéro"
+                    >
+                      <span className="sr-only">Coller le numéro</span>
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <>
-                  <span>Continuer</span>
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </>
-              )}
-            </Button>
-          </div>
-
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">ou</span>
+                <div className="mt-10 md:mt-12">{renderNumericKeypad()}</div>
+              </div>
             </div>
           </div>
+        )}
 
-          <Button 
-            variant="outline" 
-            onClick={onSwitchToEmail}
-            className="w-full h-12 rounded-xl"
-          >
-            Utiliser mon email
-          </Button>
-        </>
-      )}
-
-      {/* Étape 2: Vérification OTP */}
-      {step === 'otp' && (
-        <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-4">
-              <Check className="w-10 h-10 text-green-600" />
+        {/* Étape OTP */}
+        {step === 'otp' && (
+          <>
+            <div className="text-center mb-3">
+              <p className="text-base font-medium">Entrez le code reçu par SMS</p>
+              <p className="text-sm text-muted-foreground mt-2">Saisissez le code à 4 chiffres envoyé sur votre téléphone</p>
             </div>
-            <h3 className="text-xl font-bold">Vérification du code</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Entrez le code à 4 chiffres reçu par SMS au<br />
-              <span className="font-semibold text-foreground">{formData.phone}</span>
-            </p>
-            <p className="text-xs text-blue-600 mt-2">
-              💡 Le code peut prendre jusqu'à 30 secondes pour arriver
-            </p>
-          </div>
-
-          {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
-
-          {loading && (
-            <div className="flex justify-center mt-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <div className="mt-6 mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>
+              {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
             </div>
-          )}
-
-          <div className="flex items-center justify-between text-sm mt-6">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="text-muted-foreground hover:text-foreground font-medium"
-            >
-              ← Modifier
-            </button>
-            <button
-              type="button"
-              onClick={handleResendOTP}
-              disabled={resendCooldown > 0}
-              className="flex items-center gap-1 text-primary font-medium hover:underline disabled:text-muted-foreground disabled:no-underline"
-            >
-              <RefreshCw className="w-4 h-4" />
-              {resendCooldown > 0 ? `${resendCooldown}s` : 'Renvoyer'}
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* Étape connexion: Entrer le PIN (utilisateurs existants) */}
-      {step === 'login-pin' && (
-        <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-primary/10 rounded-full mb-4">
-              <Lock className="w-10 h-10 text-primary" />
+            {renderNumericKeypad()}
+            <div className="text-center mt-2">
+              <div className="flex items-center justify-between text-sm mt-4">
+                <button type="button" onClick={handleBack} className="text-muted-foreground hover:text-foreground font-medium">← Modifier</button>
+                <button type="button" onClick={handleResendOTP} disabled={resendCooldown > 0} className="flex items-center gap-1 text-primary font-medium hover:underline disabled:text-muted-foreground disabled:no-underline">
+                  <RefreshCw className="w-4 h-4" />
+                  {resendCooldown > 0 ? `${resendCooldown}s` : 'Renvoyer'}
+                </button>
+              </div>
             </div>
-            <h3 className="text-xl font-bold">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Entrez votre code PIN pour continuer
-            </p>
-          </div>
+          </>
+        )}
 
-          {renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}
-
-          {loading && (
-            <div className="flex justify-center mt-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        {/* Étape login-pin */}
+        {step === 'login-pin' && (
+          <>
+            <div className="text-center mb-1 md:mb-2">
+              <div className="inline-flex items-center justify-center w-14 h-14 md:w-16 md:h-16 bg-primary/10 rounded-full mb-1">
+                <Lock className="w-6 h-6 md:w-8 md:h-8 text-primary" />
+              </div>
+              <h3 className="text-xl sm:text-2xl font-extrabold text-foreground">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
+              <p className="text-sm text-muted-foreground mt-1">Entrez votre code PIN pour continuer</p>
             </div>
-          )}
+            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
+            {renderNumericKeypad()} 
+          </>
+        )}
 
-          <div className="flex items-center justify-between text-sm mt-6">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="text-muted-foreground hover:text-foreground font-medium"
-            >
-              ← Retour
-            </button>
-            <button
-              type="button"
-              onClick={handleForgotPin}
-              disabled={loading}
-              className="text-primary font-medium hover:underline disabled:opacity-50"
-            >
-              PIN oublié ?
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* Étape 3: Créer le PIN */}
-      {step === 'pin' && (
-        <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mb-4">
-              <Lock className="w-10 h-10 text-green-600" />
+        {/* Étape pin */}
+        {step === 'pin' && (
+          <>
+            <div className="text-center mb-2 md:mb-3">
+              <h3 className="text-lg sm:text-xl font-extrabold text-foreground">Créez votre code PIN</h3>
+              <p className="text-sm text-muted-foreground mt-2">Choisissez 4 chiffres pour sécuriser votre compte</p>
+              <p className="text-xs text-blue-600 mt-2">🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites</p>
             </div>
-            <h3 className="text-xl font-bold">Créez votre code PIN</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Choisissez 4 chiffres pour sécuriser votre compte
-            </p>
-            <p className="text-xs text-blue-600 mt-2">
-              🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites
-            </p>
-          </div>
+            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
+            {renderNumericKeypad()}
+            <Button type="button" onClick={handleBack} className="w-full text-sm text-muted-foreground hover:text-foreground mt-6">← Retour</Button>
+          </>
+        )}
 
-          {renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}
-
-          <button
-            type="button"
-            onClick={handleBack}
-            className="w-full text-sm text-muted-foreground hover:text-foreground mt-6"
-          >
-            ← Retour
-          </button>
-        </>
-      )}
-
-      {/* Étape 4: Confirmer le PIN */}
-      {step === 'confirm-pin' && (
-        <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mb-4">
-              <Lock className="w-10 h-10 text-green-600" />
+        {/* Étape confirm-pin */}
+        {step === 'confirm-pin' && (
+          <>
+            <div className="text-center mb-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 bg-blue-100 rounded-full mb-3">
+                <Lock className="w-8 h-8 md:w-10 md:h-10 text-green-600" />
+              </div>
+              <h3 className="text-lg sm:text-xl font-extrabold text-foreground">Confirmez votre PIN</h3>
+              <p className="text-sm text-muted-foreground mt-1">Entrez à nouveau votre code PIN pour le confirmer</p>
+              <p className="text-xs text-orange-600 mt-1">⚠️ Assurez-vous d'entrer le même code que précédemment</p>
             </div>
-            <h3 className="text-xl font-bold">Confirmez votre PIN</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Entrez à nouveau votre code PIN pour le confirmer
-            </p>
-            <p className="text-xs text-orange-600 mt-2">
-              ⚠️ Assurez-vous d'entrer le même code que précédemment
-            </p>
-          </div>
+            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
+            {renderNumericKeypad()}
+          </>
+        )}
 
-          {renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}
-
-          <button
-            type="button"
-            onClick={handleBack}
-            className="w-full text-sm text-muted-foreground hover:text-foreground mt-6"
-          >
-            ← Retour
-          </button>
-        </>
-      )}
-
-      {/* Étape 5: Compléter le profil */}
-      {step === 'profile' && (
-        <>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-purple-100 rounded-full mb-4">
-              <User className="w-10 h-10 text-green-600" />
-            </div>
-            <h3 className="text-xl font-bold">Dernière étape !</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Comment devons-nous vous appeler ?
-            </p>
-          </div>
-
+        {/* Étape profile */}
+        {step === 'profile' && (
           <div className="space-y-4">
+            {/* Header visuel selon le rôle */}
+            <div className="flex flex-col items-center mb-2 mt-2">
+              {formData.role === 'buyer' && (
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-2">
+                  <User className="w-8 h-8 text-primary" />
+                </div>
+              )}
+              {formData.role === 'vendor' && (
+                <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-2">
+                  <ShoppingCart className="w-8 h-8 text-green-600" />
+                </div>
+              )}
+              {formData.role === 'delivery' && (
+                <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mb-2">
+                  <Truck className="w-8 h-8 text-blue-600" />
+                </div>
+              )}
+              <h2 className="text-xl font-extrabold text-foreground">
+                {formData.role === 'buyer' && 'Profil Client(e)'}
+                {formData.role === 'vendor' && 'Profil Vendeur(se)'}
+                {formData.role === 'delivery' && 'Profil Livreur'}
+              </h2>
+            </div>
             <div>
               <Input
                 value={formData.fullName}
                 onChange={(e) => handleInputChange('fullName', e.target.value)}
                 placeholder="Votre prénom et nom"
-                className="h-12 text-lg rounded-xl border-2"
+                className="h-12 text-lg rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
                 autoFocus
               />
             </div>
-
             <div>
               <Label className="text-sm font-medium mb-2 block">Vous êtes...</Label>
               <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
-                <SelectTrigger className="h-12 rounded-xl border-2">
+                <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="buyer">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">🛒</span>
-                      <span>Client</span>
-                    </div>
+                <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white">
+                  <SelectItem value="buyer" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                    <User className="h-5 w-5 text-primary" />
+                    <span>Client(e)</span>
                   </SelectItem>
-                  <SelectItem value="vendor">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">🏪</span>
-                      <span>Vendeur(se)</span>
-                    </div>
+                  <SelectItem value="vendor" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                    <ShoppingCart className="h-5 w-5 text-green-600" />
+                    <span>Vendeur(se)</span>
                   </SelectItem>
-                  <SelectItem value="delivery">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">🚚</span>
-                      <span>Livreur</span>
-                    </div>
+                  <SelectItem value="delivery" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                    <Truck className="h-5 w-5 text-blue-600" />
+                    <span>Livreur</span>
                   </SelectItem>
                 </SelectContent>
               </Select>
             </div>
-
-            {formData.role === 'vendor' && (
+            {/* Champs spécifiques selon le rôle */}
+            {formData.role === 'delivery' ? (
+              <Input
+                value={formData.vehicleInfo}
+                onChange={(e) => handleInputChange('vehicleInfo', e.target.value)}
+                placeholder="Immatriculation du véhicule (obligatoire)"
+                className="h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+                required
+              />
+            ) : (
               <>
                 <RoleSpecificFields
-                  role="vendor"
+                  role={formData.role}
                   companyName={formData.companyName}
                   vehicleInfo={formData.vehicleInfo}
                   walletType={formData.walletType}
@@ -1043,56 +1169,37 @@ const PhoneAuthForm = ({ onSwitchToEmail }: PhoneAuthFormProps) => {
                   onWalletTypeChange={(value) => handleInputChange('walletType', value)}
                   disabled={loading}
                 />
-
                 <Input
                   value={formData.address}
                   onChange={(e) => handleInputChange('address', e.target.value)}
-                  placeholder="Adresse de la boutique (obligatoire)"
-                  className="h-12 rounded-xl border-2"
+                  placeholder={formData.role === 'buyer' ? 'Adresse (obligatoire)' : 'Adresse de la boutique (obligatoire)'}
+                  className="h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
                   required
                 />
               </>
             )}
-
-            {formData.role === 'delivery' && (
-              <Input
-                value={formData.vehicleInfo}
-                onChange={(e) => handleInputChange('vehicleInfo', e.target.value)}
-                placeholder="Type de véhicule (optionnel)"
-                className="h-12 rounded-xl border-2"
-              />
-            )}
-
-            <Button 
+            <Button
+              type="button"
               onClick={handleCompleteProfile}
-              className="w-full h-12 text-lg rounded-xl"
+              className="w-full h-10 text-base rounded-xl"
               disabled={loading || !formData.fullName}
             >
               {loading ? (
                 <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  <span>Création...</span>
+                  <Spinner size="sm" className="text-white local-spinner" />
+                  <span>Enregistrement...</span>
                 </div>
               ) : (
-                <>
+                <div className="flex items-center gap-2">
                   <span>Terminer</span>
-                  <Check className="w-5 h-5 ml-2" />
-                </>
+                  <Check className="w-4 h-4 ml-1" />
+                </div>
               )}
             </Button>
           </div>
-
-          <button
-            type="button"
-            onClick={handleBack}
-            className="w-full text-sm text-muted-foreground hover:text-foreground mt-4"
-          >
-            ← Retour
-          </button>
-        </>
-      )}
-    </div>
+        )}
+      </div>
+      </form>
+    </>
   );
 };
-
-export default PhoneAuthForm;

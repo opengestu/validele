@@ -8,7 +8,7 @@ interface PaymentRequest {
 
 interface PaymentResponse {
   status: 'success' | 'failed';
-  transaction_id?: string;
+  transaction_id?: string | null;
   redirect_url?: string;
   message?: string;
 }

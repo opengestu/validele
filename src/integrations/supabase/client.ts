@@ -22,6 +22,7 @@ if (!SUPABASE_ANON_KEY) {
   console.warn(msg);
 }
 
+// INSPECT: supabase export
 export const supabase: SupabaseClient<Database> = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     storage: typeof window !== 'undefined' ? localStorage : undefined,

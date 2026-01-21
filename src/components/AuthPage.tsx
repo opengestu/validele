@@ -1,19 +1,16 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Phone, Mail } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// INSPECT: AuthPage
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import validelLogo from '@/assets/validel-logo.png';
-import PhoneAuthForm from './auth/PhoneAuthForm';
-import AuthForm from './auth/AuthForm';
+import { PhoneAuthForm } from './auth/PhoneAuthForm';
 
 const AuthPage = () => {
-  const [authMethod, setAuthMethod] = useState<'phone' | 'email'>('phone');
-  const [isLogin, setIsLogin] = useState(true);
-  
   const navigate = useNavigate();
   const { user, userProfile, loading: authLoading } = useAuth();
+
+  const [authStep, setAuthStep] = React.useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
 
   React.useEffect(() => {
     if (authLoading) return;
@@ -32,65 +29,34 @@ const AuthPage = () => {
     navigate(redirectPath, { replace: true });
   }, [authLoading, navigate, user, userProfile]);
 
+  // UI inspirée de Wave pour la saisie du numéro
+
+  const [phone, setPhone] = React.useState('');
+
+  const handleNext = () => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length === 9 && digits.startsWith('7')) {
+      // Aller vers PhoneForm pour suivre le processus de création / vérification
+      navigate('/phone', { state: { phone: digits } });
+    } else {
+      // numéro invalide — ne pas avancer
+      // TODO: afficher feedback utilisateur
+      console.warn('Numéro invalide');
+    }
+  };
+  // Format d'affichage 7X XXX XX XX
+
   return (
-    <div className="relative min-h-[100svh] text-foreground">
-      {/* Background image */}
-      <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url(/auth-bg.webp)" }}
-      />
-      {/* Readability overlay */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" />
-
-      <header className="sticky top-0 z-20 border-b bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto max-w-md px-4">
-          <div className="flex h-16 items-center justify-center gap-3">
-            <img src={validelLogo} alt="Validèl" className="h-8 w-8 object-contain" />
-            <h1 className="text-xl font-semibold tracking-tight">Validèl</h1>
-          </div>
+    <div className="flex flex-col min-h-screen items-center bg-white pt-6 md:pt-8">
+      {authStep === 'phone' && (
+        <div className="w-full text-center mt-12 md:mt-14 mb-1 pt-0">
+          <h2 className="text-2xl md:text-3xl font-extrabold">Bienvenue chez <span className="text-[#24BD5C] font-bold">Validèl</span> !</h2>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">Entrez votre numéro pour commencer</p>
         </div>
-      </header>
+      )}
 
-      <div className="relative z-10 mx-auto max-w-md px-4 py-8">
-        <Card className="bg-background/75 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-center text-xl">
-              {isLogin ? 'Connexion' : 'Inscription'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={authMethod} onValueChange={(v) => setAuthMethod(v as 'phone' | 'email')} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-6">
-                <TabsTrigger value="phone" className="flex items-center gap-2">
-                  <Phone className="w-4 h-4" />
-                  <span>Téléphone</span>
-                </TabsTrigger>
-                <TabsTrigger value="email" className="flex items-center gap-2">
-                  <Mail className="w-4 h-4" />
-                  <span>Email</span>
-                </TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="phone" className="mt-0">
-                <PhoneAuthForm onSwitchToEmail={() => setAuthMethod('email')} />
-              </TabsContent>
-              
-              <TabsContent value="email" className="mt-0">
-                <AuthForm isLogin={isLogin} onToggleMode={() => setIsLogin(!isLogin)} />
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-
-        {/* Informations supplémentaires */}
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          <p>
-            En vous connectant, vous acceptez nos{' '}
-            <Link to="/terms" className="text-primary hover:underline">
-              conditions d'utilisation
-            </Link>
-          </p>
-        </div>
+      <div className="w-full flex items-center justify-center mt-0 mb-2">
+        <PhoneAuthForm onStepChange={setAuthStep} showContinue />
       </div>
     </div>
   );

@@ -6,11 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
+import OverlaySpinner from '@/components/ui/overlay-spinner';
 
 const OrderTracking = () => {
   const { orderId } = useParams();
   const { user } = useAuth();
-  const [orders, setOrders] = useState([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,6 +23,7 @@ const OrderTracking = () => {
   }, [user]);
 
   const fetchOrders = async () => {
+    if (!user) return;
     try {
       let query = supabase
         .from('orders')
@@ -123,7 +126,7 @@ const OrderTracking = () => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <Spinner size="lg" className="mx-auto mb-4" />
+          <OverlaySpinner message="Chargement..." visible />
           <p>Chargement...</p>
         </div>
       </div>

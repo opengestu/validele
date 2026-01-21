@@ -31,6 +31,8 @@ import {
 } from '@/components/dashboard';
 import validelLogo from '@/assets/validel-logo.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { PhoneIcon } from './CustomIcons';
 
 type ProfileRow = {
   full_name: string | null;
@@ -53,6 +55,8 @@ const VendorDashboard = () => {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [callTarget, setCallTarget] = useState<{ phone: string; name?: string } | null>(null);
   
   // Form states
   const [newProduct, setNewProduct] = useState({
@@ -77,11 +81,13 @@ const VendorDashboard = () => {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfile, setEditProfile] = useState({
     full_name: '',
-    email: '',
     phone: '',
     walletType: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Ajout d'un état pour le feedback de copie
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const fetchProfile = useCallback(async () => {
     if (!user) return;
@@ -134,7 +140,6 @@ const VendorDashboard = () => {
         setUserProfile({ full_name: fullName, phone });
         setEditProfile({
           full_name: fullName,
-          email: user.email || '',
           phone,
           walletType
         });
@@ -202,7 +207,8 @@ const VendorDashboard = () => {
         assigned_at: o.assigned_at ?? undefined,
         delivered_at: o.delivered_at ?? undefined,
         token: o.token ?? undefined,
-        profiles: o.profiles ? { full_name: o.profiles.full_name || '' } : undefined
+        // Keep buyer profile phone so callers can display the call button
+        profiles: o.profiles ? { full_name: o.profiles.full_name || '', phone: o.profiles.phone ?? undefined } : undefined
       })) as Order[];
       setOrders(mappedOrders.filter(order => order.status !== 'pending'));
     } catch (error) {
@@ -460,6 +466,13 @@ const VendorDashboard = () => {
     }
   };
 
+  // Fonction pour copier le code produit
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 1200);
+  };
+
   // Calculate stats
   const totalProducts = products.length;
   const activeProducts = products.filter(p => p.is_available).length;
@@ -533,7 +546,11 @@ const VendorDashboard = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             {products.map((product) => (
-              <Card key={product.id} className="hover:shadow-lg transition-shadow h-fit">
+              <Card
+                key={product.id}
+                className="hover:shadow-lg transition-shadow h-fit"
+                style={{ maxWidth: "100%", boxSizing: "border-box" }} // Empêche le débordement
+              >
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-lg">{product.name}</CardTitle>
@@ -548,9 +565,22 @@ const VendorDashboard = () => {
                     {product.description}
                   </p>
                   
-                  {/* Code Produit - Format texte simple */}
-                  <div className="text-xs font-mono text-gray-500 mb-2">
-                    Code : {product.code || `PROD-${product.id}`}
+                  {/* Code Produit - Format texte simple avec bouton copier */}
+                  <div className="flex items-center mb-2">
+                    <span
+                      className="font-mono"
+                      style={{
+                        fontSize: "22px",
+                        fontWeight: 700,
+                        color: "#333",
+                        letterSpacing: "1px",
+                        marginRight: 8,
+                        userSelect: "all"
+                      }}
+                    >
+                      Code : {product.code || `PROD-${product.id}`}
+                    </span>
+                    {/* Bouton Copier supprimé */}
                   </div>
                   
                   <div className="space-y-2 mb-3">
@@ -614,7 +644,6 @@ const VendorDashboard = () => {
         {/* Orders Tab */}
         <TabsContent value="orders" className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-900">Commandes</h2>
-          
           <Card>
             <CardHeader>
               <CardTitle>Commandes récentes</CardTitle>
@@ -626,68 +655,138 @@ const VendorDashboard = () => {
                   const payoutTransaction = transactions.find(t => t.order_id === order.id);
                   
                   return (
-                  <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex-1">
-                      <h4 className="font-medium">{order.products?.name}</h4>
-                      {order.order_code && (
-                        <div className="mt-1 text-xs font-mono text-blue-700">
-                          Code commande : <span className="bg-blue-100 px-2 py-0.5 rounded">{order.order_code}</span>
-                        </div>
-                      )}
-                      <p className="text-sm text-gray-600">
-                        <span className="font-medium">Client:</span> {order.profiles?.full_name || 'Client'}
-                      </p>
-                      {order.profiles?.phone && (
-                        <p className="text-sm text-gray-500">
-                          📞 {order.profiles.phone}
-                        </p>
-                      )}
-                      {order.delivery_person && (
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Livreur:</span> {order.delivery_person.full_name}
-                          {order.delivery_person.phone && ` - ${order.delivery_person.phone}`}
-                        </p>
-                      )}
-                      {/* Affichage du statut de paiement vendeur */}
-                      {order.status === 'delivered' && payoutTransaction && (
-                        <div className="mt-2 p-2 bg-blue-50 rounded-md">
-                          <p className="text-xs font-medium text-blue-900">
-                            💰 Paiement vendeur: 
-                            <span className={`ml-2 px-2 py-0.5 rounded ${
-                              payoutTransaction.status === 'SUCCESSFUL' ? 'bg-green-100 text-green-800' :
-                              payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              {payoutTransaction.status === 'SUCCESSFUL' ? '✓ Payé' :
-                               payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? '⏳ En cours' :
-                               '✗ Échoué'}
+                    <div
+                      key={order.id}
+                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
+                      style={{ maxWidth: 350 }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="bg-[#FFE5B4] text-[#C97A00] px-3 py-1 rounded-md text-xs font-semibold">
+                          {order.order_code || `CGS${order.id?.slice(-4)}`}
+                        </span>
+                        <span className="flex items-center gap-1 bg-[#FFE5B4] text-[#C97A00] px-3 py-1 rounded-md text-xs font-semibold">
+                          <span role="img" aria-label="truck">🚚</span>
+                          {order.status === 'paid'
+                            ? 'Payée'
+                            : order.status === 'assigned' || order.status === 'in_delivery'
+                            ? 'En cours de livraison'
+                            : order.status === 'delivered'
+                            ? 'Livrée'
+                            : order.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                        <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                      </div>
+                      <div className="flex items-center text-xs text-gray-700 mb-1">
+                        <strong>Code commande :</strong>
+                        <span
+                          className="ml-auto font-mono px-2 py-0.5 rounded-md"
+                          style={{
+                            background: "#FFE5B4",
+                            color: "#C97A00",
+                            fontWeight: 700,
+                            fontSize: "16px", // Augmenté pour plus de visibilité
+                            letterSpacing: "1px"
+                          }}
+                        >
+                          {order.order_code || `CGS${order.id?.slice(-4)}`}
+                        </span>
+                      </div>
+                      <div className="flex items-center text-xs text-gray-700 mb-1">
+                        <strong>Statut :</strong>
+                        <span className="ml-auto">
+                          {order.status === 'paid' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                              <span className="w-2 h-2 bg-blue-500 rounded-full mr-1"></span>
+                              Payée
                             </span>
-                          </p>
-                          {payoutTransaction.amount && (
-                            <p className="text-xs text-gray-600 mt-1">
-                              Montant: {payoutTransaction.amount.toLocaleString()} FCFA
-                            </p>
+                          ) : order.status === 'assigned' || order.status === 'in_delivery' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 text-xs font-medium">
+                              <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></span>
+                              En cours de livraison
+                            </span>
+                          ) : order.status === 'delivered' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                              <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
+                              Livrée
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
+                              <span className="w-2 h-2 bg-gray-400 rounded-full mr-1"></span>
+                              {order.status}
+                            </span>
                           )}
-                        </div>
-                      )}
-                      <p className="text-sm text-gray-500">
-                        {new Date(order.created_at).toLocaleDateString()}
-                      </p>
+                        </span>
+                      </div>
+                      <div className="flex items-center text-sm text-gray-800 mb-1">
+                        <strong>Client :</strong>
+                        <span
+                          className="ml-auto font-semibold text-gray-900"
+                          style={{ fontSize: "14px" }} // Taille réduite
+                        >
+                          {order.profiles?.full_name || 'Client'}
+                        </span>
+                      </div>
+                      <div className="flex items-center mb-1">
+                        <span className="text-sm text-gray-800 font-semibold">Contact :</span>
+                        {order.profiles?.phone && (
+                          <span className="ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const ph = order.profiles?.phone as string;
+                                const nm = order.profiles?.full_name;
+                                setCallTarget({ phone: ph, name: nm });
+                                setCallModalOpen(true);
+                              }}
+                              className="flex items-center px-2 py-0.5 rounded-lg"
+                              style={{
+                                background: "#E3F0FF",
+                                color: "#1976D2",
+                                fontSize: "12px",
+                                fontWeight: 500,
+                                minWidth: 0,
+                                border: "none",
+                                boxShadow: "none",
+                                height: 24,
+                                lineHeight: "16px"
+                              }}
+                            >
+                              <span
+                                style={{
+                                  background: "#25D366",
+                                  borderRadius: "50%",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  width: 16,
+                                  height: 16,
+                                  marginRight: 5,
+                                }}
+                              >
+                                <PhoneIcon className="h-3 w-3 text-white" />
+                              </span>
+                              <span style={{ marginLeft: 0 }}>Appeler ce client</span>
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center text-sm text-gray-800 mb-1">
+                        <strong>Adresse :</strong>
+                        <span className="ml-auto text-gray-700">Adresse à définir</span>
+                      </div>
+                      <div className="flex items-center text-sm mb-1">
+                        <strong>Prix :</strong>
+                        <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
+                          {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-green-600">
-                        {order.total_amount?.toLocaleString()} CFA
-                      </p>
-                      <StatusBadge 
-                        status={order.status as 'pending' | 'confirmed' | 'delivered' | 'cancelled'} 
-                        size="sm" 
-                      />
-                    </div>
-                  </div>
                   );
                 })}
               </div>
-
               {orders.length === 0 && (
                 <div className="text-center py-8">
                   <ShoppingCart className="h-8 w-8 text-gray-400 mx-auto mb-2" />
@@ -771,10 +870,7 @@ const VendorDashboard = () => {
                       <label className="text-sm font-medium text-gray-500">Nom complet</label>
                       <p className="text-lg">{userProfile?.full_name || 'Non renseigné'}</p>
                     </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-500">Email</label>
-                      <p className="text-lg">{user?.email}</p>
-                    </div>
+
                     <div>
                       <label className="text-sm font-medium text-gray-500">Téléphone</label>
                       <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
@@ -801,17 +897,7 @@ const VendorDashboard = () => {
                         placeholder="Votre nom complet"
                       />
                     </div>
-                    <div>
-                      <label className="text-sm font-medium">Email</label>
-                      <Input
-                        name="email"
-                        value={editProfile.email}
-                        onChange={handleProfileChange}
-                        placeholder="Votre email"
-                        type="email"
-                        disabled
-                      />
-                    </div>
+
                     <div>
                       <label className="text-sm font-medium">Téléphone</label>
                       <Input
@@ -914,24 +1000,54 @@ const VendorDashboard = () => {
 
                 <div className="grid gap-4">
                   {products.map((product) => (
-                    <Card key={product.id} className="border border-gray-200">
+                    <Card
+                      key={product.id}
+                      className="border border-gray-200 relative"
+                      style={{
+                        width: "100vw",
+                        maxWidth: "calc(100vw - 32px)",
+                        boxSizing: "border-box",
+                        marginRight: 0,
+                        marginLeft: 0,
+                      }}
+                    >
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <h3 className="font-medium">{product.name}</h3>
-                            <p className="text-sm text-gray-600 mt-1">{product.description}</p>
+                          <div className="flex-1 min-w-0">
+                            <h3
+                              className="font-medium truncate"
+                              style={{
+                                fontSize: "13px", // Diminue la taille du nom du produit
+                                lineHeight: "1.2",
+                                maxWidth: "90%",
+                              }}
+                              title={product.name}
+                            >
+                              {product.name}
+                            </h3>
+                            <p className="text-sm text-gray-600 mt-1 break-words whitespace-normal">{product.description}</p>
                             
-                            {/* Code Produit - Format texte simple */}
-                            <div className="text-xs font-mono text-gray-500 mb-2">
-                              Code : {product.code || `PROD-${product.id}`}
+                            {/* Code Produit - Format texte simple avec bouton copier */}
+                            <div
+                              className="flex items-center mb-2"
+                              style={{
+                                fontSize: "12px",
+                                fontWeight: 700,
+                                wordBreak: "break-all",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                maxWidth: "100%",
+                              }}
+                              title={product.code || `PROD-${product.id}`}
+                            >
+                              <span className="font-mono" style={{ fontSize: "18px", fontWeight: 700 }}>
+                                Code : {product.code || `PROD-${product.id}`}
+                              </span>
+                              {/* Bouton Copier supprimé */}
                             </div>
-                            
-                            <div className="flex items-center justify-between mt-2">
-                              <span className="font-semibold text-green-600">{product.price} CFA</span>
-                              <StatusBadge 
-                                status={product.is_available ? 'active' : 'inactive'} 
-                                size="sm" 
-                              />
+                            <div className="mt-2">
+                              <span className="text-sm font-medium text-green-600 whitespace-nowrap">{product.price} CFA</span>
                             </div>
                           </div>
                           <div className="flex space-x-2 ml-4">
@@ -969,38 +1085,122 @@ const VendorDashboard = () => {
                 <h2 className="text-lg font-semibold">Commandes ({totalOrders})</h2>
                 <div className="grid gap-4">
                   {orders.map((order) => (
-                    <Card key={order.id} className="border border-gray-200">
+                    <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
                       <CardContent className="p-4">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-medium">{order.products?.name || `Commande #${order.id?.slice(-6)}`}</p>
-                            {order.order_code && (
-                              <div className="text-xs font-mono text-blue-700 mb-2">Code commande : <span className="bg-blue-100 px-2 py-0.5 rounded">{order.order_code}</span></div>
+                        {/* Ligne 1 : Icône + nom produit en gras */}
+                        <div className="flex items-center gap-2 mb-1">
+                          <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                          <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                        </div>
+                        {/* Ligne 2 : Code commande */}
+                        <div className="flex items-center text-xs text-gray-700 mb-1">
+                          <strong>Code commande :</strong>
+                          <span
+                            className="ml-auto font-mono px-2 py-0.5 rounded-md"
+                            style={{
+                              background: "#FFE5B4",
+                              color: "#C97A00",
+                              fontWeight: 700,
+                              fontSize: "16px", // Augmenté pour plus de visibilité
+                              letterSpacing: "1px"
+                            }}
+                          >
+                            {order.order_code || `CGS${order.id?.slice(-4)}`}
+                          </span>
+                        </div>
+                        {/* Ligne 3 : Statut */}
+                        <div className="flex items-center text-xs text-gray-700 mb-1">
+                          <strong>Statut :</strong>
+                          <span className="ml-auto">
+                            {order.status === 'paid' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                                <span className="w-2 h-2 bg-blue-500 rounded-full mr-1"></span>
+                                Payée
+                              </span>
+                            ) : order.status === 'assigned' || order.status === 'in_delivery' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 text-xs font-medium">
+                                <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></span>
+                                En cours de livraison
+                              </span>
+                            ) : order.status === 'delivered' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                                <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
+                                Livrée
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
+                                <span className="w-2 h-2 bg-gray-400 rounded-full mr-1"></span>
+                                {order.status}
+                              </span>
                             )}
-                            <p className="text-sm font-medium text-gray-600">Client: {order.profiles?.full_name || 'N/A'}</p>
-                            {order.profiles?.phone && (
-                              <p className="text-xs text-gray-500">📞 {order.profiles.phone}</p>
-                            )}
-                            {order.delivery_person && (
-                              <>
-                                <p className="text-sm font-medium text-gray-600 mt-1">Livreur: {order.delivery_person.full_name}</p>
-                                {order.delivery_person.phone && (
-                                  <p className="text-xs text-gray-500">📞 {order.delivery_person.phone}</p>
-                                )}
-                              </>
-                            )}
-                            <p className="text-sm text-gray-500">{new Date(order.created_at || '').toLocaleDateString()}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-semibold">{order.total_amount} CFA</p>
-                            <StatusBadge 
-                              status={order.status === 'pending' ? 'pending' : 
-                                     order.status === 'paid' ? 'paid' : 
-                                     order.status === 'delivered' ? 'delivered' : 
-                                     order.status === 'cancelled' ? 'cancelled' : 'pending'} 
-                              size="sm" 
-                            />
-                          </div>
+                          </span>
+                        </div>
+                        {/* Ligne 4 : Client */}
+                        <div className="flex items-center text-sm text-gray-800 mb-1">
+                          <strong>Client :</strong>
+                          <span
+                            className="ml-auto font-semibold text-gray-900"
+                            style={{ fontSize: "14px" }} // Taille réduite
+                          >
+                            {order.profiles?.full_name || 'Client'}
+                          </span>
+                        </div>
+                        {/* Ligne 5 : Contact avec bouton bleu clair */}
+                        <div className="flex items-center mb-1">
+                          <span className="text-sm text-gray-800 font-semibold">Contact :</span>
+                          {order.profiles?.phone && (
+                            <span className="ml-auto">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const ph = order.profiles?.phone as string;
+                                  const nm = order.profiles?.full_name;
+                                  setCallTarget({ phone: ph, name: nm });
+                                  setCallModalOpen(true);
+                                }}
+                                className="flex items-center px-2 py-0.5 rounded-lg"
+                                style={{
+                                  background: "#E3F0FF",
+                                  color: "#1976D2",
+                                  fontSize: "12px",
+                                  fontWeight: 500,
+                                  minWidth: 0,
+                                  border: "none",
+                                  boxShadow: "none",
+                                  height: 24,
+                                  lineHeight: "16px"
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    background: "#25D366",
+                                    borderRadius: "50%",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    width: 16,
+                                    height: 16,
+                                    marginRight: 5,
+                                  }}
+                                >
+                                  <PhoneIcon className="h-3 w-3 text-white" />
+                                </span>
+                                <span style={{ marginLeft: 0 }}>Appeler ce client</span>
+                              </button>
+                            </span>
+                          )}
+                        </div>
+                        {/* Ligne 6 : Adresse */}
+                        <div className="flex items-center text-sm text-gray-800 mb-1">
+                          <strong>Adresse :</strong>
+                          <span className="ml-auto text-gray-700">Adresse à définir</span>
+                        </div>
+                        {/* Ligne 7 : Prix */}
+                        <div className="flex items-center text-sm mb-1">
+                          <strong>Prix :</strong>
+                          <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
+                            {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+                          </span>
                         </div>
                       </CardContent>
                     </Card>
@@ -1296,6 +1496,26 @@ const VendorDashboard = () => {
               disabled={deleting}
             >
               {deleting ? 'Suppression...' : 'Supprimer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Call Confirmation Dialog */}
+      <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Appeler ce client ?</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-gray-600">{callTarget ? `${callTarget.name || 'Client'} - ${callTarget.phone}` : 'Numéro inconnu'}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCallModalOpen(false)}>
+              Annuler
+            </Button>
+            <Button className="bg-green-600 text-white" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
+              Appeler
             </Button>
           </DialogFooter>
         </DialogContent>

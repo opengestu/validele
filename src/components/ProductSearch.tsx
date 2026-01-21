@@ -9,7 +9,7 @@ import { Product } from '@/types/database';
 
 const ProductSearch = () => {
   const [searchCode, setSearchCode] = useState('');
-  const [searchResult, setSearchResult] = useState<Product | null>(null);
+  const [searchResult, setSearchResult] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSearch = async () => {

@@ -12,7 +12,9 @@ export default function AppResumeRefresher() {
   React.useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    const sub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let subHandle: any;
+    CapacitorApp.addListener("appStateChange", ({ isActive }) => {
       try {
         if (!isActive) {
           sessionStorage.setItem(PENDING_KEY, String(Date.now()));
@@ -41,11 +43,12 @@ export default function AppResumeRefresher() {
       } catch {
         // If anything goes wrong, do nothing (avoid trapping the user).
       }
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }).then((h: any) => { subHandle = h; }).catch(() => {});
 
     return () => {
-      sub.remove();
-    };
+      subHandle?.remove?.();
+    }; 
   }, []);
 
   return null;

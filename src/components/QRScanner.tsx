@@ -191,7 +191,7 @@ function QRScanSection({
                   }}
                 >
                   {isConfirmingDelivery ? (
-                    <span className="inline-flex items-center"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Confirmation…</span>
+                    <span className="inline-flex items-center"><Loader2 className="mr-2 h-4 w-4 animate-spin local-spinner" /> Confirmation…</span>
                   ) : (
                     'Confirmer la commande'
                   )}
@@ -382,12 +382,33 @@ const QRScanner = () => {
 
       setCurrentOrder({ ...currentOrder, status: 'in_delivery', delivery_person_id: user.id });
       
-      // Notifier l'acheteur que la livraison est en cours
-      notifyBuyerDeliveryStarted(
-        currentOrder.buyer_id,
-        currentOrder.id,
-        currentOrder.order_code || undefined
-      ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+      // Notifier l'acheteur que la livraison est en cours (inclure le numéro du livreur si disponible)
+      try {
+        let deliveryPhone: string | undefined = undefined;
+        if (user?.id) {
+          try {
+            const { data: profileData, error: profileError } = await supabase
+              .from('profiles')
+              .select('phone')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (!profileError && profileData?.phone) {
+              deliveryPhone = profileData.phone;
+            }
+          } catch (e) {
+            console.warn('Impossible de récupérer le numéro du livreur:', e);
+          }
+        }
+
+        notifyBuyerDeliveryStarted(
+          currentOrder.buyer_id,
+          currentOrder.id,
+          currentOrder.order_code || undefined,
+          deliveryPhone
+        ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+      } catch (e) {
+        console.warn('Erreur lors de la préparation de la notification SMS:', e);
+      }
       
       console.log('Livraison démarrée avec succès');
       

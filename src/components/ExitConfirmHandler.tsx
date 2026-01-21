@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
@@ -11,7 +12,8 @@ export default function ExitConfirmHandler() {
   React.useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    const listener = CapacitorApp.addListener(
+    let listenerHandle: any;
+    CapacitorApp.addListener(
       "backButton",
       async ({ canGoBack }) => {
         if (dialogOpenRef.current) return;
@@ -37,11 +39,11 @@ export default function ExitConfirmHandler() {
           dialogOpenRef.current = false;
         }
       }
-    );
+    ).then((h: any) => { listenerHandle = h; }).catch(() => {});
 
     return () => {
-      listener.remove();
-    };
+      listenerHandle?.remove?.();
+    }; 
   }, [navigate]);
 
   return null;

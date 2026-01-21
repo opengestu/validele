@@ -1,7 +1,7 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -19,7 +19,6 @@ interface AuthFormProps {
 const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    email: '',
     password: '',
     fullName: '',
     phone: '',
@@ -38,7 +37,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
   };
 
   const handleSignUp = async () => {
-    if (!formData.email || !formData.password || !formData.fullName) {
+    if (!formData.password || !formData.fullName || !formData.phone) {
       toast({
         title: "Erreur",
         description: "Veuillez remplir tous les champs obligatoires",
@@ -48,34 +47,27 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
     }
 
     setLoading(true);
-    console.log('Début inscription EMAIL...');
+    console.log('Début inscription...');
     
     try {
-      // Note: Ne vérifions pas dans profiles car l'email n'y est pas stocké
-      // Le check se fera directement via auth.signUp qui retournera une erreur si l'email existe
-      
-      // Déconnecter d'abord pour éviter les conflits
-      // Note: Ne vérifions pas dans profiles car l'email n'y est pas stocké
-      // Le check se fera directement via auth.signUp qui retournera une erreur si l'email existe
-      
       // Déconnecter d'abord pour éviter les conflits
       const { data: session } = await supabase.auth.getSession();
       if (session?.session) {
-        console.log('Déconnexion session existante pour inscription EMAIL');
+        console.log('Déconnexion session existante pour inscription');
         await supabase.auth.signOut();
         // Attendre que la déconnexion soit effective
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      // Étape 1: Créer le compte utilisateur
+      // Étape 1: Créer le compte utilisateur (utiliser le téléphone comme identifiant)
       const { data, error } = await supabase.auth.signUp({
-        email: formData.email,
+        phone: formData.phone,
         password: formData.password,
         options: {
           data: {
             full_name: formData.fullName,
             role: formData.role,
-            auth_mode: 'email' // Différencier de 'sms'
+            auth_mode: 'sms' // Différencier de 'email'
           }
         }
       });
@@ -95,7 +87,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
         
         throw error;
       }
-      console.log('Compte EMAIL créé avec succès');
+      console.log('Compte créé avec succès');
 
       if (data.user) {
         // Étape 2: Attendre et mettre à jour le profil correctement
@@ -108,12 +100,12 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
             .upsert({
               id: data.user.id,
               full_name: formData.fullName,
-              email: formData.email,
-              phone: formData.phone || null,
+              phone: formData.phone,
               role: formData.role,
               company_name: formData.role === 'vendor' ? formData.companyName || null : null,
               vehicle_info: formData.role === 'delivery' ? formData.vehicleInfo || null : null,
-              wallet_type: formData.role === 'vendor' ? formData.walletType || null : null
+              wallet_type: formData.role === 'vendor' ? formData.walletType || null : null,
+              address: formData.role === 'vendor' ? formData.address || null : null
             }, { onConflict: 'id' });
           
           console.log('Profil mis à jour avec le rôle:', formData.role);
@@ -155,10 +147,10 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
   };
 
   const handleSignIn = async () => {
-    if (!formData.email || !formData.password) {
+    if (!formData.phone || !formData.password) {
       toast({
         title: "Erreur",
-        description: "Veuillez saisir votre email et mot de passe",
+        description: "Veuillez saisir votre téléphone et mot de passe",
         variant: "destructive",
       });
       return;
@@ -172,7 +164,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
       await supabase.auth.signOut();
       
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
+        phone: formData.phone,
         password: formData.password,
       });
 
@@ -226,25 +218,17 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
 
   return (
     <div className="space-y-4">
-      {isLogin && (
-        <p className="text-sm text-muted-foreground text-center mb-4">
-          Utilisez vos identifiants pour vous connecter
-        </p>
-      )}
-      {!isLogin && (
-        <p className="text-sm text-muted-foreground text-center mb-4">
-          Créez votre compte en quelques étapes
-        </p>
-      )}
+      {/* En-têtes sur l'authentification supprimés */}
+
       <div>
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="phone">Téléphone *</Label>
         <Input
-          id="email"
-          type="email"
-          value={formData.email}
-          onChange={(e) => handleInputChange('email', e.target.value)}
-          placeholder="votre@email.com"
+          id="phone"
+          value={formData.phone}
+          onChange={(e) => handleInputChange('phone', e.target.value)}
+          placeholder="+221 XX XXX XX XX"
           disabled={loading}
+          required
         />
       </div>
 
@@ -263,17 +247,6 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
               value={formData.fullName}
               onChange={(e) => handleInputChange('fullName', e.target.value)}
               placeholder="Votre nom complet"
-              disabled={loading}
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="phone">Téléphone</Label>
-            <Input
-              id="phone"
-              value={formData.phone}
-              onChange={(e) => handleInputChange('phone', e.target.value)}
-              placeholder="+221 XX XXX XX XX"
               disabled={loading}
             />
           </div>
@@ -329,7 +302,7 @@ const AuthForm = ({ isLogin, onToggleMode }: AuthFormProps) => {
       >
         {loading ? (
           <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            <Spinner size="sm" className="text-white local-spinner" />
             <span>{isLogin ? 'Connexion...' : 'Inscription...'}</span>
           </div>
         ) : (

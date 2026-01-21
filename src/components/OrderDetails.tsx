@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
+import OverlaySpinner from '@/components/ui/overlay-spinner';
 import OrderQRCode from './OrderQRCode';
 
 const OrderDetails = () => {
@@ -14,7 +15,8 @@ const OrderDetails = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [order, setOrder] = useState(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [order, setOrder] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOnlyQR, setShowOnlyQR] = useState(false);
 
@@ -82,8 +84,8 @@ const OrderDetails = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Spinner size="md" />
+      <div className="min-h-screen bg-gray-50">
+        <OverlaySpinner message="Chargement..." visible />
       </div>
     );
   }

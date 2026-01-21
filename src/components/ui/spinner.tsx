@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 interface SpinnerProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
+  hideWhenGlobal?: boolean;
 }
 
 const sizeClasses = {
@@ -12,7 +13,12 @@ const sizeClasses = {
   xl: 'h-16 w-16',
 };
 
-export function Spinner({ size = 'lg', className }: SpinnerProps) {
+export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: SpinnerProps) {
+  // If requested, hide this spinner when a global overlay spinner is active
+  if (hideWhenGlobal && typeof window !== 'undefined' && document.body.classList.contains('has-global-spinner')) {
+    return null;
+  }
+
   return (
     <div className={cn("relative", sizeClasses[size], className)}>
       <svg

@@ -2,9 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Truck, QrCode, Package, CheckCircle, User, LogOut, Edit } from 'lucide-react';
+import { PhoneIcon } from './CustomIcons';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -39,13 +42,16 @@ const DeliveryDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [takingOrderId, setTakingOrderId] = useState<string | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editProfile, setEditProfile] = useState<{ full_name: string; email: string; phone: string }>({
+  const [editProfile, setEditProfile] = useState<{ full_name: string; phone: string }>({
     full_name: '',
-    email: '',
     phone: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
   const { toast } = useToast();
+
+  // Call modal state
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [callTarget, setCallTarget] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -66,7 +72,6 @@ const DeliveryDashboard = () => {
           setUserProfile(data as ProfileRow);
           setEditProfile({
             full_name: data.full_name || '',
-            email: user.email || '',
             phone: data.phone || ''
           });
         }
@@ -293,12 +298,24 @@ const DeliveryDashboard = () => {
           <div className="space-y-1 text-sm text-gray-600">
             <p><span className="font-medium">Client :</span> {delivery.buyer_profile?.full_name || 'N/A'}</p>
             {delivery.buyer_profile?.phone && (
-              <p className="text-xs text-gray-500">📞 {delivery.buyer_profile.phone}</p>
-            )}
-            <p><span className="font-medium">Vendeur(se) :</span> {delivery.vendor_profile?.full_name || 'N/A'}</p>
-            {delivery.vendor_profile?.phone && (
-              <p className="text-xs text-gray-500">📞 {delivery.vendor_profile.phone}</p>
-            )}
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contact:</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => { setCallTarget(delivery.buyer_profile?.phone || null); setCallModalOpen(true); }}
+                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition"
+                      aria-label="Appeler le client"
+                    >
+                      <PhoneIcon className="h-4 w-4" size={14} />
+                      <span className="text-[11px]">Appeler ce client</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Appeler le client</TooltipContent>
+                </Tooltip>
+              </div>
+            )} 
+
             <p>Adresse : {delivery.delivery_address}</p>
           </div>
           {/* Affichage du statut de paiement vendeur(se) */}
@@ -322,7 +339,7 @@ const DeliveryDashboard = () => {
             {delivery.total_amount?.toLocaleString()} FCFA
           </div>
           {variant === 'current' && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-2">
               <Button
                 className="w-full bg-green-500 hover:bg-green-600 text-white"
                 onClick={() => navigate(`/scanner?orderId=${delivery.id}`)}
@@ -331,7 +348,7 @@ const DeliveryDashboard = () => {
                 Marquer livré
               </Button>
             </div>
-          )}
+          )} 
           {variant === 'completed' && (
             <div className="flex items-center gap-2 mt-4 text-green-700">
               <CheckCircle className="h-4 w-4" />
@@ -388,9 +405,9 @@ const DeliveryDashboard = () => {
             {/* En cours Tab */}
             <TabsContent value="in_progress" className="space-y-6">
               <h2 className="text-xl font-bold text-gray-900">Livraisons en cours</h2>
-              <div className="flex justify-end">
+              <div className="flex justify-center">
                 <Link to="/scanner">
-                  <Button className="bg-orange-500 hover:bg-orange-600 text-white">
+                  <Button className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 text-sm rounded-md">
                     <QrCode className="h-4 w-4 mr-2" />
                     Prendre une nouvelle commande
                   </Button>
@@ -403,12 +420,7 @@ const DeliveryDashboard = () => {
                     <Truck className="h-12 w-12 text-orange-400 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold text-gray-900 mb-2">Aucune livraison en cours</h3>
                     <p className="text-gray-500 mb-4">Scannez un QR code pour prendre en charge une commande</p>
-                    <Link to="/scanner">
-                      <Button className="bg-green-500 hover:bg-green-600 text-white">
-                        <QrCode className="h-4 w-4 mr-2" />
-                        Scanner une commande
-                      </Button>
-                    </Link>
+
                   </CardContent>
                 </Card>
               ) : (
@@ -449,10 +461,7 @@ const DeliveryDashboard = () => {
                         <label className="text-sm font-medium text-gray-500">Nom complet</label>
                         <p className="text-lg">{userProfile?.full_name || 'Non renseigné'}</p>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Email</label>
-                        <p className="text-lg">{user?.email}</p>
-                      </div>
+
                       <div>
                         <label className="text-sm font-medium text-gray-500">Téléphone</label>
                         <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
@@ -497,15 +506,7 @@ const DeliveryDashboard = () => {
                           placeholder="Votre nom complet"
                         />
                       </div>
-                      <div>
-                        <label className="text-sm font-medium">Email</label>
-                        <Input
-                          name="email"
-                          value={editProfile.email}
-                          disabled
-                          className="bg-gray-100"
-                        />
-                      </div>
+
                       <div>
                         <label className="text-sm font-medium">Téléphone</label>
                         <Input
@@ -545,9 +546,9 @@ const DeliveryDashboard = () => {
               <TabsContent value="in_progress" className="mt-0">
                 <div className="space-y-4">
                   <h2 className="text-base font-semibold">En cours ({inProgressDeliveries})</h2>
-                  <div className="flex justify-end">
+                  <div className="flex justify-center">
                     <Link to="/scanner">
-                      <Button className="bg-orange-500 hover:bg-orange-600 text-white text-xs">
+                      <Button className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 text-sm rounded-md">
                         <QrCode className="h-4 w-4 mr-1" />
                         Prendre une nouvelle commande
                       </Button>
@@ -560,12 +561,7 @@ const DeliveryDashboard = () => {
                         <Truck className="h-10 w-10 text-orange-400 mx-auto mb-3" />
                         <h3 className="font-semibold text-gray-900 mb-2">Aucune livraison</h3>
                         <p className="text-sm text-gray-500 mb-4">Scannez pour prendre une commande</p>
-                        <Link to="/scanner">
-                          <Button className="bg-green-500 hover:bg-green-600 text-white text-sm">
-                            <QrCode className="h-4 w-4 mr-2" />
-                            Scanner
-                          </Button>
-                        </Link>
+
                       </CardContent>
                     </Card>
                   ) : (
@@ -607,10 +603,7 @@ const DeliveryDashboard = () => {
                             <label className="text-sm font-medium text-gray-500">Nom complet</label>
                             <p className="text-lg">{userProfile?.full_name || 'Non défini'}</p>
                           </div>
-                          <div>
-                            <label className="text-sm font-medium text-gray-500">Email</label>
-                            <p className="text-lg">{user?.email}</p>
-                          </div>
+
                           <div>
                             <label className="text-sm font-medium text-gray-500">Téléphone</label>
                             <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
@@ -719,6 +712,30 @@ const DeliveryDashboard = () => {
           </Tabs>
         </div>
       </main>
+      <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Appeler ce client ?</DialogTitle>
+            <p className="text-sm text-gray-600 mt-2">Numéro: {callTarget}</p>
+          </DialogHeader>
+          <DialogFooter>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCallModalOpen(false)}>Annuler</Button>
+              <Button
+                className="bg-green-500 hover:bg-green-600"
+                onClick={() => {
+                  if (callTarget) {
+                    window.location.href = `tel:${callTarget}`;
+                  }
+                  setCallModalOpen(false);
+                }}
+              >
+                Appeler
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

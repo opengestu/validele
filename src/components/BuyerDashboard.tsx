@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 import { PaymentForm } from '@/components/PaymentForm';
@@ -80,7 +81,7 @@ const BuyerDashboard = () => {
   const [userProfile, setUserProfile] = useState<{ phone: string; full_name?: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editProfile, setEditProfile] = useState<{ full_name?: string; phone?: string; email?: string }>({});
+  const [editProfile, setEditProfile] = useState<{ full_name?: string; phone?: string }>({});
   const [savingProfile, setSavingProfile] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrModalValue, setQrModalValue] = useState('');
@@ -266,8 +267,7 @@ const BuyerDashboard = () => {
     if (userProfile && user) {
       setEditProfile({
         full_name: userProfile.full_name || '',
-        phone: userProfile.phone || '',
-        email: user.email || ''
+        phone: userProfile.phone || ''
       });
     }
   }, [userProfile, user]);
@@ -419,14 +419,8 @@ const BuyerDashboard = () => {
       .from('profiles')
       .update(updates)
       .eq('id', user.id);
-    // Update email if changed
-    let emailError: { message: string } | null = null;
-    if (editProfile.email && editProfile.email !== user.email) {
-      const { error: emailUpdateError } = await supabase.auth.updateUser({ email: editProfile.email });
-      emailError = emailUpdateError;
-    }
     setSavingProfile(false);
-    if (!profileError && !emailError) {
+    if (!profileError) {
       toast({ title: 'Profil mis à jour', description: 'Vos informations ont été enregistrées.' });
       setDrawerOpen(false);
       setIsEditing(false);
@@ -434,7 +428,7 @@ const BuyerDashboard = () => {
       const { data } = await supabase.from('profiles').select('full_name, phone').eq('id', user.id).single();
       setUserProfile(data ? { phone: data.phone ?? '', full_name: data.full_name ?? undefined } : null);
     } else {
-      toast({ title: 'Erreur', description: profileError?.message || emailError?.message || 'Erreur inconnue', variant: 'destructive' });
+      toast({ title: 'Erreur', description: profileError?.message || 'Erreur inconnue', variant: 'destructive' });
     }
   };
 
@@ -532,11 +526,11 @@ const BuyerDashboard = () => {
           throw new Error('ID de commande non reçu du serveur');
         }
 
-        // Récupérer le code renvoyé par le serveur et afficher le QR code sécurisé
+        // Récupérer le code renvoyé par le serveur (ne pas ouvrir automatiquement le modal QR pour les paiements directs)
         setOrderId(data?.id || data?.order_id || createdOrderId);
         if (data?.qr_code) {
           setQrModalValue(data.qr_code);
-          setQrModalOpen(true);
+          // Le modal QR ne doit être affiché que si l'utilisateur le demande ("Voir QR code") ou pour les modes qui l'exigent
         }
         
         // Initier le paiement Orange Money directement
@@ -620,11 +614,11 @@ const BuyerDashboard = () => {
           throw new Error('ID de commande non reçu du serveur');
         }
 
-        // Récupérer le code renvoyé par le serveur et afficher le QR code sécurisé
+        // Récupérer le code renvoyé par le serveur (ne pas ouvrir automatiquement le modal QR pour les paiements directs)
         setOrderId(data?.id || data?.order_id || createdOrderId);
         if (data?.qr_code) {
           setQrModalValue(data.qr_code);
-          setQrModalOpen(true);
+          // Le modal QR ne doit être affiché que si l'utilisateur le demande ("Voir QR code") ou pour les modes qui l'exigent
         }
 
         // Initier le paiement Wave directement
@@ -1013,15 +1007,6 @@ const BuyerDashboard = () => {
                 onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
                 required
               />
-              <input
-                className="border rounded px-3 py-2"
-                name="email"
-                placeholder="Email"
-                type="email"
-                value={editProfile.email || ''}
-                onChange={e => setEditProfile(p => ({ ...p, email: e.target.value }))}
-                required
-              />
               <div className="flex gap-2 mt-4">
                 <Button type="submit" className="flex-1 bg-green-500 hover:bg-green-600" disabled={savingProfile}>
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
@@ -1066,15 +1051,6 @@ const BuyerDashboard = () => {
                 placeholder="Téléphone"
                 value={editProfile.phone || ''}
                 onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
-                required
-              />
-              <input
-                className="border rounded px-3 py-2 text-sm"
-                name="email"
-                placeholder="Email"
-                type="email"
-                value={editProfile.email || ''}
-                onChange={e => setEditProfile(p => ({ ...p, email: e.target.value }))}
                 required
               />
               <div className="flex gap-2 mt-2">
@@ -1344,14 +1320,20 @@ const BuyerDashboard = () => {
                                       <div className="flex items-center gap-3 text-sm">
                                         <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
                                         <div className="flex items-center gap-2">
-                                          <a
-                                            href={`tel:${order.profiles.phone}`}
-                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
-                                            title="Appeler le vendeur(se)"
-                                          >
-                                            <PhoneIcon className="h-4 w-4" size={14} />
-                                            <span className="ml-1 text-[11px] leading-tight">Appeler</span>
-                                          </a>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <a
+                                                href={`tel:${order.profiles.phone}`}
+                                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                                aria-label="Appeler le vendeur(se)"
+                                              >
+                                                <PhoneIcon className="h-4 w-4" size={14} />
+                                                <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                              </a>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Appeler le vendeur(se)</TooltipContent>
+                                          </Tooltip>
+
                                           <a
                                             href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
                                             target="_blank"
@@ -1376,14 +1358,19 @@ const BuyerDashboard = () => {
                                         <div className="flex items-center gap-3 text-sm">
                                           <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
                                           <div className="flex items-center gap-2">
-                                            <a
-                                              href={`tel:${order.delivery_person.phone}`}
-                                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
-                                              title="Appeler le livreur"
-                                            >
-                                              <PhoneIcon className="h-4 w-4" size={14} />
-                                              <span className="ml-1 text-[11px] leading-tight">Appeler</span>
-                                            </a>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <a
+                                                  href={`tel:${order.delivery_person.phone}`}
+                                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                                  aria-label="Appeler le livreur"
+                                                >
+                                                  <PhoneIcon className="h-4 w-4" size={14} />
+                                                  <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                                </a>
+                                              </TooltipTrigger>
+                                              <TooltipContent>Appeler le livreur</TooltipContent>
+                                            </Tooltip>
                                           </div>
                                         </div>
                                       )}

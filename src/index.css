@@ -230,6 +230,11 @@
     -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
   }
+
+  /* When a global overlay spinner is active, hide all local spinners (to keep a single visible) */
+  body.has-global-spinner .local-spinner {
+    display: none !important;
+  }
   
   /* Animation typing effect */
   @keyframes typing {
@@ -257,5 +262,34 @@
   
   .nav-link:hover::after {
     @apply w-full;
+  }
+  
+  /* Styles spécifiques pour la card commande vendeur */
+  .vendor-order-card {
+    @apply bg-white border border-[#ffe4c2] rounded-[16px] p-[24px] my-[16px] shadow-[0_2px_8px_rgba(0,0,0,0.03)] max-w-[430px];
+  }
+
+  .vendor-order-card-header {
+    @apply flex justify-between items-center mb-[16px];
+  }
+
+  .order-badge {
+    @apply bg-[#ffe4c2] text-[#a0522d] rounded-[12px] py-[4px] px-[12px] font-semibold text-[14px];
+  }
+
+  .order-status {
+    @apply bg-[#ffe4c2] text-[#a0522d] rounded-[12px] py-[4px] px-[12px] font-semibold text-[14px] flex items-center;
+  }
+
+  .vendor-order-card-body h2 {
+    @apply text-[22px] font-bold mb-[8px] flex items-center;
+  }
+
+  .call-btn {
+    @apply bg-[#e6f0ff] text-[#2e7d32] border-none rounded-[8px] py-[6px] px-[14px] font-medium cursor-pointer flex items-center text-[15px];
+  }
+
+  .order-amount {
+    @apply text-[#2e7d32] text-[26px] font-bold mt-[16px];
   }
 }

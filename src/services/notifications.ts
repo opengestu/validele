@@ -79,13 +79,17 @@ export async function notifyDeliveryPersonAssigned(
 export async function notifyBuyerDeliveryStarted(
   buyerId: string,
   orderId: string,
-  orderCode?: string
+  orderCode?: string,
+  deliveryPersonPhone?: string
 ): Promise<NotifyResult> {
   try {
+    const payload: Record<string, unknown> = { buyerId, orderId, orderCode };
+    if (deliveryPersonPhone) payload.deliveryPersonPhone = deliveryPersonPhone;
+
     const response = await fetch(apiUrl('/api/notify/delivery-started'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ buyerId, orderId, orderCode })
+      body: JSON.stringify(payload)
     });
     return await response.json();
   } catch (error) {

@@ -1,4 +1,5 @@
 // backend/server.js
+// INSPECT: server.js - checking DB and routes
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -12,6 +13,15 @@ const { supabase } = require('./supabase');
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
 const app = express();
+app.use(express.json());
+
+// Mount auth routes (added for phone existence check and PIN login)
+try {
+  const authRoutes = require('./routes/auth');
+  app.use('/auth', authRoutes);
+} catch (e) {
+  console.warn('Auth routes module not found or failed to load:', e.message);
+}
 
 process.on('uncaughtException', function (err) {
   console.error('UNCAUGHT EXCEPTION:', err);

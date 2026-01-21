@@ -358,6 +358,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Vérifier la session initiale, puis écouter les changements
     checkSession();
 
+    // Watchdog: si le bootstrap d'auth reste bloqué (>12s), sortir du mode loading
+    const authWatchdog = setTimeout(() => {
+      if (mounted && initializedRef.current === false) {
+        console.warn('Auth bootstrap timeout — forçant la fin du chargement');
+        setLoading(false);
+        initializedRef.current = true;
+      }
+    }, 12000);
+
     // Configurer l'écoute des changements d'état
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, activeSession) => {
       // Pendant l'initialisation, ignorer les événements (surtout ceux avec session null)
