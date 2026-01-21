@@ -14,7 +14,7 @@ const CONFIG = {
   
   // Credentials Wave
   api_key: process.env.PIXPAY_API_KEY || 'PIX_bc95d417-096c-4a0a-a35e-b325bbe292cc',
-  service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '210'),
+  service_id: 79, // Service ID fixe pour générer le lien Wave (79)
   business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || 'am-22822bk801d0t',
   
   // URLs de callback
@@ -92,7 +92,7 @@ async function testPixPayWave(amount, destination, orderId = null) {
 // ========================================
 async function testWavePayment() {
   console.log('\n💙 TEST: Paiement Wave de 500 FCFA');
-  await testPixPayWave(500, '774254729', 'TEST_ORDER_001');
+  await testPixPayWave(100, '774254729', 'TEST_ORDER_001');
 }
 
 // ========================================

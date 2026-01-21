@@ -18,7 +18,15 @@ const PIXPAY_CONFIG = {
   ipn_base_url: process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com',
   // Configuration Wave PixPay
   wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '211'),
-  wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || ''
+  wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || '',
+  wave_redirect_url: process.env.PIXPAY_WAVE_REDIRECT_URL || '',
+  wave_redirect_error_url: process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || ''
+};
+
+// Service ID constants to avoid confusion
+const PIXPAY_SERVICE_IDS = {
+  WAVE_LINK: 79,      // Wave → PixPay (generates payment link)
+  PIXPAY_TO_WAVE: 80, // PixPay → Wave (payout)
 };
 
 console.log('[PIXPAY] Configuration chargée:', {
@@ -28,7 +36,8 @@ console.log('[PIXPAY] Configuration chargée:', {
   wave_service_id: PIXPAY_CONFIG.wave_service_id,
   wave_business_name_id: PIXPAY_CONFIG.wave_business_name_id ? '***' : 'NON DÉFINI',
   base_url: PIXPAY_CONFIG.base_url,
-  ipn_base_url: PIXPAY_CONFIG.ipn_base_url
+  ipn_base_url: PIXPAY_CONFIG.ipn_base_url,
+  service_id_mapping: PIXPAY_SERVICE_IDS
 });
 
 /**
@@ -135,11 +144,12 @@ async function sendMoney(params) {
   const formattedPhone = phone.replace(/^\+/, '');
 
   // Déterminer le service_id selon le type de wallet
-  // Pour Wave payout (génération du lien de paiement) : service_id = 79
-  // Pour Orange Money payout : service_id = 214
+  // Mapping :
+  //   - PIXPAY_SERVICE_IDS.WAVE_LINK (79) : Wave → PixPay (génère le lien de paiement)
+  //   - PIXPAY_SERVICE_IDS.PIXPAY_TO_WAVE (80) : PixPay → Wave (payout)
   let service_id;
   if (walletType === 'wave-senegal') {
-    service_id = 79; // Forcé : Wave payout, génère le lien de paiement
+    service_id = PIXPAY_SERVICE_IDS.PIXPAY_TO_WAVE; // Forcé : PixPay -> Wave (payout)
   } else if (walletType === 'orange-senegal') {
     service_id = 214; // Orange Money CASHIN
   } else {
@@ -163,7 +173,7 @@ async function sendMoney(params) {
     payload.business_name_id = PIXPAY_CONFIG.wave_business_name_id;
   }
 
-  // Affiche le vrai service_id utilisé (79 pour Wave payout)
+  // Affiche le vrai service_id utilisé (80 pour Wave payout)
   console.log('[PIXPAY] Paiement vendeur(se)/livreur:', {
     amount,
     phone: formattedPhone,
@@ -172,7 +182,7 @@ async function sendMoney(params) {
     walletType,
     service_id: payload.service_id,
     business_name_id: payload.business_name_id || 'N/A',
-    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (79, génère le lien de paiement)' : 'Orange Money PAYOUT (214)',
+    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (80, PixPay -> Wave)' : 'Orange Money PAYOUT (214)',
     payload: JSON.stringify(payload, null, 2)
   });
 
@@ -252,9 +262,11 @@ async function initiateWavePayment(params) {
     amount: parseInt(amount),
     destination: formattedPhone,  // Numéro du client Wave
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: 79, // Forcé : Wave → PixPay (génère le lien de paiement)
+    service_id: PIXPAY_SERVICE_IDS.WAVE_LINK, // Forcé : Wave → PixPay (génère le lien de paiement)
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
+    redirect_url: PIXPAY_CONFIG.wave_redirect_url || undefined,
+    redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url || undefined,
     custom_data: JSON.stringify({
       order_id: orderId,
       payment_method: 'wave',
@@ -262,14 +274,19 @@ async function initiateWavePayment(params) {
     })
   };
 
-  // Affiche le vrai service_id envoyé (80)
+  // Affiche le vrai service_id envoyé (79)
+  const sanitizedPayload = { ...payload };
+  delete sanitizedPayload.api_key; // Ne pas logger la clé API en clair
+
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,
     destination: formattedPhone,
     orderId,
     service_id: payload.service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
-    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`
+    redirect_url: payload.redirect_url || 'N/A',
+    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
+    payload: JSON.stringify(sanitizedPayload)
   });
 
   try {
@@ -286,7 +303,8 @@ async function initiateWavePayment(params) {
       transaction_id: response.data.data?.transaction_id,
       state: response.data.data?.state,
       message: response.data.message,
-      sms_link: response.data.data?.sms_link
+      sms_link: response.data.data?.sms_link,
+      full: response.data
     });
 
     return {
@@ -298,7 +316,8 @@ async function initiateWavePayment(params) {
       sms_link: response.data.data?.sms_link,
       amount: response.data.data?.amount,
       fee: response.data.data?.fee,
-      raw: response.data
+      raw: response.data,
+      sent_payload: (process.env.DEBUG_PIXPAY === 'true' || process.env.NODE_ENV !== 'production') ? sanitizedPayload : undefined
     };
   } catch (error) {
     console.error('[PIXPAY-WAVE] Erreur:', {
