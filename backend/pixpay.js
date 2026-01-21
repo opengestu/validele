@@ -135,11 +135,11 @@ async function sendMoney(params) {
   const formattedPhone = phone.replace(/^\+/, '');
 
   // Déterminer le service_id selon le type de wallet
-  // Pour les payouts vendeur(se) (CASHIN):
-  // Wave: 210 (IN_WAVE_SN), Orange Money: 214 (IN_ORANGE_MONEY_SN)
+  // Pour Wave payout (génération du lien de paiement) : service_id = 79
+  // Pour Orange Money payout : service_id = 214
   let service_id;
   if (walletType === 'wave-senegal') {
-    service_id = 79; // Forcé : PixPay → Wave
+    service_id = 79; // Forcé : Wave payout, génère le lien de paiement
   } else if (walletType === 'orange-senegal') {
     service_id = 214; // Orange Money CASHIN
   } else {
@@ -163,15 +163,16 @@ async function sendMoney(params) {
     payload.business_name_id = PIXPAY_CONFIG.wave_business_name_id;
   }
 
+  // Affiche le vrai service_id utilisé (79 pour Wave payout)
   console.log('[PIXPAY] Paiement vendeur(se)/livreur:', {
     amount,
     phone: formattedPhone,
     orderId,
     type,
     walletType,
-    service_id,
+    service_id: payload.service_id,
     business_name_id: payload.business_name_id || 'N/A',
-    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (210)' : 'Orange Money PAYOUT (214)',
+    description: walletType === 'wave-senegal' ? 'Wave PAYOUT (79, génère le lien de paiement)' : 'Orange Money PAYOUT (214)',
     payload: JSON.stringify(payload, null, 2)
   });
 
@@ -251,7 +252,7 @@ async function initiateWavePayment(params) {
     amount: parseInt(amount),
     destination: formattedPhone,  // Numéro du client Wave
     api_key: PIXPAY_CONFIG.api_key,
-    service_id: 80, // Forcé : PixPay → Wave (sortie d'argent)
+    service_id: 79, // Forcé : Wave → PixPay (génère le lien de paiement)
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
