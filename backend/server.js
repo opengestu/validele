@@ -618,8 +618,45 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
 
 // ===== Admin endpoints =====
 
+// Middleware: require admin user by SUPABASE access token and ADMIN_USER_ID env var
+async function requireAdmin(req, res, next) {
+  try {
+    const adminUserId = process.env.ADMIN_USER_ID;
+    if (!adminUserId) {
+      console.error('[ADMIN] ADMIN_USER_ID not configured');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: ADMIN_USER_ID missing' });
+    }
+
+    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Missing Authorization header' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    // Verify token via Supabase
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) {
+      console.error('[ADMIN] Invalid token:', error);
+      return res.status(401).json({ success: false, error: 'Invalid token' });
+    }
+
+    if (data.user.id !== adminUserId) {
+      console.warn('[ADMIN] Unauthorized user:', data.user.id);
+      return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    }
+
+    // attach user to request for handlers
+    req.adminUser = data.user;
+    next();
+  } catch (err) {
+    console.error('[ADMIN] requireAdmin error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+}
+
+
 // Lister les commandes (admin)
-app.get('/api/admin/orders', async (req, res) => {
+app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('orders')
@@ -634,7 +671,7 @@ app.get('/api/admin/orders', async (req, res) => {
 });
 
 // Lister les transactions (admin)
-app.get('/api/admin/transactions', async (req, res) => {
+app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payment_transactions')
@@ -650,7 +687,7 @@ app.get('/api/admin/transactions', async (req, res) => {
 });
 
 // Initiate payout for an order (admin)
-app.post('/api/admin/payout-order', async (req, res) => {
+app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId requis' });

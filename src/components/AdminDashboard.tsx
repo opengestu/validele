@@ -25,20 +25,34 @@ type Transaction = {
 
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
+  const { session, userProfile } = require('@/hooks/useAuth')();
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
 
+  const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
+  const isAdminUser = !!(userProfile && ADMIN_ID && userProfile.id === ADMIN_ID);
+
   useEffect(() => {
+    if (!isAdminUser) {
+      setLoading(false);
+      return;
+    }
     fetchData();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdminUser]);
+
+  const getAuthHeader = () => ({
+    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+  });
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const oRes = await fetch(apiUrl('/api/admin/orders'));
-      const tRes = await fetch(apiUrl('/api/admin/transactions'));
+      const headers = getAuthHeader();
+      const oRes = await fetch(apiUrl('/api/admin/orders'), { headers });
+      const tRes = await fetch(apiUrl('/api/admin/transactions'), { headers });
       const oJson = await oRes.json();
       const tJson = await tRes.json();
       if (oRes.ok) setOrders(oJson.orders || []);
@@ -56,19 +70,29 @@ const AdminDashboard: React.FC = () => {
     try {
       const res = await fetch(apiUrl('/api/admin/payout-order'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ orderId })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Erreur payout');
       toast({ title: 'Succès', description: json.message || 'Payout initié' });
       fetchData();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       toast({ title: 'Erreur', description: error.message || 'Erreur lors du payout', variant: 'destructive' });
     } finally {
       setProcessing(false);
     }
   };
+
+  if (!isAdminUser) {
+    return (
+      <div className="max-w-3xl mx-auto py-12 text-center">
+        <h1 className="text-xl font-bold mb-2">Accès restreint</h1>
+        <p className="text-gray-600">Cette page est réservée à l'administrateur.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto py-6">
