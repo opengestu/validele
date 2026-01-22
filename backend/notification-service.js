@@ -71,6 +71,31 @@ async function getUserPushToken(userId) {
   return { token: data.push_token, name: data.full_name };
 }
 
+// Utility to send a push to a user id with a simple interface
+async function sendPushNotificationToUser(userId, title, body, data = {}) {
+  const user = await getUserPushToken(userId);
+  if (!user?.token) return { sent: false, reason: 'no_token' };
+  try {
+    const result = await sendPushNotification(user.token, title, body, data);
+    return { sent: true, result };
+  } catch (err) {
+    console.error('[NOTIF] Error push to user:', err?.message || err);
+    return { sent: false, error: err?.message || err };
+  }
+}
+
+module.exports = {
+  getUserPushToken,
+  notifyVendorNewOrder,
+  notifyBuyerOrderConfirmed,
+  notifyDeliveryPersonAssigned,
+  notifyBuyerDeliveryStarted,
+  notifyDeliveryCompleted,
+  notifyBuyerOrderReady,
+  notifyBuyerPaymentFailed,
+  sendPushNotificationToUser
+};
+
 /**
  * Notifier le Vendeur(se) d'une nouvelle commande
  */

@@ -797,9 +797,15 @@ app.post('/api/admin/login-local', async (req, res) => {
 // Lister les commandes (admin)
 app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   try {
+    // Include buyer, vendor and (if present) delivery person details using FK relationship selects
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_code, total_amount, status, vendor_id')
+      .select(`
+        id, order_code, total_amount, status, vendor_id, buyer_id, delivery_person_id,
+        buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, wallet_type),
+        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+        delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone)
+      `)
       .order('created_at', { ascending: false });
     if (error) throw error;
     res.json({ success: true, orders: data });
@@ -814,13 +820,90 @@ app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payment_transactions')
-      .select('*')
+      .select('*, order:orders(id, order_code), provider, status, transaction_type')
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
     res.json({ success: true, transactions: data });
   } catch (error) {
     console.error('[ADMIN] Erreur list transactions:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Timers: list active timers
+app.get('/api/admin/timers', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('admin_timers')
+      .select('*, order:orders(id, order_code)')
+      .eq('active', true)
+      .order('started_at', { ascending: false });
+    if (error) throw error;
+    res.json({ success: true, timers: data });
+  } catch (error) {
+    console.error('[ADMIN] Erreur list timers:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Start a timer for an order
+app.post('/api/admin/start-timer', requireAdmin, async (req, res) => {
+  try {
+    const { orderId, durationSeconds, message } = req.body || {};
+    if (!orderId || !durationSeconds) return res.status(400).json({ success: false, error: 'orderId and durationSeconds required' });
+
+    const startedBy = req.adminUser?.id || null;
+    const { data, error } = await supabase
+      .from('admin_timers')
+      .insert({ order_id: orderId, duration_seconds: durationSeconds, started_by: startedBy, message })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Notify buyer and vendor if present
+    try {
+      const { data: orderInfo } = await supabase.from('orders').select('id, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
+      if (orderInfo) {
+        if (orderInfo.buyer_id) await notificationService.sendPushNotificationToUser(orderInfo.buyer_id, '⏱️ Countdown démarré', message || 'Un compte à rebours a été démarré pour votre commande.');
+        if (orderInfo.vendor_id) await notificationService.sendPushNotificationToUser(orderInfo.vendor_id, '⏱️ Countdown démarré', message || 'Un compte à rebours a été démarré pour une commande.');
+      }
+    } catch (notifyErr) {
+      console.error('[ADMIN] failed to notify on timer start:', notifyErr);
+    }
+
+    res.json({ success: true, timer: data });
+  } catch (error) {
+    console.error('[ADMIN] start timer error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Cancel timer
+app.post('/api/admin/cancel-timer', requireAdmin, async (req, res) => {
+  try {
+    const { timerId } = req.body || {};
+    if (!timerId) return res.status(400).json({ success: false, error: 'timerId required' });
+
+    const { error } = await supabase.from('admin_timers').update({ active: false }).eq('id', timerId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[ADMIN] cancel timer error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Send a custom notification to any user (admin action)
+app.post('/api/admin/notify', requireAdmin, async (req, res) => {
+  try {
+    const { userId, title, body } = req.body || {};
+    if (!userId || !title || !body) return res.status(400).json({ success: false, error: 'userId, title and body required' });
+
+    const result = await notificationService.sendPushNotificationToUser(userId, title, body, { sentByAdmin: true });
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('[ADMIN] notify error:', error);
     res.status(500).json({ success: false, error: String(error) });
   }
 });
