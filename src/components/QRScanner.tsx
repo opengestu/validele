@@ -15,9 +15,33 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { apiUrl } from '@/lib/api';
 import { notifyBuyerDeliveryStarted, notifyDeliveryCompleted } from '@/services/notifications';
 
+// Types locales pour commandes et résultats de validation
+type Product = { name?: string | null; code?: string | null };
+type Profile = { full_name?: string | null; phone?: string | null; wallet_type?: string | null; };
+type Order = {
+  id?: string;
+  order_code?: string | null;
+  qr_code?: string | null;
+  assigned_at?: string | null;
+  buyer_id?: string | null;
+  buyer_phone?: string | null;
+  created_at?: string;
+  delivered_at?: string | null;
+  delivery_address?: string | null;
+  vendor_id?: string | null;
+  delivery_person_id?: string | null;
+  total_amount?: number | null;
+  status?: string | null;
+  products?: Product | null;
+  buyer_profile?: Profile | null;
+  vendor_profile?: Profile | null;
+};
+type ValidationResult = Order & { status: 'valid'|'invalid'|string; timestamp: string; error?: string; code?: string };
+
+
 function Html5QrcodeReact({ onScan, onError }) {
   const divId = 'qr-reader-react';
-  const html5Qr = useRef(null);
+  const html5Qr = useRef<Html5Qrcode | null>(null);
   const [scanPaused, setScanPaused] = useState(false);
   // Détection mobile
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent);
@@ -33,6 +57,10 @@ function Html5QrcodeReact({ onScan, onError }) {
           onError('Aucune caméra détectée');
           return;
         }
+        if (!html5Qr.current) {
+          onError('Scanner non initialisé');
+          return;
+        }
         html5Qr.current.start(
           cameraId,
           {
@@ -40,8 +68,7 @@ function Html5QrcodeReact({ onScan, onError }) {
             qrbox: qrboxSize,
             videoConstraints: {
               facingMode: "environment",
-              width: { ideal: 640 },
-              focusMode: "continuous" // autofocus si supporté
+              width: { ideal: 640 }
             }
           },
           (decodedText) => {
@@ -51,7 +78,8 @@ function Html5QrcodeReact({ onScan, onError }) {
             setTimeout(() => setScanPaused(false), 2000); // 2s de pause
           },
           (err) => {
-            // ignore scan errors
+            // Ignore les erreurs de scan mais logguer pour debug
+            console.debug('[QR] scan error:', err);
           }
         ).catch(err => {
           onError('Erreur lors de l\'accès à la caméra : ' + err);
@@ -66,15 +94,15 @@ function Html5QrcodeReact({ onScan, onError }) {
       isMounted = false;
       if (html5Qr.current) {
         try {
-          html5Qr.current.stop().then(() => {
-            html5Qr.current.clear();
-          }).catch(() => {
-            // Ignore si déjà stoppé
-            html5Qr.current.clear();
-          });
+          html5Qr.current.stop()
+            .then(() => {
+              try { html5Qr.current?.clear(); } catch (e) { console.debug('[QR] clear after stop error:', e); }
+            })
+            .catch(() => {
+              try { html5Qr.current?.clear(); } catch (e) { console.debug('[QR] clear after stop (catch) error:', e); }
+            });
         } catch (e) {
-          // Ignore toute erreur de stop
-          html5Qr.current.clear && html5Qr.current.clear();
+          try { html5Qr.current?.clear(); } catch (err) { console.debug('[QR] clear in outer catch error:', err); }
         }
       }
     };
@@ -216,17 +244,16 @@ const QRScanner = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [scannedCode, setScannedCode] = useState('');
-  const [orderCode, setOrderCode] = useState('');
-  const [validationResult, setValidationResult] = useState(null);
+  const [scannedCode, setScannedCode] = useState<string>('');
+  const [orderCode, setOrderCode] = useState<string>('');
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [currentOrder, setCurrentOrder] = useState(null);
+  const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [showScanSection, setShowScanSection] = useState(false);
   const [lastMatchInfo, setLastMatchInfo] = useState<{ type: 'order_code'|'qr_code'|'partial', code: string } | null>(null);
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
-  const [isPayoutInProgress, setIsPayoutInProgress] = useState(false);
 
   // Mapper d'erreurs PayDunya vers messages plus clairs
   const mapPaydunyaError = (raw: unknown): string => {
@@ -257,7 +284,7 @@ const QRScanner = () => {
           .eq('id', orderId)
           .maybeSingle();
         if (!error && data) {
-          setCurrentOrder(data);
+          setCurrentOrder(data as Order);
           console.log('Commande chargée depuis URL:', { 
             id: data.id, 
             vendor_id: data.vendor_id,
@@ -266,7 +293,7 @@ const QRScanner = () => {
             toutes_les_données: data
           });
           // Si la commande est déjà en cours et assignée au livreur, on amène l'utilisateur au scan
-          if (data.status === 'in_delivery' && data.delivery_person_id === user.id) {
+          if (data.status === 'in_delivery' && data.delivery_person_id === user?.id) {
             setOrderModalOpen(false);
             setShowScanSection(true);
           } else if (data.status === 'paid') {
@@ -317,7 +344,7 @@ const QRScanner = () => {
       }
 
       if (data) {
-        setCurrentOrder(data);
+        setCurrentOrder(data as Order);
         // Déterminer si la correspondance vient de order_code ou qr_code
         const normalize = (s) => (s||'').toString().replace(/[^a-z0-9]/gi,'').toUpperCase();
         const cleaned = orderCode.trim().replace(/[^a-z0-9]/gi,'').toUpperCase();
@@ -363,24 +390,29 @@ const QRScanner = () => {
 
   const handleStartDelivery = async () => {
     if (!currentOrder) return;
+    if (!user?.id) {
+      toast({ title: 'Erreur', description: 'Utilisateur non connecté', variant: 'destructive' });
+      return;
+    }
 
     try {
       console.log('Démarrage de la livraison pour la commande:', currentOrder.id);
+      if (!currentOrder.id) throw new Error('Order id manquant');
       
       const { error } = await supabase
         .from('orders')
         .update({ 
           status: 'in_delivery',
-          delivery_person_id: user.id
+          delivery_person_id: user.id as string
         })
-        .eq('id', currentOrder.id);
+        .eq('id', currentOrder.id as string);
 
       if (error) {
         console.error('Erreur lors du démarrage de la livraison:', error);
         throw error;
       }
 
-      setCurrentOrder({ ...currentOrder, status: 'in_delivery', delivery_person_id: user.id });
+      setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
       
       // Notifier l'acheteur que la livraison est en cours (inclure le numéro du livreur si disponible)
       try {
@@ -400,12 +432,14 @@ const QRScanner = () => {
           }
         }
 
-        notifyBuyerDeliveryStarted(
-          currentOrder.buyer_id,
-          currentOrder.id,
-          currentOrder.order_code || undefined,
-          deliveryPhone
-        ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+        if (currentOrder?.buyer_id) {
+          notifyBuyerDeliveryStarted(
+            currentOrder.buyer_id,
+            currentOrder.id as string,
+            currentOrder.order_code || undefined,
+            deliveryPhone
+          ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+        }
       } catch (e) {
         console.warn('Erreur lors de la préparation de la notification SMS:', e);
       }
@@ -462,11 +496,11 @@ const QRScanner = () => {
         throw new Error('QR code ne correspond pas à la commande');
       }
       // Vérifier que c'est bien le livreur assigné
-      if (currentOrder.delivery_person_id !== user.id) {
+      if (currentOrder.delivery_person_id !== user?.id) {
         throw new Error('Vous n\'êtes pas le livreur assigné à cette commande');
       }
       setValidationResult({
-        ...currentOrder,
+        ...(currentOrder as Order),
         status: 'valid',
         timestamp: new Date().toLocaleString()
       });
@@ -513,7 +547,7 @@ const QRScanner = () => {
             status: 'delivered',
             delivered_at: new Date().toISOString()
           })
-          .eq('id', validationResult.id)
+          .eq('id', validationResult.id as string)
           .select();
         
         console.log('QRScanner: résultat update delivered', { error: updateError, data: updatedOrders });
@@ -532,129 +566,41 @@ const QRScanner = () => {
 
         // Notifier vendeur + acheteur que la livraison est terminée
         notifyDeliveryCompleted(
-          validationResult.vendor_id,
-          validationResult.buyer_id,
-          validationResult.id,
+          validationResult.vendor_id as string,
+          validationResult.buyer_id as string,
+          validationResult.id as string,
           validationResult.order_code || undefined
         ).catch(err => console.warn('Notification livraison terminée échouée:', err));
 
         // 2) Afficher message de succès immédiat
+        // Informer le livreur que la commande est marquée livrée mais que le paiement
+        // au vendeur nécessite la validation d'un administrateur.
         toast({
           title: "✅ Livraison validée",
-          description: "La commande a été marquée comme livrée. Paiement vendeur en cours…",
+          description: "La commande a été marquée comme livrée. Le paiement au vendeur est en attente de validation par un administrateur.",
         });
 
-        // 3) Déclencher le paiement vendeur
-        toast({
-          title: "Livraison confirmée",
-          description: "Paiement vendeur en cours…",
-        });
-
-        setIsPayoutInProgress(true);
-
-        // 3) Récupérer le profil vendeur DIRECTEMENT par vendor_id
-        console.log('[PAYOUT] Récupération profil vendeur par vendor_id:', validationResult.vendor_id);
-        
-        const { data: vendorProfile, error: vendorError } = await supabase
-          .from('profiles')
-          .select('phone, wallet_type, full_name')
-          .eq('id', validationResult.vendor_id)
-          .maybeSingle();
-        
-        console.log('[PAYOUT] Résultat requête vendeur:', { vendorProfile, vendorError });
-
-        if (vendorError) {
-          throw new Error(`Erreur récupération vendeur: ${vendorError.message}`);
-        }
-
-        if (!vendorProfile) {
-          throw new Error(`Profil vendeur non trouvé pour vendor_id: ${validationResult.vendor_id}`);
-        }
-
-        console.log('[PAYOUT] Profil vendeur trouvé:', vendorProfile);
-
-        if (!vendorProfile.phone) {
-          throw new Error(`Numéro de téléphone manquant pour le vendeur ${vendorProfile.full_name || validationResult.vendor_id}`);
-        }
-
-        if (!vendorProfile.wallet_type) {
-          throw new Error(`Type de portefeuille non configuré pour le vendeur ${vendorProfile.full_name || validationResult.vendor_id}`);
-        }
-
-        // 4) Envoyer le paiement au vendeur
-        try {
-          // Calculer montant vendeur (95% du total)
-          const montantVendeur = Math.round(validationResult.total_amount * 0.95);
-
-          console.log('[PAYOUT] Envoi paiement à:', {
-            phone: vendorProfile.phone,
-            amount: montantVendeur,
-            walletType: vendorProfile.wallet_type
-          });
-
-          const response = await fetch(apiUrl('/api/payment/pixpay/payout'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              amount: montantVendeur,
-              phone: vendorProfile.phone,
-              orderId: validationResult.id,
-              type: 'vendor_payout',
-              walletType: vendorProfile.wallet_type
-            }),
-          });
-          
-          const result = await response.json();
-          console.log('[PAYOUT] Résultat API:', result);
-          
-          if (result.success) {
-            // Succès de l'initiation - afficher info et attendre validation vendeur
-            setValidationResult(null);
-            setScannedCode('');
-            setOrderCode('');
-            setShowScanSection(false);
-            setDeliveryConfirmed(true);
-            setCurrentOrder(null);
-            
-            // Message selon si on a un lien SMS ou pas
-            const paymentMessage = result.sms_link 
-              ? `Paiement de ${montantVendeur} FCFA initié. Le vendeur ${vendorProfile.full_name} doit valider le SMS envoyé à ${vendorProfile.phone}`
-              : `Paiement de ${montantVendeur} FCFA envoyé au vendeur ${vendorProfile.full_name} via ${vendorProfile.wallet_type === 'wave-senegal' ? 'Wave' : 'Orange Money'}. Transaction: ${result.transaction_id}`;
-            
-            toast({
-              title: "✅ Livraison confirmée !",
-              description: paymentMessage,
-              duration: 8000, // 8 secondes pour lire
+        // 3) Notifier les admins pour validation (tentative fire-and-forget)
+        (async () => {
+          try {
+            await fetch(apiUrl('/api/notify/admin-delivery-request'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orderId: validationResult.id })
             });
+          } catch (e) {
+            console.warn('Erreur notification admin:', e);
+          }
+        })();
 
-            // Log pour debug
-            console.log('[PAYOUT] Transaction initiée:', {
-              transaction_id: result.transaction_id,
-              sms_link: result.sms_link,
-              message: result.message
-            });
-            
-            // Marquer comme confirmé pour redirection
-            console.log('QRScanner: Livraison confirmée, redirection dans 3s');
-          } else {
-            // Échec paiement - afficher erreur et ne pas confirmer
-            throw new Error(result.error || result.message || 'Erreur paiement vendeur');
-          }
-        } catch (err: unknown) {
-          let errorMessage = 'Erreur paiement vendeur';
-          if (err instanceof Error) {
-            errorMessage = err.message;
-          }
-          console.error('[PAYOUT] Erreur:', errorMessage);
-          toast({
-            title: "❌ Échec du paiement vendeur",
-            description: `La livraison est marquée comme terminée mais le paiement a échoué: ${errorMessage}`,
-            variant: "destructive",
-          });
-        } finally {
-          setIsPayoutInProgress(false);
-          setIsConfirmingDelivery(false);
-        }
+        // Nettoyage de l'UI et confirmation locale
+        setValidationResult(null);
+        setScannedCode('');
+        setOrderCode('');
+        setShowScanSection(false);
+        setDeliveryConfirmed(true);
+        setCurrentOrder(null);
+        setIsConfirmingDelivery(false);
       } catch (error: unknown) {
         let errorMessage = 'Erreur inconnue';
         if (error instanceof Error) {
@@ -675,7 +621,7 @@ const QRScanner = () => {
     if (showScanSection && currentOrder) {
       setIsScanning(true);
       setTimeout(() => {
-        setScannedCode(currentOrder.qr_code);
+        setScannedCode(currentOrder.qr_code || '');
         setIsScanning(false);
         toast({
           title: "QR Code scanné",
@@ -703,19 +649,7 @@ const QRScanner = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
       {/* Bandeau de progression paiement vendeur */}
-      {isPayoutInProgress && (
-        <div className="fixed top-0 left-0 right-0 z-50">
-          <div className="mx-auto max-w-md mt-2 px-4">
-            <div className="rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg px-4 py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Paiement vendeur en cours…</span>
-              </div>
-              <span className="text-white/80 text-sm">Vous pouvez continuer</span>
-            </div>
-          </div>
-        </div>
-      )}
+
       {/* Header */}
       <div className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-sm">
         <div className="max-w-md mx-auto px-4">
@@ -772,7 +706,7 @@ const QRScanner = () => {
           <div className="w-full bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center">
             <CheckCircle className="h-16 w-16 text-green-600 mb-4" />
             <h2 className="text-xl font-bold text-green-700 mb-2 text-center">Commande livrée et confirmée !</h2>
-            <p className="text-green-800 text-base mb-2 text-center">La livraison a bien été validée. Les fonds seront transférés au vendeur sous 24h.</p>
+            <p className="text-green-800 text-base mb-2 text-center">La livraison a bien été validée. Le paiement au vendeur est en attente de validation par un administrateur.</p>
             <Button className="mt-4 bg-green-600 hover:bg-green-700 text-white w-full" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
             <p className="text-sm text-gray-500 mt-2">Redirection automatique dans 3 secondes…</p>
           </div>

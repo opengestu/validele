@@ -354,5 +354,7 @@ module.exports = {
   notifyDeliveryPersonAssigned,
   notifyBuyerDeliveryStarted,
   notifyDeliveryCompleted,
-  notifyBuyerOrderReady
+  notifyBuyerOrderReady,
+  notifyBuyerPaymentFailed,
+  sendPushNotificationToUser
 };

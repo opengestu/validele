@@ -144,12 +144,18 @@ router.post('/create-order-and-invoice', async (req: Request, res: Response) => 
     }
 
     // 3. Mettre à jour la commande avec le token PayDunya (non bloquant pour la réponse)
-    supabase
-      .from('orders')
-      .update({ token: invoiceResponse.transaction_id, qr_code: tokenRaw })
-      .eq('id', order.id)
-      .then(() => console.log('Token mis à jour pour commande', order.id))
-      .catch((err: Error) => console.error('Erreur update token:', err));
+    (async () => {
+      try {
+        const { error: updateErr } = await supabase
+          .from('orders')
+          .update({ token: invoiceResponse.transaction_id, qr_code: tokenRaw })
+          .eq('id', order.id);
+        if (updateErr) console.error('Erreur update token:', updateErr);
+        else console.log('Token mis à jour pour commande', order.id);
+      } catch (err) {
+        console.error('Erreur update token:', err);
+      }
+    })();
 
     // 4. Retourner immédiatement (inclure qr_code généré pour usage côté frontend)
     return res.json({ status: 'success', redirect_url: invoiceResponse.redirect_url, token: invoiceResponse.transaction_id, receipt_url: invoiceResponse.receipt_url, order_id: order.id, qr_code: tokenRaw });
