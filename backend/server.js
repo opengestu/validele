@@ -6,6 +6,7 @@ const axios = require('axios');
 require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
+const crypto = require('crypto');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
@@ -618,8 +619,36 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
 
 // ===== Admin endpoints =====
 
-// Middleware: require admin user by SUPABASE access token and ADMIN_USER_ID env var
-// Falls back to checking `admin_users` table for DB-listed admins
+// Generate/verify a simple HMAC-signed admin token (short-lived) using ADMIN_JWT_SECRET
+function generateAdminToken(userId) {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const exp = Math.floor(Date.now() / 1000) + (parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10));
+  const payload = Buffer.from(JSON.stringify({ sub: userId, exp })).toString('base64url');
+  const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
+  const signature = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
+function verifyAdminToken(token) {
+  try {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, payload, signature] = parts;
+    const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
+    const expected = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+    if (expected !== signature) return null;
+    const obj = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    if (!obj.exp || !obj.sub) return null;
+    if (Math.floor(Date.now() / 1000) > obj.exp) return null;
+    return { id: obj.sub, exp: obj.exp };
+  } catch (err) {
+    console.error('[ADMIN] verifyAdminToken error:', err);
+    return null;
+  }
+}
+
+// Middleware: require admin user by SUPABASE access token, local admin token, or admin_users table
 async function requireAdmin(req, res, next) {
   try {
     const adminUserId = process.env.ADMIN_USER_ID;
@@ -630,43 +659,116 @@ async function requireAdmin(req, res, next) {
     }
     const token = authHeader.split(' ')[1];
 
-    // Verify token via Supabase
-    const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data?.user) {
-      console.error('[ADMIN] Invalid token:', error);
-      return res.status(401).json({ success: false, error: 'Invalid token' });
+    // 1) Supabase token (preferred)
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data?.user) {
+        if (adminUserId && data.user.id === adminUserId) {
+          req.adminUser = data.user;
+          return next();
+        }
+        // Check admin_users
+        const { data: adminRow, error: adminErr } = await supabase
+          .from('admin_users')
+          .select('id')
+          .eq('id', data.user.id)
+          .maybeSingle();
+        if (adminErr) {
+          console.error('[ADMIN] Error checking admin_users:', adminErr);
+          return res.status(500).json({ success: false, error: 'Server error checking admin users' });
+        }
+        if (adminRow && adminRow.id) {
+          req.adminUser = data.user;
+          return next();
+        }
+        console.warn('[ADMIN] Unauthorized user:', data.user.id);
+        return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+      }
+    } catch (e) {
+      // ignore and try local token
     }
 
-    // If ADMIN_USER_ID is configured, allow only that user
-    if (adminUserId && data.user.id === adminUserId) {
-      req.adminUser = data.user;
-      return next();
+    // 2) Local admin token (issued by /api/admin/login-local)
+    const verified = verifyAdminToken(token);
+    if (verified && verified.id) {
+      if (adminUserId && verified.id === adminUserId) {
+        req.adminUser = { id: verified.id };
+        return next();
+      }
+      const { data: row, error: rowErr } = await supabase
+        .from('admin_users')
+        .select('id')
+        .eq('id', verified.id)
+        .maybeSingle();
+      if (rowErr) {
+        console.error('[ADMIN] Error checking admin_users for local token:', rowErr);
+        return res.status(500).json({ success: false, error: 'Server error checking admin users' });
+      }
+      if (row && row.id) {
+        req.adminUser = { id: verified.id };
+        return next();
+      }
     }
 
-    // Fallback: check admin_users table
-    const { data: adminRow, error: adminErr } = await supabase
-      .from('admin_users')
-      .select('id')
-      .eq('id', data.user.id)
-      .maybeSingle();
-
-    if (adminErr) {
-      console.error('[ADMIN] Error checking admin_users:', adminErr);
-      return res.status(500).json({ success: false, error: 'Server error checking admin users' });
-    }
-
-    if (adminRow && adminRow.id) {
-      req.adminUser = data.user;
-      return next();
-    }
-
-    console.warn('[ADMIN] Unauthorized user:', data.user.id);
-    return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    return res.status(401).json({ success: false, error: 'Invalid or expired token' });
   } catch (err) {
     console.error('[ADMIN] requireAdmin error:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 }
+
+// POST /api/admin/login-local - exchange local PIN to a short-lived admin token
+app.post('/api/admin/login-local', async (req, res) => {
+  try {
+    const { profileId, pin } = req.body || {};
+    if (!profileId || !pin) return res.status(400).json({ success: false, error: 'profileId and pin required' });
+
+    // Fetch profile
+    const { data: profile, error: profileErr } = await supabase
+      .from('profiles')
+      .select('id, pin_hash')
+      .eq('id', profileId)
+      .maybeSingle();
+    if (profileErr) {
+      console.error('[ADMIN] Error fetching profile for local login:', profileErr);
+      return res.status(500).json({ success: false, error: 'Server error' });
+    }
+    if (!profile || !profile.id) {
+      return res.status(404).json({ success: false, error: 'Profile not found' });
+    }
+
+    // Verify PIN (current app stores pin_plain in pin_hash)
+    if (!profile.pin_hash || String(pin) !== String(profile.pin_hash)) {
+      return res.status(401).json({ success: false, error: 'Invalid PIN' });
+    }
+
+    // Check admin_users or ADMIN_USER_ID
+    const adminUserId = process.env.ADMIN_USER_ID;
+    if (adminUserId && profileId === adminUserId) {
+      const token = generateAdminToken(profileId);
+      return res.json({ success: true, token, expires_in: parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10) });
+    }
+    const { data: adminRow, error: adminErr } = await supabase
+      .from('admin_users')
+      .select('id')
+      .eq('id', profileId)
+      .maybeSingle();
+    if (adminErr) {
+      console.error('[ADMIN] Error checking admin_users for local login:', adminErr);
+      return res.status(500).json({ success: false, error: 'Server error' });
+    }
+    if (!adminRow || !adminRow.id) {
+      return res.status(403).json({ success: false, error: 'Not an admin' });
+    }
+
+    // Issue token
+    const token = generateAdminToken(profileId);
+    return res.json({ success: true, token, expires_in: parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10) });
+  } catch (err) {
+    console.error('[ADMIN] login-local error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
 
 
 // Lister les commandes (admin)
