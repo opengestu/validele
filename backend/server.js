@@ -529,19 +529,42 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       console.log('[PIXPAY] ✅ Payout vendeur(se) réussi pour commande', orderId, '- Status non modifié (reste delivered)');
     }
 
-    // Si échec, notifier
+    // Si échec, notifier l'acheteur et l'admin mais NE PAS changer le status de la commande
     if (state === 'FAILED' && orderId) {
       console.error('[PIXPAY] ❌ Paiement échoué:', {
         transaction_id,
         orderId,
         error
       });
-      
-      // Marquer la commande comme annulée
-      await supabase
-        .from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', orderId);
+
+      try {
+        // Récupérer infos commande pour notifier l'acheteur
+        const { data: orderInfo, error: orderInfoErr } = await supabase
+          .from('orders')
+          .select('id, order_code, buyer_id')
+          .eq('id', orderId)
+          .maybeSingle();
+
+        if (orderInfoErr) {
+          console.error('[PIXPAY] Erreur récupération commande pour notification:', orderInfoErr);
+        }
+
+        if (orderInfo && orderInfo.buyer_id) {
+          try {
+            await notificationService.notifyBuyerPaymentFailed(orderInfo.buyer_id, {
+              orderId: orderInfo.id,
+              orderCode: orderInfo.order_code
+            });
+          } catch (notifErr) {
+            console.error('[PIXPAY] Erreur notification paiement échoué:', notifErr);
+          }
+        } else {
+          console.log('[PIXPAY] Aucun acheteur trouvé pour la commande, notification ignorée');
+        }
+
+      } catch (e) {
+        console.error('[PIXPAY] Erreur gestion échec paiement:', e);
+      }
     }
 
     // Répondre à PixPay

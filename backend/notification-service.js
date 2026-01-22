@@ -124,6 +124,53 @@ async function notifyBuyerOrderConfirmed(buyerId, orderDetails) {
 }
 
 /**
+ * Notifier l'acheteur que le paiement a échoué (sensibiliser à réessayer)
+ */
+async function notifyBuyerPaymentFailed(buyerId, orderDetails) {
+  const user = await getUserPushToken(buyerId);
+  let smsResult = null;
+  let pushResult = null;
+
+  if (user?.token) {
+    try {
+      pushResult = await sendPushNotification(
+        user.token,
+        '❌ Paiement échoué',
+        `Le paiement de votre commande ${orderDetails.orderCode || ''} a échoué. Veuillez réessayer dans l'application.`,
+        {
+          type: 'payment_failed',
+          orderId: orderDetails.orderId,
+          click_action: 'OPEN_ORDER_TRACKING'
+        }
+      );
+      console.log(`[NOTIF] Acheteur ${buyerId} notifié - paiement échoué`);
+    } catch (error) {
+      console.error(`[NOTIF] Erreur notification push paiement échoué:`, error?.message || error);
+    }
+  }
+
+  // essayer d'envoyer un SMS si on a le numéro
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', buyerId)
+        .maybeSingle();
+      if (!error && data?.phone) {
+        const smsText = `Votre paiement pour la commande ${orderDetails.orderCode || ''} a échoué sur VALIDEL. Ouvrez l'app pour réessayer.`;
+        smsResult = await sendD7SMSNotify(data.phone, smsText);
+        console.log(`[NOTIF] SMS paiement échoué envoyé à ${data.phone}`);
+      }
+    } catch (error) {
+      console.error('[NOTIF] Erreur envoi SMS paiement échoué:', error?.message || error);
+    }
+  }
+
+  return { sent: !!(pushResult || smsResult), pushResult, smsResult };
+}
+
+/**
  * Notifier le livreur qu'une commande lui est assignée
  */
 async function notifyDeliveryPersonAssigned(deliveryPersonId, orderDetails) {
