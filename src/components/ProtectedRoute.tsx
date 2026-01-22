@@ -7,7 +7,7 @@ import OverlaySpinner from '@/components/ui/overlay-spinner';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: 'buyer' | 'vendor' | 'delivery';
+  requiredRole?: 'buyer' | 'vendor' | 'delivery' | 'admin';
 }
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {

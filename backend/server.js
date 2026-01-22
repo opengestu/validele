@@ -616,6 +616,98 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
   }
 });
 
+// ===== Admin endpoints =====
+
+// Lister les commandes (admin)
+app.get('/api/admin/orders', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, order_code, total_amount, status, vendor_id')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ success: true, orders: data });
+  } catch (error) {
+    console.error('[ADMIN] Erreur list orders:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Lister les transactions (admin)
+app.get('/api/admin/transactions', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    res.json({ success: true, transactions: data });
+  } catch (error) {
+    console.error('[ADMIN] Erreur list transactions:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Initiate payout for an order (admin)
+app.post('/api/admin/payout-order', async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ success: false, error: 'orderId requis' });
+
+    // Récupérer la commande et le vendeur
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, total_amount, vendor_id')
+      .eq('id', orderId)
+      .single();
+    if (orderErr || !order) return res.status(404).json({ success: false, error: 'Commande non trouvée' });
+
+    const { data: vendor, error: vendorErr } = await supabase
+      .from('profiles')
+      .select('id, phone, wallet_type')
+      .eq('id', order.vendor_id)
+      .single();
+
+    if (vendorErr || !vendor) return res.status(404).json({ success: false, error: 'Vendeur non trouvé' });
+
+    const walletType = vendor.wallet_type || 'wave-senegal';
+    const phone = vendor.phone;
+
+    if (!phone) return res.status(400).json({ success: false, error: 'Numéro vendeur non trouvé' });
+
+    const result = await pixpaySendMoney({
+      amount: order.total_amount,
+      phone,
+      orderId,
+      type: 'vendor_payout',
+      walletType
+    });
+
+    // Enregistrer
+    if (result.success && result.transaction_id) {
+      const { error: txErr } = await supabase
+        .from('payment_transactions')
+        .insert({
+          transaction_id: result.transaction_id,
+          provider: 'pixpay',
+          order_id: orderId,
+          amount: order.total_amount,
+          phone,
+          status: result.state || 'PENDING1',
+          transaction_type: 'payout',
+          raw_response: result.raw
+        });
+      if (txErr) console.error('[ADMIN] Erreur save payout tx:', txErr);
+    }
+
+    res.json({ success: result.success, result });
+  } catch (error) {
+    console.error('[ADMIN] Erreur payout-order:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
 // Remboursement client (annulation commande)
 app.post('/api/payment/pixpay/refund', async (req, res) => {
   try {

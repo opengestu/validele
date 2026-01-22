@@ -17,6 +17,7 @@ import BuyerDashboard from "@/components/BuyerDashboard";
 import DeliveryDashboard from "@/components/DeliveryDashboard";
 import OrderDetails from "@/components/OrderDetails";
 import QRScanner from "@/components/QRScanner";
+import AdminDashboard from "@/components/AdminDashboard";
 import NotFound from "./pages/NotFound";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import ColorDemo from "./components/ColorDemo";
@@ -52,6 +53,15 @@ const App = () => (
                     <VendorDashboard />
                   </ProtectedRoute>
                 } 
+              />
+              {/* Admin dashboard */}
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute requiredRole="admin">
+                    <AdminDashboard />
+                  </ProtectedRoute>
+                }
               />
               {/* Protected Routes for Buyers */}
               <Route 
