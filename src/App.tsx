@@ -3,14 +3,21 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "@/hooks/useAuth";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
 import AppResumeRefresher from "@/components/AppResumeRefresher";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
+
+// Small helper to redirect /admin to /admin/:userId
+const AdminRedirect: React.FC = () => {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/auth" replace />;
+  return <Navigate to={`/admin/${user.id}`} replace />;
+};
 
 import VendorDashboard from "@/components/VendorDashboard";
 import BuyerDashboard from "@/components/BuyerDashboard";
@@ -54,11 +61,19 @@ const App = () => (
                   </ProtectedRoute>
                 } 
               />
-              {/* Admin dashboard */}
+              {/* Admin dashboard redirect and param route */}
               <Route
                 path="/admin"
                 element={
-                  <ProtectedRoute requiredRole="admin">
+                  <ProtectedRoute>
+                    <AdminRedirect />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/:adminId"
+                element={
+                  <ProtectedRoute>
                     <AdminDashboard />
                   </ProtectedRoute>
                 }

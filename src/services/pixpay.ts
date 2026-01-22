@@ -1,7 +1,7 @@
 // Service PixPay pour le frontend
 import { apiUrl } from '@/lib/api';
-import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 
 export interface PixPayInitiateRequest {
   amount: number;
@@ -119,35 +119,43 @@ export class PixPayService {
     }
 
     try {
-      // Sur mobile, utiliser l'API Browser de Capacitor en mode in-app
+      // Sur mobile natif, tenter d'ouvrir directement l'application via App.openUrl
       if (Capacitor.isNativePlatform()) {
-        // Ajouter un listener pour détecter la fermeture du navigateur
-        const listener = await Browser.addListener('browserFinished', () => {
-          console.log('[PixPay] Navigateur in-app fermé par l\'utilisateur');
-          // L'utilisateur est revenu à l'application
-          // On pourrait rafraîchir les commandes ici
-        });
-
-        await Browser.open({ 
-          url: smsLink,
-          windowName: '_self',
-          presentationStyle: 'fullscreen',
-          toolbarColor: '#10b981'
-        });
-
-        // Nettoyer le listener après ouverture
-        setTimeout(() => {
-          listener.remove();
-        }, 1000);
-      } else {
-        // Sur web, utiliser window.open
-        window.open(smsLink, '_blank');
+        try {
+          await App.openUrl({ url: smsLink });
+          console.log('[PixPay] App.openUrl success:', smsLink);
+          return;
+        } catch (appErr) {
+          console.warn('[PixPay] App.openUrl a échoué, fallback vers ouverture externe:', appErr);
+          // Ne pas ouvrir d'in-app browser — on passe à l'ouverture externe
+          try {
+            // Sur native, fallback sur window.location (ouvrira le navigateur externe)
+            // Cela permet aussi aux Universal Links de rediriger vers l'app si elle est installée
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (window as any).location.href = smsLink;
+            console.log('[PixPay] Fallback window.location.href (native):', smsLink);
+            return;
+          } catch (e) {
+            console.error('[PixPay] Fallback window.location.href failed:', e);
+          }
+        }
       }
-      console.log('[PixPay] Lien de paiement ouvert en mode in-app:', smsLink);
+
+      // Sur web ou si tout le reste échoue, utiliser window.location (activates Universal Links)
+      try {
+        window.location.href = smsLink;
+        console.log('[PixPay] window.location.href utilisé:', smsLink);
+      } catch (e) {
+        console.warn('[PixPay] window.location.href a échoué, fallback sur window.open', e);
+        try { window.open(smsLink, '_blank'); } catch (e2) { console.error('[PixPay] fallback window.open failed', e2); }
+      }
+
+      console.log('[PixPay] Lien de paiement ouvert:', smsLink);
     } catch (error) {
       console.error('[PixPay] Erreur ouverture lien:', error);
       // Fallback: essayer window.open
-      window.open(smsLink, '_blank');
+      // eslint-disable-next-line no-empty
+      try { window.open(smsLink, '_blank'); } catch(e){}
     }
   }
 }

@@ -619,13 +619,10 @@ app.post('/api/payment/pixpay/payout', async (req, res) => {
 // ===== Admin endpoints =====
 
 // Middleware: require admin user by SUPABASE access token and ADMIN_USER_ID env var
+// Falls back to checking `admin_users` table for DB-listed admins
 async function requireAdmin(req, res, next) {
   try {
     const adminUserId = process.env.ADMIN_USER_ID;
-    if (!adminUserId) {
-      console.error('[ADMIN] ADMIN_USER_ID not configured');
-      return res.status(500).json({ success: false, error: 'Server misconfiguration: ADMIN_USER_ID missing' });
-    }
 
     const authHeader = req.headers['authorization'] || req.headers['Authorization'];
     if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
@@ -640,14 +637,31 @@ async function requireAdmin(req, res, next) {
       return res.status(401).json({ success: false, error: 'Invalid token' });
     }
 
-    if (data.user.id !== adminUserId) {
-      console.warn('[ADMIN] Unauthorized user:', data.user.id);
-      return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    // If ADMIN_USER_ID is configured, allow only that user
+    if (adminUserId && data.user.id === adminUserId) {
+      req.adminUser = data.user;
+      return next();
     }
 
-    // attach user to request for handlers
-    req.adminUser = data.user;
-    next();
+    // Fallback: check admin_users table
+    const { data: adminRow, error: adminErr } = await supabase
+      .from('admin_users')
+      .select('id')
+      .eq('id', data.user.id)
+      .maybeSingle();
+
+    if (adminErr) {
+      console.error('[ADMIN] Error checking admin_users:', adminErr);
+      return res.status(500).json({ success: false, error: 'Server error checking admin users' });
+    }
+
+    if (adminRow && adminRow.id) {
+      req.adminUser = data.user;
+      return next();
+    }
+
+    console.warn('[ADMIN] Unauthorized user:', data.user.id);
+    return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
   } catch (err) {
     console.error('[ADMIN] requireAdmin error:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });

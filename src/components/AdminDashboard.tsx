@@ -1,4 +1,6 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -26,13 +28,17 @@ type Transaction = {
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
   const { session, userProfile } = require('@/hooks/useAuth')();
+  const params = useParams();
+  const adminId = params?.adminId;
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
-  const isAdminUser = !!(userProfile && ADMIN_ID && userProfile.id === ADMIN_ID);
+  // Allow access if the logged-in user matches either the VITE admin id or the adminId param in the URL
+  const isAdminUser = !!(userProfile && (userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)));
+
 
   useEffect(() => {
     if (!isAdminUser) {

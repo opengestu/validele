@@ -133,17 +133,19 @@ const BuyerDashboard = () => {
         .from('orders')
         .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
         .eq('buyer_id', user.id)
-        .in('status', ['paid', 'in_delivery', 'delivered', 'cancelled'])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      // Normaliser null → undefined pour correspondre au type Order
-      const normalizedOrders = (data || []).map((o) => ({
-        ...o,
-        delivery_person_id: o.delivery_person_id ?? undefined,
-        assigned_at: o.assigned_at ?? undefined,
-        delivered_at: o.delivered_at ?? undefined,
-      })) as Order[];
+      // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
+      const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
+      const normalizedOrders = (data || [])
+        .filter((o) => allowedStatus.includes(o.status))
+        .map((o) => ({
+          ...o,
+          delivery_person_id: o.delivery_person_id ?? undefined,
+          assigned_at: o.assigned_at ?? undefined,
+          delivered_at: o.delivered_at ?? undefined,
+        })) as Order[];
       setOrders(normalizedOrders);
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);

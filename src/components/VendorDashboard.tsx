@@ -1,3 +1,14 @@
+// Mapping des statuts en français
+const STATUS_LABELS_FR: Record<string, string> = {
+  paid: 'Payée',
+  assigned: 'Assignée',
+  in_delivery: 'En livraison',
+  delivered: 'Livrée',
+  pending: 'En attente',
+  cancelled: 'Annulée',
+  refunded: 'Remboursée',
+  failed: 'Échouée',
+};
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@/components/ui/spinner';
@@ -653,71 +664,24 @@ const VendorDashboard = () => {
                 {orders.map((order) => {
                   // Trouver la transaction de paiement associée à cette commande
                   const payoutTransaction = transactions.find(t => t.order_id === order.id);
-                  
                   return (
                     <div
                       key={order.id}
                       className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
                       style={{ maxWidth: 350 }}
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="bg-[#FFE5B4] text-[#C97A00] px-3 py-1 rounded-md text-xs font-semibold">
-                          {order.order_code || `CGS${order.id?.slice(-4)}`}
-                        </span>
-                        <span className="flex items-center gap-1 bg-[#FFE5B4] text-[#C97A00] px-3 py-1 rounded-md text-xs font-semibold">
-                          <span role="img" aria-label="truck">🚚</span>
-                          {order.status === 'paid'
-                            ? 'Payée'
-                            : order.status === 'assigned' || order.status === 'in_delivery'
-                            ? 'En cours de livraison'
-                            : order.status === 'delivered'
-                            ? 'Livrée'
-                            : order.status}
-                        </span>
-                      </div>
                       <div className="flex items-center gap-2 mb-1">
                         <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
                         <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                       </div>
-                      <div className="flex items-center text-xs text-gray-700 mb-1">
-                        <strong>Code commande :</strong>
-                        <span
-                          className="ml-auto font-mono px-2 py-0.5 rounded-md"
-                          style={{
-                            background: "#FFE5B4",
-                            color: "#C97A00",
-                            fontWeight: 700,
-                            fontSize: "16px", // Augmenté pour plus de visibilité
-                            letterSpacing: "1px"
-                          }}
-                        >
-                          {order.order_code || `CGS${order.id?.slice(-4)}`}
-                        </span>
+                      <div className="flex items-center mb-1">
+                        <span className="text-sm font-semibold text-gray-800 w-40">Code commande :</span>
+                        <span className="ml-auto text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px'}}>{order.order_code || order.id}</span>
                       </div>
-                      <div className="flex items-center text-xs text-gray-700 mb-1">
-                        <strong>Statut :</strong>
-                        <span className="ml-auto">
-                          {order.status === 'paid' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
-                              <span className="w-2 h-2 bg-blue-500 rounded-full mr-1"></span>
-                              Payée
-                            </span>
-                          ) : order.status === 'assigned' || order.status === 'in_delivery' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 text-xs font-medium">
-                              <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></span>
-                              En cours de livraison
-                            </span>
-                          ) : order.status === 'delivered' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                              <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
-                              Livrée
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
-                              <span className="w-2 h-2 bg-gray-400 rounded-full mr-1"></span>
-                              {order.status}
-                            </span>
-                          )}
+                      <div className="flex items-center mb-1">
+                        <span className="text-sm font-semibold text-gray-800 w-40">Statut commande :</span>
+                        <span className="ml-auto text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22'}}>
+                          {STATUS_LABELS_FR[order.status] || order.status}
                         </span>
                       </div>
                       <div className="flex items-center text-sm text-gray-800 mb-1">
@@ -1092,48 +1056,9 @@ const VendorDashboard = () => {
                           <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
                           <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                         </div>
-                        {/* Ligne 2 : Code commande */}
-                        <div className="flex items-center text-xs text-gray-700 mb-1">
-                          <strong>Code commande :</strong>
-                          <span
-                            className="ml-auto font-mono px-2 py-0.5 rounded-md"
-                            style={{
-                              background: "#FFE5B4",
-                              color: "#C97A00",
-                              fontWeight: 700,
-                              fontSize: "16px", // Augmenté pour plus de visibilité
-                              letterSpacing: "1px"
-                            }}
-                          >
-                            {order.order_code || `CGS${order.id?.slice(-4)}`}
-                          </span>
-                        </div>
-                        {/* Ligne 3 : Statut */}
-                        <div className="flex items-center text-xs text-gray-700 mb-1">
-                          <strong>Statut :</strong>
-                          <span className="ml-auto">
-                            {order.status === 'paid' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
-                                <span className="w-2 h-2 bg-blue-500 rounded-full mr-1"></span>
-                                Payée
-                              </span>
-                            ) : order.status === 'assigned' || order.status === 'in_delivery' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 text-xs font-medium">
-                                <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></span>
-                                En cours de livraison
-                              </span>
-                            ) : order.status === 'delivered' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                                <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
-                                Livrée
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
-                                <span className="w-2 h-2 bg-gray-400 rounded-full mr-1"></span>
-                                {order.status}
-                              </span>
-                            )}
-                          </span>
+                        <div className="flex items-center mb-1">
+                          <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
+                          <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px'}}>{order.order_code || order.id}</span>
                         </div>
                         {/* Ligne 4 : Client */}
                         <div className="flex items-center text-sm text-gray-800 mb-1">
