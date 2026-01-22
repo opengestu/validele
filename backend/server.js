@@ -350,10 +350,19 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
 
   } catch (error) {
     console.error('[PIXPAY] Erreur initiate:', error);
-    return res.status(500).json({
+
+    const pixpayMessage = error?.message || error?.raw?.message || (error?.raw?.data && error.raw.data.message) || 'Erreur lors de l\'initiation du paiement';
+    const pixpayStatus = error?.status || (error?.raw?.statut_code ? error.raw.statut_code : 500);
+
+    const responseBody = {
       success: false,
-      error: error.message || 'Erreur lors de l\'initiation du paiement'
-    });
+      error: pixpayMessage
+    };
+    if (process.env.DEBUG_PIXPAY === 'true') {
+      responseBody.pixpay = error?.raw || error;
+    }
+
+    return res.status(pixpayStatus >= 400 && pixpayStatus < 600 ? pixpayStatus : 500).json(responseBody);
   }
 });
 
@@ -410,10 +419,19 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
 
   } catch (error) {
     console.error('[PIXPAY-WAVE] Erreur initiate:', error);
-    return res.status(500).json({
+
+    const pixpayMessage = error?.message || error?.raw?.message || (error?.raw?.data && error.raw.data.message) || 'Erreur lors de l\'initiation du paiement Wave';
+    const pixpayStatus = error?.status || (error?.raw?.statut_code ? error.raw.statut_code : 500);
+
+    const responseBody = {
       success: false,
-      error: error.message || 'Erreur lors de l\'initiation du paiement Wave'
-    });
+      error: pixpayMessage
+    };
+    if (process.env.DEBUG_PIXPAY === 'true') {
+      responseBody.pixpay = error?.raw || error;
+    }
+
+    return res.status(pixpayStatus >= 400 && pixpayStatus < 600 ? pixpayStatus : 500).json(responseBody);
   }
 });
 

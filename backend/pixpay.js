@@ -57,8 +57,11 @@ async function initiatePayment(params) {
     throw new Error('PIXPAY_API_KEY non configurée');
   }
 
-  // Formater le numéro de téléphone (retirer le +)
-  const formattedPhone = phone.replace(/^\+/, '');
+  // Formater le numéro de téléphone en format local (ex: 774254729)
+  let formattedPhone = phone ? String(phone).replace(/[\s\-\(\)]/g, '') : '';
+  if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
+  if (formattedPhone.startsWith('221')) formattedPhone = formattedPhone.substring(3);
+  if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
 
   const payload = {
     amount: parseInt(amount),
@@ -141,7 +144,11 @@ async function sendMoney(params) {
     throw new Error('PIXPAY_API_KEY non configurée');
   }
 
-  const formattedPhone = phone.replace(/^\+/, '');
+  // Formater le numéro de téléphone en format local (ex: 774254729)
+  let formattedPhone = phone ? String(phone).replace(/[\s\-\(\)]/g, '') : '';
+  if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
+  if (formattedPhone.startsWith('221')) formattedPhone = formattedPhone.substring(3);
+  if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
 
   // Déterminer le service_id selon le type de wallet
   // Mapping :
@@ -254,8 +261,11 @@ async function initiateWavePayment(params) {
     throw new Error('PIXPAY_WAVE_BUSINESS_NAME_ID non configuré');
   }
 
-  // Formater le numéro de téléphone (retirer le +)
-  const formattedPhone = phone ? phone.replace(/^\+/, '') : '';
+  // Formater le numéro de téléphone en format local (ex: 774254729)
+  let formattedPhone = phone ? String(phone).replace(/[\s\-\(\)]/g, '') : '';
+  if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
+  if (formattedPhone.startsWith('221')) formattedPhone = formattedPhone.substring(3);
+  if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
 
   // Pour Wave, destination = numéro du client qui paie
   const payload = {
