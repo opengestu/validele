@@ -480,19 +480,23 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 
     // Mettre à jour la transaction dans Supabase
     if (transaction_id) {
-      const { error: updateError } = await supabase
-        .from('payment_transactions')
-        .update({
-          status: state,
-          provider_response: response,
-          provider_error: error,
-          provider_transaction_id: provider_id,
-          updated_at: new Date().toISOString()
-        })
-        .eq('transaction_id', transaction_id);
+      try {
+        const { error: updateError } = await supabase
+          .from('payment_transactions')
+          .update({
+            status: state,
+            provider_response: response || null,
+            provider_error: error || null,
+            provider_transaction_id: provider_id || null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('transaction_id', transaction_id);
 
-      if (updateError) {
-        console.error('[PIXPAY] Erreur update DB:', updateError);
+        if (updateError) {
+          console.error('[PIXPAY] Erreur update DB:', updateError);
+        }
+      } catch (e) {
+        console.error('[PIXPAY] defensive DB update failed (missing columns?), continue processing:', e?.message || e);
       }
     }
 
@@ -848,7 +852,7 @@ app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
     console.log('[ADMIN] list transactions requested by:', req.adminUser?.id || 'unknown');
     const { data, error } = await supabase
       .from('payment_transactions')
-      .select('*, order:orders(id, order_code), provider, status, transaction_type')
+      .select('*, order:orders(id, order_code), provider, status, transaction_type, provider_transaction_id, raw_response, provider_response, batch_id')
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
@@ -1104,8 +1108,11 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
 // Create a payout batch from delivered orders with payout_status = 'requested'
 app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
   try {
-    const { notes, scheduled_at } = req.body || {};
+    const { notes, scheduled_at, commission_pct } = req.body || {};
     const createdBy = req.adminUser?.id || null;
+
+    const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
+    if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
     // Fetch orders eligible for batching
     const { data: orders, error } = await supabase
@@ -1125,10 +1132,10 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
-    // Insert batch
+    // Insert batch (store commission_pct)
     const { data: batch, error: batchErr } = await supabase
       .from('payout_batches')
-      .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes })
+      .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes, commission_pct: pct })
       .select('*')
       .single();
 
@@ -1137,8 +1144,14 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       throw batchErr || new Error('Failed to create batch');
     }
 
-    // Insert items
-    const items = orders.map(o => ({ batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount: o.total_amount }));
+    // Compute commission and net per item and insert items
+    const items = orders.map(o => {
+      const amount = Number(o.total_amount || 0);
+      const commission_amount = Math.round(amount * pct / 100);
+      const net_amount = amount - commission_amount;
+      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount };
+    });
+
     const { error: itemsErr } = await supabase.from('payout_batch_items').insert(items);
     if (itemsErr) {
       console.error('[ADMIN] create payout batch - insert items error:', itemsErr);
@@ -1173,6 +1186,80 @@ app.get('/api/admin/payout-batches', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('[ADMIN] list payout batches error:', error);
     res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Get details for a batch (items with order and vendor info)
+app.get('/api/admin/payout-batches/:id/details', requireAdmin, async (req, res) => {
+  try {
+    const batchId = req.params.id;
+    if (!batchId) return res.status(400).json({ success: false, error: 'batch id required' });
+
+    const { data: batch, error: batchErr } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    if (batchErr) throw batchErr;
+    if (!batch) return res.status(404).json({ success: false, error: 'Batch not found' });
+
+    const { data: items, error: itemsErr } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, payout_status), vendor:profiles(id, full_name, phone, wallet_type)').eq('batch_id', batchId).order('id', { ascending: true });
+    if (itemsErr) throw itemsErr;
+
+    res.json({ success: true, batch, items: items || [] });
+  } catch (err) {
+    console.error('[ADMIN] get batch details error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// Render a printable invoice HTML for a vendor within a batch
+app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) => {
+  try {
+    const batchId = req.params.id;
+    const vendorId = req.query.vendorId;
+    if (!batchId || !vendorId) return res.status(400).send('batch id and vendorId required');
+
+    const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+
+    if (!batch) return res.status(404).send('Batch not found');
+    if (!vendor) return res.status(404).send('Vendor not found');
+
+    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+
+    // Simple HTML invoice
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Invoice - Batch ${batchId}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture de paiement - Batch ${batchId}</h2>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
+          <h3>Détails</h3>
+          <table>
+            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+            </tfoot>
+          </table>
+          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
+          <p>Signature: _________________________</p>
+        </body>
+      </html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[ADMIN] invoice error:', err);
+    res.status(500).send(String(err));
   }
 });
 
@@ -1230,7 +1317,8 @@ async function processPayoutBatch(batchId) {
         continue;
       }
 
-      const total = eligibleItems.reduce((s, it) => s + Number(it.amount || 0), 0);
+      // Use net_amount (gross - commission) to compute payout per vendor
+      const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
 
       const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
@@ -1241,15 +1329,16 @@ async function processPayoutBatch(batchId) {
       }
 
       try {
-        const payoutRes = await pixpaySendMoney({ amount: total, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
+        const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
 
         if (payoutRes && payoutRes.transaction_id) {
-          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', order_id: batchId, amount: total, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw });
+          // Record aggregated payout transaction and link to batch_id (not a single order)
+          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw, provider_response: payoutRes.raw });
           // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
           await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
           if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
-          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id });
+          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
           await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
@@ -1303,6 +1392,68 @@ app.post('/api/admin/payout-batches/:id/cancel', requireAdmin, async (req, res) 
     res.json({ success: true });
   } catch (error) {
     console.error('[ADMIN] cancel payout batch error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Admin utility: finalize payout (force mark transaction/batch as SUCCESSFUL and finalize DB state)
+app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
+  try {
+    const { transaction_id, batch_id, provider_response } = req.body || {};
+    if (!transaction_id && !batch_id) return res.status(400).json({ success: false, error: 'transaction_id or batch_id required' });
+
+    if (transaction_id) {
+      // Update the payment transaction
+      const { data: txs, error: txErr } = await supabase.from('payment_transactions').select('*').eq('transaction_id', transaction_id).limit(1);
+      if (txErr) throw txErr;
+      if (!txs || txs.length === 0) return res.status(404).json({ success: false, error: 'transaction not found' });
+      const tx = txs[0];
+
+      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
+
+      // If this tx references an order, mark order paid
+      if (tx.order_id) {
+        await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
+      }
+
+      // If tx references a batch, finalize batch
+      if (tx.batch_id) {
+        const batchId = tx.batch_id;
+        const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
+        if (items && items.length > 0) {
+          const itemIds = items.map(i => i.id);
+          const orderIds = items.map(i => i.order_id).filter(Boolean);
+          await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+        }
+        await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
+      }
+
+      return res.json({ success: true, message: 'transaction finalized', transaction_id });
+    }
+
+    // finalize by batch_id
+    if (batch_id) {
+      const { data: txsBatch } = await supabase.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
+      if (txsBatch && txsBatch.length > 0) {
+        const txb = txsBatch[0];
+        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
+      }
+
+      const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
+      if (items && items.length > 0) {
+        const itemIds = items.map(i => i.id);
+        const orderIds = items.map(i => i.order_id).filter(Boolean);
+        await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+        if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+      }
+      await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
+
+      return res.json({ success: true, message: 'batch finalized', batch_id });
+    }
+
+  } catch (error) {
+    console.error('[ADMIN] finalize-payout error:', error);
     res.status(500).json({ success: false, error: String(error) });
   }
 });
