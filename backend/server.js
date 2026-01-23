@@ -978,6 +978,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 });
 
 // Helper: verify order payout eligibility and return a detailed report
+// NOTE: Per project rule, eligibility depends ONLY on order status and payout_status in the app.
 async function verifyOrderForPayout(orderId) {
   if (!orderId) return { ok: false, error: 'order_id_required' };
 
@@ -990,29 +991,12 @@ async function verifyOrderForPayout(orderId) {
 
   if (orderErr || !order) return { ok: false, error: 'order_not_found' };
 
-  // Check delivered
+  // Rely solely on order status being 'delivered' and payout_status being requested/scheduled
   const delivered = order.status === 'delivered';
+  const payoutStatusOk = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
+  const alreadyPaid = order.payout_status === 'paid';
 
-  // Check client payment success
-  const { data: payments } = await supabase
-    .from('payment_transactions')
-    .select('id, transaction_id, provider, status, transaction_type, created_at, raw_response')
-    .eq('order_id', orderId)
-    .eq('transaction_type', 'payment')
-    .order('created_at', { ascending: false });
-
-  const paymentSuccessful = (payments || []).some(p => p && String(p.status).toUpperCase() === 'SUCCESSFUL');
-
-  // Check existing payouts
-  const { data: payouts } = await supabase
-    .from('payment_transactions')
-    .select('id, transaction_id, status, transaction_type, created_at')
-    .eq('order_id', orderId)
-    .in('transaction_type', ['payout', 'vendor_payout']);
-
-  const hasSuccessfulPayout = (payouts || []).some(p => String(p.status).toUpperCase() === 'SUCCESSFUL');
-
-  // Vendor info
+  // Vendor info required
   const { data: vendor } = await supabase
     .from('profiles')
     .select('id, full_name, phone, wallet_type')
@@ -1021,8 +1005,14 @@ async function verifyOrderForPayout(orderId) {
 
   const vendorOk = vendor && vendor.phone;
 
-  // Final eligibility
-  const eligible = delivered && paymentSuccessful && !hasSuccessfulPayout && vendorOk && (order.payout_status === 'requested' || order.payout_status === 'scheduled');
+  // Eligible only if delivered AND payout status valid AND vendor info present and not already paid
+  const eligible = delivered && payoutStatusOk && !alreadyPaid && vendorOk;
+
+  const reasons = [];
+  if (!delivered) reasons.push('not_delivered');
+  if (!vendorOk) reasons.push('vendor_info_missing');
+  if (!payoutStatusOk) reasons.push('invalid_payout_status');
+  if (alreadyPaid) reasons.push('already_paid');
 
   return {
     ok: true,
@@ -1030,12 +1020,12 @@ async function verifyOrderForPayout(orderId) {
     vendor: vendor || null,
     checks: {
       delivered,
-      paymentSuccessful,
-      hasSuccessfulPayout,
+      payoutStatusOk,
       vendorOk,
       payout_status: order.payout_status || null
     },
-    eligible
+    eligible,
+    reasons
   };
 }
 
@@ -1186,12 +1176,44 @@ async function processPayoutBatch(batchId) {
     const results = [];
     for (const vendorId of Object.keys(byVendor)) {
       const vendorItems = byVendor[vendorId];
-      const total = vendorItems.reduce((s, it) => s + Number(it.amount || 0), 0);
+
+      // Verify each item/order for eligibility and split eligible vs ineligible
+      const eligibleItems = [];
+      const ineligible = [];
+      for (const it of vendorItems) {
+        try {
+          const report = await verifyOrderForPayout(it.order_id);
+          if (report.ok && report.eligible) {
+            eligibleItems.push(it);
+          } else {
+            ineligible.push({ item: it, reason: report });
+          }
+        } catch (e) {
+          ineligible.push({ item: it, reason: { ok: false, error: String(e) } });
+        }
+      }
+
+      // Mark ineligible items as failed with reasons
+      if (ineligible.length > 0) {
+        const ids = ineligible.map(i => i.item.id);
+        try {
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: ineligible.map(i => i.reason) }) }).in('id', ids);
+        } catch (e) {
+          console.error('[ADMIN] failed marking ineligible payout items:', e);
+        }
+      }
+
+      if (eligibleItems.length === 0) {
+        results.push({ vendorId, success: false, error: 'no_eligible_items' });
+        continue;
+      }
+
+      const total = eligibleItems.reduce((s, it) => s + Number(it.amount || 0), 0);
 
       const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
-        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', vendorItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: failReason });
         continue;
       }
@@ -1201,17 +1223,17 @@ async function processPayoutBatch(batchId) {
 
         if (payoutRes && payoutRes.transaction_id) {
           await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', order_id: batchId, amount: total, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw });
-          await supabase.from('payout_batch_items').update({ status: 'paid', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', vendorItems.map(i => i.id));
-          const orderIds = vendorItems.map(i => i.order_id).filter(Boolean);
+          await supabase.from('payout_batch_items').update({ status: 'paid', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
+          const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
           if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid' }).in('id', orderIds);
           results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id });
         } else {
-          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', vendorItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
         }
       } catch (err) {
         console.error('[ADMIN] payout batch vendor error:', err);
-        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: String(err) }) }).in('id', vendorItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: String(err) }) }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: String(err) });
       }
     }
