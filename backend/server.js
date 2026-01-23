@@ -672,6 +672,31 @@ app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
 
 // ===== Admin endpoints =====
 
+// Lightweight auth middleware for non-admin users: validates Supabase access token and injects `req.user` (id)
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Missing Authorization header' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (error || !data?.user) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired token' });
+      }
+      req.user = data.user;
+      return next();
+    } catch (e) {
+      console.error('[AUTH] Supabase getUser error:', e);
+      return res.status(500).json({ success: false, error: 'Server error verifying token' });
+    }
+  } catch (err) {
+    console.error('[AUTH] requireAuth error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+}
+
 // Generate/verify a simple HMAC-signed admin token (short-lived) using ADMIN_JWT_SECRET
 function generateAdminToken(userId) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -712,30 +737,6 @@ async function requireAdmin(req, res, next) {
     }
     const token = authHeader.split(' ')[1];
 
-// Lightweight auth middleware for non-admin users: validates Supabase access token and injects `req.user` (id)
-async function requireAuth(req, res, next) {
-  try {
-    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
-    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'Missing Authorization header' });
-    }
-    const token = authHeader.split(' ')[1];
-    try {
-      const { data, error } = await supabase.auth.getUser(token);
-      if (error || !data?.user) {
-        return res.status(401).json({ success: false, error: 'Invalid or expired token' });
-      }
-      req.user = data.user;
-      return next();
-    } catch (e) {
-      console.error('[AUTH] Supabase getUser error:', e);
-      return res.status(500).json({ success: false, error: 'Server error verifying token' });
-    }
-  } catch (err) {
-    console.error('[AUTH] requireAuth error:', err);
-    return res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-}
 
 
     // 1) Supabase token (preferred)
