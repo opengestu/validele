@@ -1032,6 +1032,44 @@ async function verifyOrderForPayout(orderId) {
 
   const vendorOk = vendor && vendor.phone;
 
+  // Additional check: detect if a successful payout transaction already exists for this order
+  try {
+    // 1) direct transaction for this order
+    const { data: txs } = await supabase.from('payment_transactions').select('id,transaction_id,status').eq('order_id', orderId).eq('status', 'SUCCESSFUL').limit(1);
+    if (txs && txs.length > 0) {
+      // There is a provider-confirmed payout for this order
+      if (!alreadyPaid) {
+        // Try to reconcile state in DB (best-effort)
+        try {
+          await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+        } catch (e) {
+          console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid:', e?.message || e);
+        }
+      }
+      alreadyPaid = true;
+    } else {
+      // 2) check if order is part of a batch that has a successful payment transaction
+      const { data: items } = await supabase.from('payout_batch_items').select('batch_id').eq('order_id', orderId);
+      const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
+      if (batchIds.length > 0) {
+        const { data: txsBatch } = await supabase.from('payment_transactions').select('id,transaction_id,status').in('batch_id', batchIds).eq('status', 'SUCCESSFUL').limit(1);
+        if (txsBatch && txsBatch.length > 0) {
+          if (!alreadyPaid) {
+            try {
+              await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+            } catch (e) {
+              console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
+            }
+          }
+          alreadyPaid = true;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[ADMIN] verifyOrderForPayout - error checking existing payout txs:', e?.message || e);
+    // Non-fatal
+  }
+
   // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
   const eligible = delivered && paid && payoutStatusOk && !alreadyPaid && vendorOk;
 
@@ -1052,7 +1090,8 @@ async function verifyOrderForPayout(orderId) {
       payment_confirmed_at: order.payment_confirmed_at || null,
       payoutStatusOk,
       vendorOk,
-      payout_status: order.payout_status || null
+      payout_status: order.payout_status || null,
+      alreadyPaid
     },
     eligible,
     reasons
