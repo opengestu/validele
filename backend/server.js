@@ -1004,21 +1004,22 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 });
 
 // Helper: verify order payout eligibility and return a detailed report
-// NOTE: Per project rule, eligibility depends ONLY on order status and payout_status in the app.
+// NOTE: Per project rule, eligibility depends on order status, payout_status and that the buyer has paid.
 async function verifyOrderForPayout(orderId) {
   if (!orderId) return { ok: false, error: 'order_id_required' };
 
-  // Fetch order
+  // Fetch order (include payment_confirmed_at)
   const { data: order, error: orderErr } = await supabase
     .from('orders')
-    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at')
+    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at, payment_confirmed_at')
     .eq('id', orderId)
     .maybeSingle();
 
   if (orderErr || !order) return { ok: false, error: 'order_not_found' };
 
-  // Rely solely on order status being 'delivered' and payout_status being requested/scheduled
+  // Checks: delivered implies buyer paid for our app flow; accept payment_confirmed_at, status='paid' or status='delivered' as paid
   const delivered = order.status === 'delivered';
+  const paid = !!order.payment_confirmed_at || order.status === 'paid' || order.status === 'delivered';
   const payoutStatusOk = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
   const alreadyPaid = order.payout_status === 'paid';
 
@@ -1031,11 +1032,12 @@ async function verifyOrderForPayout(orderId) {
 
   const vendorOk = vendor && vendor.phone;
 
-  // Eligible only if delivered AND payout status valid AND vendor info present and not already paid
-  const eligible = delivered && payoutStatusOk && !alreadyPaid && vendorOk;
+  // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
+  const eligible = delivered && paid && payoutStatusOk && !alreadyPaid && vendorOk;
 
   const reasons = [];
   if (!delivered) reasons.push('not_delivered');
+  if (!paid) reasons.push('not_paid');
   if (!vendorOk) reasons.push('vendor_info_missing');
   if (!payoutStatusOk) reasons.push('invalid_payout_status');
   if (alreadyPaid) reasons.push('already_paid');
@@ -1046,6 +1048,8 @@ async function verifyOrderForPayout(orderId) {
     vendor: vendor || null,
     checks: {
       delivered,
+      paid,
+      payment_confirmed_at: order.payment_confirmed_at || null,
       payoutStatusOk,
       vendorOk,
       payout_status: order.payout_status || null
@@ -1114,10 +1118,10 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
     if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
-    // Fetch orders eligible for batching
+    // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
     const { data: orders, error } = await supabase
       .from('orders')
-      .select('id, vendor_id, total_amount')
+      .select('id, vendor_id, total_amount, payment_confirmed_at, status')
       .eq('status', 'delivered')
       .eq('payout_status', 'requested');
 
