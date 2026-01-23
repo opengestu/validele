@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
+
+// API response types for buyer endpoints
+interface OrdersApiResponse { success: boolean; orders?: any[]; error?: string; }
+interface TransactionRecord { id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string; }
+interface TransactionsApiResponse { success: boolean; transactions?: TransactionRecord[]; error?: string; }
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
@@ -142,10 +147,10 @@ const BuyerDashboard = () => {
 
       // Defensive: ensure server returns JSON and handle 401 gracefully
       const contentType = res.headers.get('content-type') || '';
-      let body: any = null;
+      let body: OrdersApiResponse | null = null;
       if (contentType.includes('application/json')) {
         try {
-          body = await res.json();
+          body = await res.json() as OrdersApiResponse;
         } catch (e) {
           console.error('[API] /api/orders/mine returned invalid JSON:', e);
           throw new Error('Invalid server response');
@@ -163,7 +168,7 @@ const BuyerDashboard = () => {
       }
 
       if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch orders');
-      const data = body.orders || [];
+      const data = (body.orders || []) as any[];
 
       // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
@@ -186,7 +191,7 @@ const BuyerDashboard = () => {
     } finally {
       setOrdersLoading(false);
     }
-  }, [user, toast]);
+  }, [user, toast, signOut]);
 
 
   const fetchTransactions = useCallback(async () => {
@@ -207,10 +212,10 @@ const BuyerDashboard = () => {
 
       // Defensive parsing
       const contentType = res.headers.get('content-type') || '';
-      let body: any = null;
+      let body: TransactionsApiResponse | null = null;
       if (contentType.includes('application/json')) {
         try {
-          body = await res.json();
+          body = await res.json() as TransactionsApiResponse;
         } catch (e) {
           console.error('[API] /api/transactions/mine returned invalid JSON:', e);
           throw new Error('Invalid server response');
@@ -229,11 +234,11 @@ const BuyerDashboard = () => {
 
       if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch transactions');
 
-      setTransactions((body.transactions || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>);
+      setTransactions((body.transactions || []) as TransactionRecord[]);
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user]);
+  }, [user, toast, signOut]);
 
   useEffect(() => {
     fetchOrders();
