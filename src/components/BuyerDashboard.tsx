@@ -139,7 +139,29 @@ const BuyerDashboard = () => {
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         }
       });
-      const body = await res.json();
+
+      // Defensive: ensure server returns JSON and handle 401 gracefully
+      const contentType = res.headers.get('content-type') || '';
+      let body: any = null;
+      if (contentType.includes('application/json')) {
+        try {
+          body = await res.json();
+        } catch (e) {
+          console.error('[API] /api/orders/mine returned invalid JSON:', e);
+          throw new Error('Invalid server response');
+        }
+      } else {
+        const text = await res.text();
+        console.error('[API] /api/orders/mine non-JSON response:', text);
+        throw new Error('Invalid server response');
+      }
+
+      if (res.status === 401) {
+        toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
+        await signOut();
+        return;
+      }
+
       if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch orders');
       const data = body.orders || [];
 
@@ -183,7 +205,28 @@ const BuyerDashboard = () => {
         }
       });
 
-      const body = await res.json();
+      // Defensive parsing
+      const contentType = res.headers.get('content-type') || '';
+      let body: any = null;
+      if (contentType.includes('application/json')) {
+        try {
+          body = await res.json();
+        } catch (e) {
+          console.error('[API] /api/transactions/mine returned invalid JSON:', e);
+          throw new Error('Invalid server response');
+        }
+      } else {
+        const text = await res.text();
+        console.error('[API] /api/transactions/mine non-JSON response:', text);
+        throw new Error('Invalid server response');
+      }
+
+      if (res.status === 401) {
+        toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
+        await signOut();
+        return;
+      }
+
       if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch transactions');
 
       setTransactions((body.transactions || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>);
