@@ -977,6 +977,117 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
   }
 });
 
+// Helper: verify order payout eligibility and return a detailed report
+async function verifyOrderForPayout(orderId) {
+  if (!orderId) return { ok: false, error: 'order_id_required' };
+
+  // Fetch order
+  const { data: order, error: orderErr } = await supabase
+    .from('orders')
+    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at')
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (orderErr || !order) return { ok: false, error: 'order_not_found' };
+
+  // Check delivered
+  const delivered = order.status === 'delivered';
+
+  // Check client payment success
+  const { data: payments } = await supabase
+    .from('payment_transactions')
+    .select('id, transaction_id, provider, status, transaction_type, created_at, raw_response')
+    .eq('order_id', orderId)
+    .eq('transaction_type', 'payment')
+    .order('created_at', { ascending: false });
+
+  const paymentSuccessful = (payments || []).some(p => p && String(p.status).toUpperCase() === 'SUCCESSFUL');
+
+  // Check existing payouts
+  const { data: payouts } = await supabase
+    .from('payment_transactions')
+    .select('id, transaction_id, status, transaction_type, created_at')
+    .eq('order_id', orderId)
+    .in('transaction_type', ['payout', 'vendor_payout']);
+
+  const hasSuccessfulPayout = (payouts || []).some(p => String(p.status).toUpperCase() === 'SUCCESSFUL');
+
+  // Vendor info
+  const { data: vendor } = await supabase
+    .from('profiles')
+    .select('id, full_name, phone, wallet_type')
+    .eq('id', order.vendor_id)
+    .maybeSingle();
+
+  const vendorOk = vendor && vendor.phone;
+
+  // Final eligibility
+  const eligible = delivered && paymentSuccessful && !hasSuccessfulPayout && vendorOk && (order.payout_status === 'requested' || order.payout_status === 'scheduled');
+
+  return {
+    ok: true,
+    order,
+    vendor: vendor || null,
+    checks: {
+      delivered,
+      paymentSuccessful,
+      hasSuccessfulPayout,
+      vendorOk,
+      payout_status: order.payout_status || null
+    },
+    eligible
+  };
+}
+
+// POST /api/admin/verify-and-payout - run a full verification and optionally execute the payout (admin only)
+app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
+  try {
+    const { orderId, execute } = req.body || {};
+    if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
+
+    const report = await verifyOrderForPayout(orderId);
+    if (!report.ok) return res.status(404).json({ success: false, error: report.error });
+
+    // If just verifying, return the report
+    if (!execute) return res.json({ success: true, report });
+
+    // If executing, make sure eligible
+    if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible_for_payout', report });
+
+    // Call PixPay to send money to vendor
+    const amount = report.order.total_amount;
+    const phone = report.vendor.phone;
+    const walletType = report.vendor.wallet_type || 'wave-senegal';
+
+    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { amount, phone, walletType });
+
+    const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
+
+    if (payoutRes && payoutRes.transaction_id) {
+      const { error: txErr } = await supabase.from('payment_transactions').insert({
+        transaction_id: payoutRes.transaction_id,
+        provider: 'pixpay',
+        order_id: report.order.id,
+        amount,
+        phone,
+        status: payoutRes.state || 'PENDING1',
+        transaction_type: 'payout',
+        raw_response: payoutRes.raw
+      });
+      if (txErr) console.error('[ADMIN] verify-and-payout - failed saving payout tx:', txErr);
+
+      // update order payout_status
+      const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'paid' }).eq('id', report.order.id);
+      if (updateErr) console.error('[ADMIN] verify-and-payout - failed updating order payout_status:', updateErr);
+    }
+
+    return res.json({ success: true, payout: payoutRes });
+  } catch (error) {
+    console.error('[ADMIN] verify-and-payout error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
 // ---------- Payout Batches (admin) ----------
 // Create a payout batch from delivered orders with payout_status = 'requested'
 app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
