@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 // API response types for buyer endpoints
-interface OrdersApiResponse { success: boolean; orders?: any[]; error?: string; }
+interface OrdersApiResponse { success: boolean; orders?: Order[]; error?: string; }
 interface TransactionRecord { id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string; }
 interface TransactionsApiResponse { success: boolean; transactions?: TransactionRecord[]; error?: string; }
 import { Link, useNavigate } from 'react-router-dom';
@@ -168,7 +168,7 @@ const BuyerDashboard = () => {
       }
 
       if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch orders');
-      const data = (body.orders || []) as any[];
+      const data = (body.orders || []) as Order[];
 
       // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
