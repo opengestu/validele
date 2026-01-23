@@ -712,6 +712,32 @@ async function requireAdmin(req, res, next) {
     }
     const token = authHeader.split(' ')[1];
 
+// Lightweight auth middleware for non-admin users: validates Supabase access token and injects `req.user` (id)
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Missing Authorization header' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (error || !data?.user) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired token' });
+      }
+      req.user = data.user;
+      return next();
+    } catch (e) {
+      console.error('[AUTH] Supabase getUser error:', e);
+      return res.status(500).json({ success: false, error: 'Server error verifying token' });
+    }
+  } catch (err) {
+    console.error('[AUTH] requireAuth error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+}
+
+
     // 1) Supabase token (preferred)
     try {
       const { data, error } = await supabase.auth.getUser(token);
@@ -2131,6 +2157,57 @@ app.post('/api/orders', async (req, res) => {
       success: false, 
       message: 'Erreur serveur lors de la création de la commande' 
     });
+  }
+});
+
+// GET orders for the authenticated buyer (sanitized: hide payout fields)
+app.get('/api/orders/mine', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    // Select specific fields and related entities; intentionally exclude payout_status and payout_paid_at
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select(`id, status, total_amount, order_code, payment_method, qr_code, created_at, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
+      .eq('buyer_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ success: true, orders: orders || [] });
+  } catch (err) {
+    console.error('[API] GET /api/orders/mine error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// GET transactions for authenticated buyer (exclude vendor payouts)
+app.get('/api/transactions/mine', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    // Fetch order ids for buyer
+    const { data: orderRows, error: ordersErr } = await supabase.from('orders').select('id').eq('buyer_id', userId);
+    if (ordersErr) throw ordersErr;
+    const orderIds = (orderRows || []).map(r => r.id);
+
+    if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
+
+    const { data: txs, error: txErr } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .in('order_id', orderIds)
+      .not('transaction_type', 'eq', 'payout')
+      .order('created_at', { ascending: false });
+
+    if (txErr) throw txErr;
+
+    res.json({ success: true, transactions: txs || [] });
+  } catch (err) {
+    console.error('[API] GET /api/transactions/mine error:', err);
+    res.status(500).json({ success: false, error: String(err) });
   }
 });
 
