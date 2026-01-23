@@ -1740,6 +1740,98 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
     return res.status(500).json({ success: false, error: String(err) });
   }
 });
+
+// Mark an order as delivered and set payout request automatically
+app.post('/api/orders/mark-delivered', async (req, res) => {
+  try {
+    const { orderId, deliveredBy } = req.body || {};
+    if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
+
+    // Fetch current order
+    const { data: order, error: orderErr } = await supabase.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
+    if (orderErr || !order) return res.status(404).json({ success: false, error: 'order_not_found' });
+
+    // Update only if status not already delivered
+    const updates = { status: 'delivered', delivered_at: new Date().toISOString() };
+
+    // If payout_status is not already requested/scheduled/paid, set it to requested
+    const currentPayout = order.payout_status;
+    if (!['requested','scheduled','paid'].includes(currentPayout)) {
+      updates.payout_status = 'requested';
+      updates.payout_requested_at = new Date().toISOString();
+      updates.payout_requested_by = deliveredBy || null;
+    }
+
+    const { error: updateErr } = await supabase.from('orders').update(updates).eq('id', orderId);
+    if (updateErr) console.error('[MARK-DELIVERED] Erreur update order:', updateErr);
+
+    // Notify buyer and vendor about completed delivery
+    try {
+      if (order.buyer_id) await notificationService.sendPushNotificationToUser(order.buyer_id, '✅ Livraison effectuée!', `Votre commande ${order.order_code || ''} est livrée.`);
+      if (order.vendor_id) await notificationService.sendPushNotificationToUser(order.vendor_id, '✅ Commande livrée', `La commande ${order.order_code || ''} a été livrée.`);
+    } catch (notifErr) {
+      console.error('[MARK-DELIVERED] Notification error:', notifErr);
+    }
+
+    // Notify admins (reuse admin notify flow)
+    try {
+      await axios.post(`${process.env.INTERNAL_BASE_URL || 'http://localhost:' + (process.env.PORT || 5000)}/api/notify/admin-delivery-request`, { orderId, requestedBy: deliveredBy });
+    } catch (e) {
+      // best-effort; if the same server call fails (self-call), just log
+      console.error('[MARK-DELIVERED] Failed to call admin notify endpoint:', e?.message || e);
+    }
+
+    res.json({ success: true, orderId, updated: updates });
+  } catch (err) {
+    console.error('[MARK-DELIVERED] Error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// Admin: scan for orders with status=delivered and missing payout_status then set payout_status=requested
+app.post('/api/admin/sync-delivered-payouts', requireAdmin, async (req, res) => {
+  try {
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('id, order_code, status, payout_status, vendor_id')
+      .eq('status', 'delivered')
+      .not('payout_status', 'in', '(requested,scheduled,paid)')
+      .limit(1000);
+
+    if (error) throw error;
+    if (!orders || orders.length === 0) return res.json({ success: true, updated: 0 });
+
+    const ids = orders.map(o => o.id);
+    const now = new Date().toISOString();
+    const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'requested', payout_requested_at: now }).in('id', ids);
+    if (updateErr) throw updateErr;
+
+    // Notify admins for each updated order
+    let adminUsers = [];
+    const adminId = process.env.ADMIN_USER_ID;
+    if (adminId) adminUsers.push(adminId);
+    else {
+      const { data: admins } = await supabase.from('admin_users').select('id');
+      adminUsers = (admins || []).map(a => a.id);
+    }
+
+    for (const o of orders) {
+      for (const admin of adminUsers) {
+        try {
+          await notificationService.sendPushNotificationToUser(admin, 'Livraison à valider', `La commande ${o.order_code || o.id} est livrée et demande validation pour paiement`, { type: 'admin_review_delivery', orderId: o.id });
+        } catch (e) {
+          console.error('[SYNC-DELIVERED] notify admin failed:', e);
+        }
+      }
+    }
+
+    res.json({ success: true, updated: ids.length });
+  } catch (err) {
+    console.error('[SYNC-DELIVERED] Error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // ==========================================
 
 // Utilisation de l'API PayDunya en production ou sandbox
