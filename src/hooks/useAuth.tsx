@@ -6,14 +6,21 @@ import { supabase } from '@/integrations/supabase/client';
 const SUPABASE_SESSION_KEY = 'supabase_persisted_session';
 const PROFILE_CACHE_KEY = 'auth_cached_profile_v1';
 
+// Utility to safely extract an email string from a DB row whose shape may be loose.
+const getEmailFromRow = (row: Record<string, unknown> | null | undefined): string | undefined => {
+  if (!row) return undefined;
+  const v = (row as Record<string, unknown>)['email'];
+  return typeof v === 'string' ? v : undefined;
+};
+
 interface UserProfile {
   id: string;
   email: string;
-  full_name: string;
-  phone?: string;
+  full_name: string | null;
+  phone?: string | null;
   role: 'buyer' | 'vendor' | 'delivery';
-  company_name?: string;
-  vehicle_info?: string;
+  company_name?: string | null;
+  vehicle_info?: string | null;
 }
 
 interface AuthContextType {
@@ -152,7 +159,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           // Hors ligne / problème réseau: tenter de servir le profil depuis le cache
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
-            if (cached?.id === userId) {
+            if (cached && cached.id === userId) {
               return cached;
             }
           }
@@ -175,7 +182,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           // Hors ligne: si on a déjà un profil complet en cache, l'utiliser
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
-            if (cached?.id === userId && cached.full_name && cached.full_name.trim() !== '') {
+            if (cached && cached.id === userId && cached.full_name && cached.full_name.trim() !== '') {
               return cached;
             }
           }
@@ -273,7 +280,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
                 setUserProfile({
                   id: profile.id,
-                  email: profile.email || `${smsSession.phone}@sms.validele.app`,
+                  email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
                   full_name: profile.full_name,
                   phone: profile.phone,
                   role: profile.role as 'buyer' | 'vendor' | 'delivery',
@@ -283,7 +290,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
                 writeCachedProfile({
                   id: profile.id,
-                  email: profile.email || `${smsSession.phone}@sms.validele.app`,
+                  email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
                   full_name: profile.full_name,
                   phone: profile.phone,
                   role: profile.role as 'buyer' | 'vendor' | 'delivery',
@@ -298,7 +305,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               // Hors ligne: essayer avec le cache au lieu de "déconnecter"
               if (typeof navigator !== 'undefined' && !navigator.onLine) {
                 const cached = readCachedProfile();
-                if (cached?.id === smsSession.profileId) {
+                if (cached && cached.id === smsSession.profileId) {
                   if (mounted) {
                     authModeRef.current = 'sms';
                     setUser({
@@ -468,7 +475,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (!error && profile && profile.full_name) {
           const refreshed: UserProfile = {
             ...profile,
-            email: profile.email || `${smsSession.phone}@sms.validele.app`,
+            email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
             role: profile.role as 'buyer' | 'vendor' | 'delivery'
           };
           setUserProfile(refreshed);
