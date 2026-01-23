@@ -525,8 +525,34 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
         }
       }
-    } else if (state === 'SUCCESSFUL' && orderId && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
-      console.log('[PIXPAY] ✅ Payout vendeur(se) réussi pour commande', orderId, '- Status non modifié (reste delivered)');
+    } else if (state === 'SUCCESSFUL' && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
+      console.log('[PIXPAY] ✅ Payout SUCCESSFUL', { transaction_id, transactionType, orderId });
+      try {
+        // If orderId corresponds to an order -> mark that order as paid
+        if (orderId) {
+          // Check if orderId is an actual order
+          const { data: orderExists } = await supabase.from('orders').select('id').eq('id', orderId).maybeSingle();
+          if (orderExists && orderExists.id) {
+            await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+            console.log('[PIXPAY] Order payout marked paid:', orderId);
+          } else {
+            // Otherwise treat orderId as a batch id
+            const { data: items } = await supabase.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
+            if (items && items.length > 0) {
+              const itemIds = items.map(i => i.id);
+              const orderIds = items.map(i => i.order_id).filter(Boolean);
+              await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+              if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+              await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
+              console.log('[PIXPAY] Batch payout completed for batch:', orderId);
+            } else {
+              console.log('[PIXPAY] Payout SUCCESSFUL but no order or batch found for id:', orderId);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[PIXPAY] Error finalizing payout on webhook:', e);
+      }
     }
 
     // Si échec, notifier l'acheteur et l'admin mais NE PAS changer le status de la commande
@@ -924,18 +950,16 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId requis' });
 
-    // Récupérer la commande et le vendeur
-    const { data: order, error: orderErr } = await supabase
-      .from('orders')
-      .select('id, total_amount, vendor_id')
-      .eq('id', orderId)
-      .single();
-    if (orderErr || !order) return res.status(404).json({ success: false, error: 'Commande non trouvée' });
+    // Verify eligibility based only on order status/payout_status
+    const report = await verifyOrderForPayout(orderId);
+    if (!report.ok) return res.status(404).json({ success: false, error: report.error });
+    if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible', report });
 
+    // Fetch vendor
     const { data: vendor, error: vendorErr } = await supabase
       .from('profiles')
       .select('id, phone, wallet_type')
-      .eq('id', order.vendor_id)
+      .eq('id', report.order.vendor_id)
       .single();
 
     if (vendorErr || !vendor) return res.status(404).json({ success: false, error: 'Vendeur non trouvé' });
@@ -945,29 +969,26 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 
     if (!phone) return res.status(400).json({ success: false, error: 'Numéro vendeur non trouvé' });
 
-    const result = await pixpaySendMoney({
-      amount: order.total_amount,
-      phone,
-      orderId,
-      type: 'vendor_payout',
-      walletType
-    });
+    // Execute payout via PixPay
+    const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
-    // Enregistrer
-    if (result.success && result.transaction_id) {
-      const { error: txErr } = await supabase
-        .from('payment_transactions')
-        .insert({
-          transaction_id: result.transaction_id,
-          provider: 'pixpay',
-          order_id: orderId,
-          amount: order.total_amount,
-          phone,
-          status: result.state || 'PENDING1',
-          transaction_type: 'payout',
-          raw_response: result.raw
-        });
+    // Record transaction
+    if (result && result.transaction_id) {
+      const { error: txErr } = await supabase.from('payment_transactions').insert({
+        transaction_id: result.transaction_id,
+        provider: 'pixpay',
+        order_id: report.order.id,
+        amount: report.order.total_amount,
+        phone,
+        status: result.state || 'PENDING1',
+        transaction_type: 'payout',
+        raw_response: result.raw
+      });
       if (txErr) console.error('[ADMIN] Erreur save payout tx:', txErr);
+
+      // Mark order as processing (final paid will be set by webhook SUCCESSFUL)
+      const { error: updErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
+      if (updErr) console.error('[ADMIN] Erreur mise à jour order payout_status:', updErr);
     }
 
     res.json({ success: result.success, result });
@@ -1066,8 +1087,8 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
       });
       if (txErr) console.error('[ADMIN] verify-and-payout - failed saving payout tx:', txErr);
 
-      // update order payout_status
-      const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'paid' }).eq('id', report.order.id);
+      // mark order as processing; final 'paid' will be set by webhook when provider confirms
+      const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
       if (updateErr) console.error('[ADMIN] verify-and-payout - failed updating order payout_status:', updateErr);
     }
 
@@ -1223,9 +1244,10 @@ async function processPayoutBatch(batchId) {
 
         if (payoutRes && payoutRes.transaction_id) {
           await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', order_id: batchId, amount: total, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw });
-          await supabase.from('payout_batch_items').update({ status: 'paid', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
+          // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
+          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
-          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid' }).in('id', orderIds);
+          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
           results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id });
         } else {
           await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
