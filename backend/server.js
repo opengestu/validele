@@ -13,7 +13,14 @@ const notificationService = require('./notification-service');
 const { supabase } = require('./supabase');
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
+
 const app = express();
+
+// CORS global, avant toute route
+app.use(cors({
+  origin: '*', // Pour la prod, remplace par l'URL de ton frontend si besoin
+  credentials: true
+}));
 app.use(express.json());
 
 // Mount auth routes (added for phone existence check and PIN login)
