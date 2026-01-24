@@ -132,4 +132,47 @@ router.post('/login-pin', async (req, res) => {
   }
 });
 
+// Debug: récupérer un utilisateur Supabase par email (admin)
+router.get('/users/by-email', async (req, res) => {
+  const email = (req.query.email || '').toString();
+  if (!email) return res.status(400).json({ error: 'Missing email parameter' });
+
+  const missing = ensureSupabase(req, res);
+  if (missing) return missing;
+
+  try {
+    const { data: users, error } = await supabaseAdmin.auth.admin.listUsers();
+    if (error) return res.status(500).json({ error: error.message || 'Error listing users' });
+    const found = users.users.find(u => u.email === email);
+    if (!found) return res.status(404).json({ found: false });
+    return res.json({ found: true, user: found });
+  } catch (err) {
+    console.error('Error in /users/by-email:', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Endpoint pour migrer un PIN en le sauvegardant haché dans profiles (admin only)
+router.post('/migrate-pin', async (req, res) => {
+  const { profileId, pin } = req.body || {};
+  if (!profileId || !pin) return res.status(400).json({ error: 'Missing profileId or pin' });
+
+  const missing = ensureSupabase(req, res);
+  if (missing) return missing;
+
+  try {
+    const hashed = await bcrypt.hash(String(pin), 10);
+    const { error } = await supabaseAdmin.from('profiles').update({ pin_hash: hashed }).eq('id', profileId);
+    if (error) {
+      console.error('[AUTH] Error migrating PIN:', error);
+      return res.status(500).json({ error: 'Failed to migrate PIN' });
+    }
+    console.log('[AUTH] Migrated PIN for profile', profileId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error in /migrate-pin:', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
 module.exports = router;
