@@ -288,6 +288,16 @@ app.post('/api/sms/register', async (req, res) => {
 
     const userId = created.user.id;
 
+    // Hasher le PIN avant de le stocker
+    let hashedPin;
+    try {
+      const bcrypt = require('bcryptjs');
+      hashedPin = await bcrypt.hash(String(pin), 10);
+    } catch (err) {
+      console.error('[SMS] Erreur hashage PIN:', err);
+      return res.status(500).json({ success: false, error: 'Erreur serveur (hashage PIN)' });
+    }
+
     // Créer le profil (id = userId) pour satisfaire la FK
     // Utiliser upsert pour éviter les erreurs de doublon
     const { error: profileError } = await supabase
@@ -300,7 +310,7 @@ app.post('/api/sms/register', async (req, res) => {
         company_name: safeRole === 'vendor' ? (company_name || null) : null,
         vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
         wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
-        pin_hash: pin
+        pin_hash: hashedPin
       }, { onConflict: 'id' });
 
     if (profileError) {
