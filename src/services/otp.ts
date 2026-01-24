@@ -27,7 +27,10 @@ export async function sendOTP(phone: string): Promise<OTPSendResponse> {
   const data = await response.json();
   
   if (!response.ok) {
-    throw new Error(data.error || 'Erreur lors de l\'envoi du code');
+    const err = new Error(data.error || 'Erreur lors de l\'envoi du code') as Error & { status?: number; body?: unknown };
+    err.status = response.status;
+    err.body = data;
+    throw err;
   }
   
   return data;

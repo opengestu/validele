@@ -103,6 +103,34 @@ app.post('/api/otp/send', async (req, res) => {
 
     console.log(`[OTP] Demande d'envoi pour: ${formattedPhone}`);
 
+    // Protection serveur : empêcher l'envoi d'OTP si un profil existe déjà pour ce numéro
+    try {
+      const digitsOnly = formattedPhone.replace(/\D/g, '');
+      const last9 = digitsOnly.slice(-9);
+      const { data: existingProfiles, error: searchError } = await supabase
+        .from('profiles')
+        .select('id, phone, full_name, role')
+        .ilike('phone', `%${last9}%`)
+        .limit(1);
+
+      if (searchError) {
+        console.error('[OTP] Erreur recherche profil existant:', searchError);
+      }
+
+      if (existingProfiles && existingProfiles.length > 0) {
+        console.log(`[OTP] Envoi bloqué pour ${formattedPhone} : profil existant ${existingProfiles[0].id}`);
+        return res.status(409).json({
+          success: false,
+          error: 'Un compte existe déjà pour ce numéro, utilisez la connexion PIN',
+          code: 'PROFILE_EXISTS',
+          profile: existingProfiles[0]
+        });
+      }
+    } catch (err) {
+      console.error('[OTP] Erreur durant la vérification de profil avant envoi OTP:', err);
+      // On continue si la vérification plante (par prudence) — on ne veut pas bloquer tous les envois par erreur serveur.
+    }
+
     await sendOTP(formattedPhone);
 
     res.json({ success: true, message: 'Code envoyé', phone: formattedPhone });

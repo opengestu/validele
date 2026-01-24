@@ -307,14 +307,35 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         setHasCheckedProfile(true);
       }
       // Nouvel utilisateur - envoyer OTP pour inscription
-      await sendOTP(formattedPhone);
-      toast({
-        title: "Code envoyé ! 📱",
-        description: "Vérifiez vos SMS pour valider votre numéro",
-      });
-      setStep('otp');
-      startResendCooldown();
-      setTimeout(() => otpRefs[0].current?.focus(), 100);
+      try {
+        await sendOTP(formattedPhone);
+        toast({
+          title: "Code envoyé ! 📱",
+          description: "Vérifiez vos SMS pour valider votre numéro",
+        });
+        setStep('otp');
+        startResendCooldown();
+        setTimeout(() => otpRefs[0].current?.focus(), 100);
+      } catch (err: unknown) {
+        type RespProfile = { id: string; full_name?: string; role?: string };
+        type ErrWithBody = { status?: number; body?: { code?: string; profile?: RespProfile } };
+        const e = err as ErrWithBody;
+        // Si le backend renvoie que le profil existe (protection serveur), basculer en mode login-pin
+        if (e?.body?.code === 'PROFILE_EXISTS' && e.body.profile) {
+          const p = e.body.profile;
+          setExistingProfile({ id: p.id, full_name: p.full_name || '', role: (p.role ?? 'buyer') as 'buyer' | 'vendor' | 'delivery', pin_hash: null });
+          setHasCheckedProfile(true);
+          setStep('login-pin');
+          toast({
+            title: `Bonjour ${p.full_name?.split(' ')[0] ?? ''} ! 👋`,
+            description: "Entrez votre code PIN pour vous connecter",
+          });
+          setLoading(false);
+          return;
+        }
+        // ré-throw pour traitement générique
+        throw err;
+      }
     } catch (error: unknown) {
       console.error('Erreur:', error);
       const errorMessage = toFrenchErrorMessage(error, 'Erreur lors de la vérification');
