@@ -477,6 +477,17 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       if (authData?.session && !authError) {
         // Connexion réussie via Supabase Auth
         console.log('Connexion réussie via Supabase Auth');
+        // Synchroniser le PIN localement (migrer vers pin_hash) pour les prochaines connexions
+        try {
+          await fetch('/auth/migrate-pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profileId: existingProfile.id, pin: enteredPin })
+          });
+        } catch (e) {
+          console.warn('Impossible de migrer le PIN côté serveur:', e);
+        }
+
         await refreshProfile();
        
         toast({
