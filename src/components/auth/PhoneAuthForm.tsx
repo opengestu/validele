@@ -44,6 +44,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     walletType: 'wave-senegal'
   });
   const [isNewUser, setIsNewUser] = useState(false);
+  // Ajouté : pour bloquer l'envoi OTP si profil existe
+  const [hasCheckedProfile, setHasCheckedProfile] = useState(false);
   const [isResetPin, setIsResetPin] = useState(false);
   const [existingProfile, setExistingProfile] = useState<{ id: string; full_name: string; role: string; pin_hash: string | null } | null>(null);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
@@ -85,9 +87,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   useEffect(() => {
     if (initialPhone) {
       setFormData(prev => ({ ...prev, phone: initialPhone }));
-      // afficher immédiatement l'UI PIN pour que l'utilisateur saisisse son code
-      setStep('login-pin');
-      // déclencher automatiquement l'envoi du code comme si l'utilisateur avait appuyé sur "Continuer"
+      // Laisse handleSendOTP décider du flow (OTP ou PIN)
       if (!autoStartedRef.current) {
         autoStartedRef.current = true;
         setTimeout(() => handleSendOTP(initialPhone), 120);
@@ -215,6 +215,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   };
   // Envoyer le code OTP (uniquement pour inscription)
   const handleSendOTP = async (phoneOverride?: string) => {
+    // Si profil déjà trouvé, ne pas envoyer d'OTP ni relancer la vérification
+    if (existingProfile) {
+      setStep('login-pin');
+      toast({
+        title: `Bonjour ${existingProfile.full_name.split(' ')[0]} ! 👋`,
+        description: "Entrez votre code PIN pour vous connecter",
+      });
+      return;
+    }
     const phoneToUse = phoneOverride ?? formData.phone;
     if (!phoneToUse) {
       toast({
@@ -245,54 +254,67 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         await supabase.auth.signOut();
       }
       // D'abord vérifier si ce numéro existe déjà dans la base
-      const { data: existingProfiles, error: searchError } = await supabase
-        .from('profiles')
-        .select('id, full_name, role')
-        .eq('phone', formattedPhone)
-        .limit(1);
-      if (searchError) {
-        console.error('Erreur recherche profil:', searchError);
-      }
-      console.log('Recherche profil pour:', formattedPhone, 'Résultat:', existingProfiles);
-      const existingUser = existingProfiles && existingProfiles.length > 0 ? existingProfiles[0] : null;
-      if (existingUser && existingUser.full_name) {
-        // Utilisateur existant - demander directement le code PIN sans envoyer d'OTP
-        let pinHash: string | null = null;
+      if (!hasCheckedProfile) {
+        const digitsOnly = formattedPhone.replace(/\D/g, '');
+        const last9 = digitsOnly.slice(-9);
+        console.log('Recherche profil: formattedPhone=', formattedPhone, 'last9=', last9);
+
+        // Rechercher en utilisant une correspondance tolérante sur les 9 derniers chiffres
+        let existingProfiles: Array<{ id: string; full_name: string; role: string }> | null = null;
         try {
-          const { data: pinData } = await supabase
+          const { data: profilesData, error: searchError } = await supabase
             .from('profiles')
-            .select('pin_hash')
-            .eq('id', existingUser.id)
-            .maybeSingle();
-          pinHash = (pinData as { pin_hash?: string | null })?.pin_hash || null;
-          console.log('PIN hash trouvé:', pinHash ? 'Oui' : 'Non');
-        } catch (e) {
-          console.log('Colonne pin_hash non disponible:', e);
+            .select('id, full_name, role')
+            .ilike('phone', `%${last9}%`)
+            .limit(1);
+          existingProfiles = (profilesData as Array<{ id: string; full_name: string; role: string }>) || null;
+          if (searchError) console.error('Erreur recherche profil:', searchError);
+        } catch (err) {
+          console.error('Erreur recherche profil (catch):', err);
         }
-        // Passer directement à l'étape login-pin pour tous les utilisateurs existants
-        setExistingProfile({
-          id: existingUser.id,
-          full_name: existingUser.full_name,
-          role: existingUser.role,
-          pin_hash: pinHash
-        });
-        setStep('login-pin');
-        toast({
-          title: `Bonjour ${existingUser.full_name.split(' ')[0]} ! 👋`,
-          description: "Entrez votre code PIN pour vous connecter",
-        });
-      } else {
-        // Nouvel utilisateur - envoyer OTP pour inscription
-        // Utiliser Direct7Networks pour envoyer l'OTP
-        await sendOTP(formattedPhone);
-        toast({
-          title: "Code envoyé ! 📱",
-          description: "Vérifiez vos SMS pour valider votre numéro",
-        });
-        setStep('otp');
-        startResendCooldown();
-        setTimeout(() => otpRefs[0].current?.focus(), 100);
+
+        if (existingProfiles && existingProfiles.length > 1) {
+          console.warn('Plusieurs profils correspondent aux 9 derniers chiffres:', existingProfiles.map(p => p.id));
+        }
+        const existingUser = existingProfiles && existingProfiles.length > 0 ? existingProfiles[0] : null;
+        if (existingUser && existingUser.full_name) {
+          let pinHash: string | null = null;
+          try {
+            const { data: pinData } = await supabase
+              .from('profiles')
+              .select('pin_hash')
+              .eq('id', existingUser.id)
+              .maybeSingle();
+            pinHash = (pinData as { pin_hash?: string | null })?.pin_hash || null;
+          } catch (e) {
+            console.log('Colonne pin_hash non disponible:', e);
+          }
+          setExistingProfile({
+            id: existingUser.id,
+            full_name: existingUser.full_name,
+            role: existingUser.role,
+            pin_hash: pinHash
+          });
+          setHasCheckedProfile(true);
+          setStep('login-pin');
+          toast({
+            title: `Bonjour ${existingUser.full_name.split(' ')[0]} ! 👋`,
+            description: "Entrez votre code PIN pour vous connecter",
+          });
+          setLoading(false);
+          return;
+        }
+        setHasCheckedProfile(true);
       }
+      // Nouvel utilisateur - envoyer OTP pour inscription
+      await sendOTP(formattedPhone);
+      toast({
+        title: "Code envoyé ! 📱",
+        description: "Vérifiez vos SMS pour valider votre numéro",
+      });
+      setStep('otp');
+      startResendCooldown();
+      setTimeout(() => otpRefs[0].current?.focus(), 100);
     } catch (error: unknown) {
       console.error('Erreur:', error);
       const errorMessage = toFrenchErrorMessage(error, 'Erreur lors de la vérification');
@@ -843,7 +865,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
   const renderNumericKeypad = () => {
     const canContinue = (() => {
-      if (step === 'phone') return phoneLen >= 9;
+      if (step === 'phone') return phoneLen >= 9 && !existingProfile;
       if (step === 'otp') return otpDigits.join('').length === 4;
       if (step === 'login-pin') return loginPinDigits.join('').length === 4;
       if (step === 'pin') return pinDigits.join('').length === 4;

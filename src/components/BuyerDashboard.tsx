@@ -1,10 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
-
-// API response types for buyer endpoints
-interface OrdersApiResponse { success: boolean; orders?: Order[]; error?: string; }
-interface TransactionRecord { id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string; }
-interface TransactionsApiResponse { success: boolean; transactions?: TransactionRecord[]; error?: string; }
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
@@ -134,42 +129,13 @@ const BuyerDashboard = () => {
     if (!user) return;
     setOrdersLoading(true);
     try {
-      // Get session token from Supabase client to call server endpoint
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token || null;
-      const res = await fetch(apiUrl('/api/orders/mine'), {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        }
-      });
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
+        .eq('buyer_id', user.id)
+        .order('created_at', { ascending: false });
 
-      // Defensive: ensure server returns JSON and handle 401 gracefully
-      const contentType = res.headers.get('content-type') || '';
-      let body: OrdersApiResponse | null = null;
-      if (contentType.includes('application/json')) {
-        try {
-          body = await res.json() as OrdersApiResponse;
-        } catch (e) {
-          console.error('[API] /api/orders/mine returned invalid JSON:', e);
-          throw new Error('Invalid server response');
-        }
-      } else {
-        const text = await res.text();
-        console.error('[API] /api/orders/mine non-JSON response:', text);
-        throw new Error('Invalid server response');
-      }
-
-      if (res.status === 401) {
-        toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
-        await signOut();
-        return;
-      }
-
-      if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch orders');
-      const data = (body.orders || []) as Order[];
-
+      if (error) throw error;
       // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
       const normalizedOrders = (data || [])
@@ -191,54 +157,41 @@ const BuyerDashboard = () => {
     } finally {
       setOrdersLoading(false);
     }
-  }, [user, toast, signOut]);
+  }, [user, toast]);
 
 
   const fetchTransactions = useCallback(async () => {
     if (!user) return;
 
     try {
-      // Get session token from Supabase client to call server endpoint
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token || null;
+      // Étape 1: récupérer les commandes de l'acheteur pour éviter un JOIN FK manquant
+      const { data: orderRows, error: ordersError } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('buyer_id', user.id);
 
-      const res = await fetch(apiUrl('/api/transactions/mine'), {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        }
-      });
+      if (ordersError) throw ordersError;
 
-      // Defensive parsing
-      const contentType = res.headers.get('content-type') || '';
-      let body: TransactionsApiResponse | null = null;
-      if (contentType.includes('application/json')) {
-        try {
-          body = await res.json() as TransactionsApiResponse;
-        } catch (e) {
-          console.error('[API] /api/transactions/mine returned invalid JSON:', e);
-          throw new Error('Invalid server response');
-        }
-      } else {
-        const text = await res.text();
-        console.error('[API] /api/transactions/mine non-JSON response:', text);
-        throw new Error('Invalid server response');
-      }
-
-      if (res.status === 401) {
-        toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
-        await signOut();
+      const orderIds = (orderRows || []).map((row) => row.id);
+      if (orderIds.length === 0) {
+        setTransactions([]);
         return;
       }
 
-      if (!res.ok || !body || !body.success) throw new Error(body?.error || 'Failed to fetch transactions');
+      // Étape 2: récupérer les transactions liées aux commandes de l'acheteur
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('payment_transactions')
+        .select('*')
+        .in('order_id', orderIds)
+        .order('created_at', { ascending: false });
 
-      setTransactions((body.transactions || []) as TransactionRecord[]);
+      if (error) throw error;
+      setTransactions((data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>);
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user, toast, signOut]);
+  }, [user]);
 
   useEffect(() => {
     fetchOrders();
@@ -1327,9 +1280,10 @@ const BuyerDashboard = () => {
                   return (
                     <div className="space-y-3">
                       {displayedOrders.map((order) => {
-                        // Trouver les transactions associées à cette commande (cacher les payouts côté client)
+                        // Trouver les transactions associées à cette commande
                         const orderTransactions = transactions.filter(t => t.order_id === order.id);
                         const paymentTransaction = orderTransactions.find(t => t.transaction_type !== 'payout');
+                        const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
                         const isExpanded = expandedOrderIds.has(order.id);
                         const toggleDetails = () => {
                           setExpandedOrderIds((prev) => {
@@ -1430,7 +1384,30 @@ const BuyerDashboard = () => {
 
 
 
-
+                            {/* Affichage du statut de paiement vendeur(se) après livraison */}
+                            {order.status === 'delivered' && payoutTransaction && (
+                              <div className="rounded-md bg-purple-50 p-2">
+                                <p className="text-xs font-medium text-purple-700">
+                                  Paiement vendeur(se):
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (payoutTransaction.status === 'SUCCESSFUL'
+                                        ? 'bg-green-100 text-green-700'
+                                        : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-red-100 text-red-700')
+                                    }
+                                  >
+                                    {payoutTransaction.status === 'SUCCESSFUL'
+                                      ? '✓ Effectué'
+                                      : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                        ? '⏳ En cours'
+                                        : '✗ Échoué'}
+                                  </span>
+                                </p>
+                              </div>
+                            )}
 
                             {/* Affichage du remboursement si existant */}
                             {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
