@@ -1,7 +1,7 @@
-
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { apiUrl } from '@/lib/api';
 
 const SUPABASE_SESSION_KEY = 'supabase_persisted_session';
 const PROFILE_CACHE_KEY = 'auth_cached_profile_v1';
@@ -21,6 +21,8 @@ interface UserProfile {
   role: 'buyer' | 'vendor' | 'delivery';
   company_name?: string | null;
   vehicle_info?: string | null;
+  walletType?: string | null; // Always present if available in DB
+  wallet_type?: string | null; // For compatibility with DB field naming
 }
 
 interface AuthContextType {
@@ -147,19 +149,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Fonction pour récupérer le profil utilisateur (sans création automatique)
     const fetchUserProfile = async (userId: string, userEmail: string) => {
       try {
+        console.log('[DEBUG] fetchUserProfile start', { userId });
         // Essayer de récupérer le profil existant
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .maybeSingle();
+        console.log('[DEBUG] fetchUserProfile result', { profile, error });
         
         if (error && error.code !== 'PGRST116') {
-          console.error('Erreur lors du chargement du profil:', error);
+          // Log détaillé de l'erreur
+          const extractErrorMeta = (err: unknown) => {
+            if (!err || typeof err !== 'object') return { details: undefined as string | undefined, hint: undefined as string | undefined };
+            const e = err as Record<string, unknown>;
+            return {
+              details: typeof e['details'] === 'string' ? (e['details'] as string) : undefined,
+              hint: typeof e['hint'] === 'string' ? (e['hint'] as string) : undefined,
+            };
+          };
+          const { details, hint } = extractErrorMeta(error);
+          console.error('[DEBUG] Erreur lors du chargement du profil:', {
+            message: error.message,
+            details,
+            hint,
+            code: error.code
+          });
+
           // Hors ligne / problème réseau: tenter de servir le profil depuis le cache
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
             if (cached && cached.id === userId) {
+              console.log('[DEBUG] fetchUserProfile returning cached profile due to network/offline', cached);
               return cached;
             }
           }
@@ -168,32 +189,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         
         if (profile && profile.full_name && profile.full_name.trim() !== '') {
           // Le profil existe et est complet, le retourner
-          const completeProfile = {
+          const profObj = profile as Record<string, unknown>;
+          const completeProfile: UserProfile = {
             ...profile,
             email: userEmail,
-            role: profile.role as 'buyer' | 'vendor' | 'delivery'
+            role: profile.role as 'buyer' | 'vendor' | 'delivery',
+            walletType: typeof profObj.walletType === 'string' ? profObj.walletType as string : (typeof profObj.wallet_type === 'string' ? profObj.wallet_type as string : null),
+            wallet_type: typeof profObj.wallet_type === 'string' ? profObj.wallet_type as string : (typeof profObj.walletType === 'string' ? profObj.walletType as string : null)
           };
           writeCachedProfile(completeProfile);
+          console.log('[DEBUG] fetchUserProfile completeProfile', completeProfile);
           return completeProfile;
         } else {
           // Profil inexistant ou incomplet - ne pas créer automatiquement
           // L'utilisateur doit compléter son inscription
-          console.log('Profil inexistant ou incomplet pour:', userId);
+          console.log('[DEBUG] Profil inexistant ou incomplet pour:', userId);
           // Hors ligne: si on a déjà un profil complet en cache, l'utiliser
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
             if (cached && cached.id === userId && cached.full_name && cached.full_name.trim() !== '') {
+              console.log('[DEBUG] fetchUserProfile returning cached profile (offline)', cached);
               return cached;
             }
           }
           return null;
         }
       } catch (error) {
-        console.error('Erreur lors de la récupération du profil:', error);
+        console.error('[DEBUG] Erreur lors de la récupération du profil:', error);
         // Hors ligne / problème réseau: tenter le cache
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
           const cached = readCachedProfile();
           if (cached?.id === userId) {
+            console.log('[DEBUG] fetchUserProfile returning cached profile in catch', cached);
             return cached;
           }
         }
@@ -259,50 +286,50 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           try {
             const smsSession = JSON.parse(smsSessionStr);
 
-            // Session SMS - charger le profil depuis Supabase (pas d'expiration automatique)
-            const { data: profile, error: profileError } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', smsSession.profileId)
-              .single();
+            // Session SMS - charger le profil via l'endpoint admin pour éviter les RLS
+            try {
+              const resp = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(smsSession.phone)}`));
+              if (resp.ok) {
+                const json = await resp.json().catch(() => null);
+                if (json && json.exists && json.profile) {
+                  const p = json.profile as { id: string; full_name?: string; role?: string; phone?: string };
+                  if (mounted) {
+                    authModeRef.current = 'sms';
+                    setUser({
+                      id: p.id,
+                      app_metadata: {},
+                      user_metadata: {},
+                      aud: 'authenticated',
+                      created_at: new Date().toISOString()
+                    } as User);
 
-            if (profile && !profileError) {
-              if (mounted) {
-                authModeRef.current = 'sms';
-                // Créer un objet User virtuel pour les utilisateurs SMS
-                setUser({
-                  id: profile.id,
-                  app_metadata: {},
-                  user_metadata: {},
-                  aud: 'authenticated',
-                  created_at: profile.created_at
-                } as User);
+                    const profileObj: UserProfile = {
+                      id: p.id,
+                      email: getEmailFromRow(null) || `${smsSession.phone}@sms.validele.app`,
+                      full_name: p.full_name || '',
+                      phone: p.phone || smsSession.phone,
+                      role: (p.role ?? 'buyer') as 'buyer' | 'vendor' | 'delivery',
+                      company_name: null,
+                      vehicle_info: null,
+                      walletType: typeof (p as Record<string, unknown>).walletType === 'string' ? (p as Record<string, unknown>).walletType as string : (typeof (p as Record<string, unknown>).wallet_type === 'string' ? (p as Record<string, unknown>).wallet_type as string : null),
+                      wallet_type: typeof (p as Record<string, unknown>).wallet_type === 'string' ? (p as Record<string, unknown>).wallet_type as string : (typeof (p as Record<string, unknown>).walletType === 'string' ? (p as Record<string, unknown>).walletType as string : null)
+                    };
 
-                setUserProfile({
-                  id: profile.id,
-                  email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
-                  full_name: profile.full_name,
-                  phone: profile.phone,
-                  role: profile.role as 'buyer' | 'vendor' | 'delivery',
-                  company_name: profile.company_name,
-                  vehicle_info: profile.vehicle_info
-                });
-
-                writeCachedProfile({
-                  id: profile.id,
-                  email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
-                  full_name: profile.full_name,
-                  phone: profile.phone,
-                  role: profile.role as 'buyer' | 'vendor' | 'delivery',
-                  company_name: profile.company_name,
-                  vehicle_info: profile.vehicle_info
-                });
-
-                setLoading(false);
-                return; // Session SMS trouvée, pas besoin de vérifier Supabase Auth
+                    setUserProfile(profileObj);
+                    writeCachedProfile(profileObj);
+                    setLoading(false);
+                    return; // Session SMS trouvée
+                  }
+                } else {
+                  // Profil introuvable côté serveur: nettoyer la session
+                  localStorage.removeItem('sms_auth_session');
+                }
+              } else {
+                console.error('Erreur lors de la récupération du profil SMS via backend:', resp.status);
               }
-            } else {
-              // Hors ligne: essayer avec le cache au lieu de "déconnecter"
+            } catch (err) {
+              console.error('Erreur récupération profil SMS via backend:', err);
+              // En hors-ligne, utiliser le cache si disponible
               if (typeof navigator !== 'undefined' && !navigator.onLine) {
                 const cached = readCachedProfile();
                 if (cached && cached.id === smsSession.profileId) {
@@ -321,7 +348,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                   }
                 }
               }
-              // Profil introuvable, nettoyer la session
+
+              // Nettoyer la session si on ne peut pas récupérer le profil
               localStorage.removeItem('sms_auth_session');
             }
           } catch (parseError) {
@@ -335,6 +363,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         
         if (error) {
           console.error('Erreur lors de la récupération de la session:', error);
+        }
+
+        // Ensure the session is persisted to our local storage key so subsequent
+        // SDK/REST calls (and page reloads) have the tokens available.
+        try {
+          if (session && !localStorage.getItem(SUPABASE_SESSION_KEY)) {
+            persistSupabaseSession(session);
+            console.log('[DEBUG] persisted session to localStorage (bootstrap)');
+          }
+        } catch (e) {
+          console.warn('[DEBUG] failed to persist session during bootstrap', e);
+        }
+
+        // Defensive: ensure the Supabase client internal state is initialized
+        // with the session tokens. Some environments may return a session
+        // from the server but the client hasn't fully wired the tokens into
+        // its internal auth storage; calling setSession is idempotent and
+        // ensures subsequent getUser() and REST calls have a token.
+        try {
+          if (session && session.access_token && session.refresh_token) {
+            await supabase.auth.setSession({
+              access_token: session.access_token,
+              refresh_token: session.refresh_token,
+            });
+            console.log('[DEBUG] supabase.auth.setSession called during bootstrap');
+          }
+        } catch (e) {
+          console.warn('[DEBUG] supabase.auth.setSession failed during bootstrap', e);
         }
 
         // Si aucune session n'est retournée, essayer de restaurer la dernière session valide (<24h)
@@ -473,10 +529,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           .maybeSingle();
 
         if (!error && profile && profile.full_name) {
+          const profObj = profile as Record<string, unknown>;
+          let walletType: string | null = null;
+          let wallet_type: string | null = null;
+          if (typeof profObj.walletType === 'string') walletType = profObj.walletType;
+          else if (typeof profObj.wallet_type === 'string') walletType = profObj.wallet_type;
+          if (typeof profObj.wallet_type === 'string') wallet_type = profObj.wallet_type;
+          else if (typeof profObj.walletType === 'string') wallet_type = profObj.walletType;
           const refreshed: UserProfile = {
             ...profile,
             email: getEmailFromRow(profile) || `${smsSession.phone}@sms.validele.app`,
-            role: profile.role as 'buyer' | 'vendor' | 'delivery'
+            role: profile.role as 'buyer' | 'vendor' | 'delivery',
+            walletType,
+            wallet_type
           };
           setUserProfile(refreshed);
           localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(refreshed));
@@ -493,10 +558,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           .maybeSingle();
         
         if (!error && profile && profile.full_name) {
+          const profObj = profile as Record<string, unknown>;
+          let walletType: string | null = null;
+          let wallet_type: string | null = null;
+          if (typeof profObj.walletType === 'string') walletType = profObj.walletType;
+          else if (typeof profObj.wallet_type === 'string') walletType = profObj.wallet_type;
+          if (typeof profObj.wallet_type === 'string') wallet_type = profObj.wallet_type;
+          else if (typeof profObj.walletType === 'string') wallet_type = profObj.walletType;
           const refreshed: UserProfile = {
             ...profile,
             email: currentUser.email || '',
-            role: profile.role as 'buyer' | 'vendor' | 'delivery'
+            role: profile.role as 'buyer' | 'vendor' | 'delivery',
+            walletType,
+            wallet_type
           };
           setUserProfile(refreshed);
           localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(refreshed));

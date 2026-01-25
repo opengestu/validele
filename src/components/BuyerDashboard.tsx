@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Package, Clock, User, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Capacitor } from '@capacitor/core';
@@ -23,8 +23,11 @@ import { API_BASE, apiUrl } from '@/lib/api';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import.meta.env;
-import waveLogo from '@/assets/wave.png';
-import orangeMoneyLogo from '@/assets/orange-money.png';
+
+// Temporary placeholders for payment logos — replace with real imports if available
+const waveLogo = '/images/wave.png';
+const orangeMoneyLogo = '/images/orange_money.png';
+
 
 // Fonction utilitaire pour fetch avec timeout (générique TypeScript)
 async function fetchJsonWithTimeout<T = unknown>(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; data: T }> {
@@ -68,7 +71,7 @@ interface CreateOrderResponse {
 
 const BuyerDashboard = () => {
   const { toast } = useToast();
-  const { user, signOut } = useAuth();
+  const { user, signOut, userProfile: authUserProfile } = useAuth();
   const navigate = useNavigate();
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
@@ -81,7 +84,7 @@ const BuyerDashboard = () => {
   const [userProfile, setUserProfile] = useState<{ phone: string; full_name?: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editProfile, setEditProfile] = useState<{ full_name?: string; phone?: string }>({});
+  const [editProfile, setEditProfile] = useState<{ full_name?: string; phone?: string; walletType?: string }>({});
   const [savingProfile, setSavingProfile] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrModalValue, setQrModalValue] = useState('');
@@ -249,21 +252,131 @@ const BuyerDashboard = () => {
   }, []);
 
   useEffect(() => {
-    const fetchProfile = async () => {
+    const fetchOrCreateProfile = async () => {
+      // If the AuthProvider already loaded a complete profile from Supabase,
+      // prefer that authoritative source for UI display and editing.
+      if (authUserProfile && authUserProfile.id === user?.id) {
+        setUserProfile({ full_name: authUserProfile.full_name || '', phone: authUserProfile.phone || '' });
+        setEditProfile({ full_name: authUserProfile.full_name || '', phone: authUserProfile.phone || '' });
+        return;
+      }
+
       if (user?.id) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('full_name, phone')
-          .eq('id', user.id)
-          .single();
-        if (!error) setUserProfile({
-          full_name: data?.full_name || '',
-          phone: data?.phone || ''
-        });
+        try {
+      // Immediate: use cached profile if available to populate UI quickly
+      // NOTE: do not use cached profile for initial display. Keep cache only
+      // as a persistence layer but prefer authoritative data from Supabase.
+
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('full_name, phone, wallet_type')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          console.log('[DEBUG] Buyer select profiles', { data, error });
+
+          const extractString = (obj: unknown, key: string) => {
+            if (!obj || typeof obj !== 'object') return '';
+            const v = (obj as Record<string, unknown>)[key];
+            return typeof v === 'string' ? v : '';
+          };
+
+          let profileData: { full_name?: string; phone?: string; walletType?: string } | null = null;
+
+          if (!error && data) {
+            profileData = {
+              full_name: extractString(data, 'full_name'),
+              phone: extractString(data, 'phone'),
+              walletType: extractString(data, 'wallet_type')
+            };
+          }
+
+          if (!profileData) {
+            // Try to insert (may fail if no token). If insert fails, fallback to cached/sms/user metadata
+            try {
+              const { error: insertError, data: insertData } = await supabase
+                .from('profiles')
+                .insert({ id: user.id, full_name: '', phone: '' });
+              console.log('[DEBUG] Buyer insert profiles', { insertError, insertData });
+              if (!insertError) {
+                profileData = { full_name: '', phone: '' };
+              }
+            } catch (insertEx) {
+              console.warn('[DEBUG] Buyer profile insert exception', insertEx);
+            }
+          }
+
+          if (!profileData) {
+            // Build fallback from cache / sms / metadata
+              try {
+              // Do NOT read `auth_cached_profile_v1` here for display. Prefer
+              // runtime sources (sms_auth_session or user metadata) when DB row
+              // is missing. The cache remains written elsewhere but is not used
+              // as authoritative UI source.
+              // Start with a concrete fallback object to avoid unions that
+              // confuse TypeScript control-flow analysis.
+              const fallback: { full_name?: string; phone?: string; walletType?: string } = { full_name: '', phone: '', walletType: '' };
+
+              // Try SMS session first if we don't already have a phone
+              if (!fallback.phone) {
+                const smsRaw = localStorage.getItem('sms_auth_session');
+                if (smsRaw) {
+                  try {
+                    const parsed = JSON.parse(smsRaw) as unknown;
+                    if (parsed && typeof parsed === 'object') {
+                      const smsObj = parsed as Record<string, unknown>;
+                      const smsName = typeof smsObj.name === 'string' ? smsObj.name as string : '';
+                      const smsPhone = typeof smsObj.phone === 'string' ? smsObj.phone as string : '';
+                      if (smsName) fallback.full_name = smsName;
+                      if (smsPhone) fallback.phone = smsPhone;
+                    }
+                  } catch (e) {
+                    console.warn('[DEBUG] failed to parse sms_auth_session', e);
+                  }
+                }
+              }
+
+              // Fall back to user metadata when SMS didn't provide enough
+              if (!fallback.full_name && !fallback.phone) {
+                const userMeta = user.user_metadata as Record<string, unknown> | undefined;
+                const maybePhone = typeof userMeta?.phone === 'string' ? (userMeta.phone as string) : user.email || '';
+                const maybeFull = typeof userMeta?.full_name === 'string' ? (userMeta.full_name as string) : '';
+                const maybeWallet = typeof (userMeta && (userMeta as Record<string, unknown>)['wallet_type']) === 'string' ? (userMeta as Record<string, unknown>)['wallet_type'] as string : '';
+                if (maybeFull) fallback.full_name = maybeFull;
+                if (maybePhone) fallback.phone = maybePhone;
+                if (maybeWallet) fallback.walletType = maybeWallet;
+              }
+
+              if (!fallback.full_name || String(fallback.full_name).trim() === '') {
+                const p = String(fallback.phone || '');
+                const last4 = p.replace(/[^0-9]/g, '').slice(-4);
+                fallback.full_name = last4 ? `Client ${last4}` : 'Client';
+              }
+
+              profileData = { full_name: fallback.full_name || '', phone: fallback.phone || '', walletType: fallback.walletType || '' };
+
+              try {
+                localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: profileData.full_name, phone: profileData.phone, walletType: profileData.walletType, role: 'buyer' }));
+                console.log('[DEBUG] Buyer cached fallback profile to localStorage');
+              } catch (e) {
+                console.warn('[DEBUG] failed to cache fallback profile', e);
+              }
+            } catch (e) {
+              console.warn('[DEBUG] building fallback profile failed', e);
+            }
+          }
+
+          if (profileData) {
+            setUserProfile({ full_name: profileData.full_name || '', phone: profileData.phone || '' });
+            setEditProfile({ full_name: profileData.full_name || '', phone: profileData.phone || '' });
+          }
+        } catch (e) {
+          console.error('[DEBUG] fetchOrCreateProfile failed', e);
+        }
       }
     };
-    fetchProfile();
-  }, [user]);
+    fetchOrCreateProfile();
+  }, [user, authUserProfile]);
 
   useEffect(() => {
     if (userProfile && user) {
@@ -427,8 +540,27 @@ const BuyerDashboard = () => {
       setDrawerOpen(false);
       setIsEditing(false);
       // Recharger le profil
-      const { data } = await supabase.from('profiles').select('full_name, phone').eq('id', user.id).single();
-      setUserProfile(data ? { phone: data.phone ?? '', full_name: data.full_name ?? undefined } : null);
+      const { data } = await supabase.from('profiles').select('full_name, phone, wallet_type').eq('id', user.id).maybeSingle();
+      const extractString = (obj: unknown, key: string) => {
+        if (!obj || typeof obj !== 'object') return '';
+        const v = (obj as Record<string, unknown>)[key];
+        return typeof v === 'string' ? v : '';
+      };
+      const full_name = data ? extractString(data, 'full_name') || '' : editProfile.full_name;
+      const phone = data ? extractString(data, 'phone') || '' : editProfile.phone;
+      const walletType = data ? extractString(data, 'wallet_type') || '' : '';
+      setUserProfile({ phone: phone || '', full_name: full_name || '' });
+      // Update cache
+      try {
+        const cacheRaw = localStorage.getItem('auth_cached_profile_v1');
+        const cacheObj = cacheRaw ? JSON.parse(cacheRaw) : { id: user.id, email: user.email || '', full_name, phone, role: 'buyer' };
+        cacheObj.full_name = full_name || cacheObj.full_name;
+        cacheObj.phone = phone || cacheObj.phone;
+        if (walletType) cacheObj.walletType = walletType;
+        localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+      } catch (e) {
+        console.warn('[DEBUG] failed to update cached profile after save', e);
+      }
     } else {
       toast({ title: 'Erreur', description: profileError?.message || 'Erreur inconnue', variant: 'destructive' });
     }
@@ -1246,7 +1378,7 @@ const BuyerDashboard = () => {
             )}
           </div>
 
-          {/* Colonne de droite - Commandes récentes */}
+          {/* Colonne de droite - Profil & Commandes */}
           <div className="space-y-6">
             <Card>
               <CardHeader>

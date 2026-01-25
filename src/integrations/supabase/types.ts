@@ -170,6 +170,7 @@ export type Database = {
           role: string
           updated_at: string
           vehicle_info: string | null
+          wallet_type: string | null
         }
         Insert: {
           company_name?: string | null
@@ -181,6 +182,7 @@ export type Database = {
           role?: string
           updated_at?: string
           vehicle_info?: string | null
+          wallet_type?: string | null
         }
         Update: {
           company_name?: string | null
@@ -192,6 +194,7 @@ export type Database = {
           role?: string
           updated_at?: string
           vehicle_info?: string | null
+          wallet_type?: string | null
         }
         Relationships: []
       }
@@ -227,7 +230,7 @@ export type Tables<
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

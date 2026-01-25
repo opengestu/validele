@@ -6,8 +6,8 @@ import type { Database } from './types';
 // Ensure you set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in your `.env`.
 // (We also accept the legacy name `VITE_SUPABASE_KEY` as a fallback.)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://fmhhdoqwslckisiofovx.supabase.co";
-const SUPABASE_ANON_KEY =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+const SUPABASE_ANON_KEY = 
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 
   import.meta.env.VITE_SUPABASE_KEY ||
   "";
 
@@ -22,11 +22,36 @@ if (!SUPABASE_ANON_KEY) {
   console.warn(msg);
 }
 
-// INSPECT: supabase export
-export const supabase: SupabaseClient<Database> = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    storage: typeof window !== 'undefined' ? localStorage : undefined,
-    persistSession: true,
-    autoRefreshToken: true,
+// INSPECT: supabase export (singleton to avoid multiple GoTrueClient instances)
+
+declare global {
+  interface Window {
+    __SUPABASE_CLIENT__?: SupabaseClient<Database>;
+    SUPABASE_ANON_KEY?: string;
   }
-});
+}
+
+const _win = (typeof window !== 'undefined') ? (window as unknown as Window & { __SUPABASE_CLIENT__?: SupabaseClient<Database> }) : undefined;
+
+export const supabase: SupabaseClient<Database> = _win && _win.__SUPABASE_CLIENT__
+  ? _win.__SUPABASE_CLIENT__ as SupabaseClient<Database>
+  : createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        storage: typeof window !== 'undefined' ? localStorage : undefined,
+        persistSession: true,
+        autoRefreshToken: true,
+      }
+    });
+
+// Debug helpers: expose supabase to window for interactive debugging in dev
+if (typeof window !== 'undefined') {
+  if (!_win?.__SUPABASE_CLIENT__) {
+    _win!.__SUPABASE_CLIENT__ = supabase;
+    _win!.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
+  } else {
+    console.warn('supabase already exposed on window');
+  }
+}
+
+// Ensure this file is treated as a module for global augmentation
+export {};

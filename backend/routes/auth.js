@@ -43,7 +43,7 @@ router.get('/users/exists', async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('profiles')
-      .select('id, full_name, role, pin_hash, phone')
+      .select('id, full_name, role, pin_hash, phone, wallet_type, company_name, vehicle_info, created_at, updated_at, push_token, address')
       .ilike('phone', `%${last9}%`)
       .limit(1);
 
@@ -51,7 +51,23 @@ router.get('/users/exists', async (req, res) => {
 
     if (Array.isArray(data) && data.length > 0) {
       const p = data[0];
-      return res.json({ exists: true, profile: { id: p.id, full_name: p.full_name, role: p.role, hasPin: !!p.pin_hash, phone: p.phone } });
+      return res.json({
+        exists: true,
+        profile: {
+          id: p.id,
+          full_name: p.full_name,
+          role: p.role,
+          hasPin: !!p.pin_hash,
+          phone: p.phone,
+          wallet_type: p.wallet_type,
+          company_name: p.company_name,
+          vehicle_info: p.vehicle_info,
+          created_at: p.created_at,
+          updated_at: p.updated_at,
+          push_token: p.push_token,
+          address: p.address
+        }
+      });
     }
 
     return res.json({ exists: false });
@@ -86,21 +102,29 @@ router.post('/login-pin', async (req, res) => {
       .ilike('phone', `%${last9}%`)
       .limit(1);
 
-    if (error) return res.status(500).json({ error: error.message || 'Database error' });
-    if (!Array.isArray(data) || data.length === 0) return res.status(401).json({ error: 'User not found' });
+    if (error) {
+      console.error('[LOGIN-PIN] DB error:', error);
+      return res.status(500).json({ error: error.message || 'Database error' });
+    }
+    if (!Array.isArray(data) || data.length === 0) {
+      console.warn('[LOGIN-PIN] User not found for phone:', phone, 'last9:', last9);
+      return res.status(401).json({ error: 'User not found' });
+    }
 
     const user = data[0];
     const pinHash = user.pin_hash;
-    if (!pinHash) return res.status(401).json({ error: 'PIN not set for this user' });
-
+    console.log('[LOGIN-PIN] PIN reçu:', pin);
+    console.log('[LOGIN-PIN] PIN hash stocké:', pinHash);
     let verified = false;
     try {
       // If pinHash looks like a bcrypt hash, use bcrypt.compare
       if (/^\$2[aby]\$/.test(String(pinHash))) {
         verified = await bcrypt.compare(String(pin), String(pinHash));
+        console.log('[LOGIN-PIN] Résultat bcrypt.compare:', verified);
       } else {
         // Fallback to plain equality for legacy plaintext storage
         verified = String(pin) === String(pinHash);
+        console.log('[LOGIN-PIN] Résultat égalité simple:', verified);
         // If verified and stored as plain, migrate to bcrypt hash
         if (verified) {
           try {
@@ -113,10 +137,13 @@ router.post('/login-pin', async (req, res) => {
         }
       }
     } catch (verErr) {
-      console.error('PIN verification error:', verErr);
+      console.error('[LOGIN-PIN] PIN verification error:', verErr);
     }
 
-    if (!verified) return res.status(401).json({ error: 'Invalid PIN' });
+    if (!verified) {
+      console.warn('[LOGIN-PIN] PIN incorrect. PIN reçu:', pin, '| PIN hash stocké:', pinHash);
+      return res.status(401).json({ error: 'Invalid PIN' });
+    }
 
     // Issue JWT if configured
     const jwtSecret = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
@@ -127,7 +154,7 @@ router.post('/login-pin', async (req, res) => {
 
     return res.json({ success: true });
   } catch (e) {
-    console.error('Error during PIN login:', e);
+    console.error('[LOGIN-PIN] Error during PIN login:', e);
     return res.status(500).json({ error: 'Internal error' });
   }
 });

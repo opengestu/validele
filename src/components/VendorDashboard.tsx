@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Mapping des statuts en français
 const STATUS_LABELS_FR: Record<string, string> = {
   paid: 'Payée',
@@ -12,11 +13,11 @@ const STATUS_LABELS_FR: Record<string, string> = {
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@/components/ui/spinner';
-import { 
-  Package, 
-  Plus, 
-  BarChart3, 
-  ShoppingCart, 
+import {
+  Package,
+  Plus,
+  BarChart3,
+  ShoppingCart,
   Eye,
   Edit,
   Trash2,
@@ -36,39 +37,34 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { 
-  StatsCard, 
+import {
+  StatsCard,
   StatusBadge
 } from '@/components/dashboard';
 import validelLogo from '@/assets/validel-logo.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon } from './CustomIcons';
-
 type ProfileRow = {
   full_name: string | null;
   phone: string | null;
   walletType?: string | null;
 };
-
 const VendorDashboard = () => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, userProfile: authUserProfile } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  
   // States
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [loading, setLoading] = useState(true);
-  
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callTarget, setCallTarget] = useState<{ phone: string; name?: string } | null>(null);
-  
   // Form states
   const [newProduct, setNewProduct] = useState({
     name: '',
@@ -78,16 +74,15 @@ const VendorDashboard = () => {
   });
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
-  
   // Loading states
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  
   // Profile states
   const [userProfile, setUserProfile] = useState<{
     full_name?: string;
     phone?: string;
+    walletType?: string;
   } | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfile, setEditProfile] = useState({
@@ -96,80 +91,129 @@ const VendorDashboard = () => {
     walletType: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
-
+  // Map DB or cached wallet types to readable labels
+  const walletTypeLabel = (type?: string | null) => {
+    if (!type || type.trim() === '') return 'Non renseigné';
+    const t = String(type).toLowerCase();
+    if (t.includes('wave')) return 'Wave Sénégal';
+    if (t.includes('orange')) return 'Orange Money';
+    if (t === 'wave-senegal') return 'Wave Sénégal'; // Cas spécifique
+    return type; // Affiche raw si inconnu, pour debug
+  };
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
-
   const fetchProfile = useCallback(async () => {
     if (!user) return;
-
     const walletColumnMissing = (err: { message?: string } | null) =>
       Boolean(err?.message && (err.message.includes("column") && err.message.includes("wallet")));
-
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('full_name, phone, wallet_type')
         .eq('id', user.id)
-        .single<ProfileRow>();
-
+        .maybeSingle<ProfileRow>();
+      console.log('[DEBUG] fetchProfile raw result', { data, error });
       let profileData: ProfileRow | null = null;
-      let queryError = error ?? null;
-
-      if (walletColumnMissing(error)) {
-        const fallback = await supabase
-          .from('profiles')
-          .select('full_name, phone')
-          .eq('id', user.id)
-          .single<Pick<ProfileRow, 'full_name' | 'phone'>>();
-
-        queryError = fallback.error ?? null;
-        if (!fallback.error && fallback.data) {
-          profileData = {
-            full_name: fallback.data.full_name ?? null,
-            phone: fallback.data.phone ?? null,
-            walletType: null
-          };
-        }
-      } else if (!error && data) {
+      if (!error && data) {
         profileData = {
-          full_name: data.full_name ?? null,
-          phone: data.phone ?? null,
-          walletType: (data as unknown as { wallet_type?: string }).wallet_type ?? null
+          full_name: (data as any).full_name ?? null,
+          phone: (data as any).phone ?? null,
+          walletType: (data as any).wallet_type ?? null // Assure que wallet_type est capturé
         };
       }
-
-      if (queryError && !walletColumnMissing(queryError)) {
-        throw queryError;
+      if (error && !walletColumnMissing(error)) {
+        throw error;
       }
-
       if (profileData) {
         const fullName = profileData.full_name ?? '';
         const phone = profileData.phone ?? '';
-        const walletType = profileData.walletType ?? '';
-
-        setUserProfile({ full_name: fullName, phone });
-        setEditProfile({
-          full_name: fullName,
-          phone,
-          walletType
-        });
+        let walletType = profileData.walletType ?? '';
+        // Si vide, fallback à cache sans overwrite null
+        if (!walletType) {
+          try {
+            const raw = localStorage.getItem('auth_cached_profile_v1');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              walletType = parsed.walletType || '';
+            }
+          } catch (e) {
+            console.warn(e); // intentional log
+          }
+        }
+        console.log('[DEBUG] fetchProfile normalized', { fullName, phone, walletType });
+        setUserProfile({ full_name: fullName, phone, walletType });
+        setEditProfile(prev => ({
+          ...prev,
+          full_name: fullName || prev.full_name,
+          phone: phone || prev.phone,
+          walletType: walletType || prev.walletType
+        }));
+        // Cache avec valeur non vide
+        try {
+          localStorage.setItem('auth_cached_profile_v1', JSON.stringify({
+            id: user.id,
+            email: user.email || '',
+            full_name: fullName,
+            phone,
+            walletType: walletType || editProfile.walletType || '', // Persiste la précédente si vide
+            role: 'vendor'
+          }));
+          console.log('[DEBUG] cached profile (with walletType) to localStorage');
+        } catch (e) {
+          console.warn('[DEBUG] failed to cache profile', e);
+        }
+      } else {
+        console.log('[DEBUG] fetchProfile: no profile row returned');
+        // Fallback: try finding the profile by phone or email if available
+        try {
+          let fallbackRes: any = null;
+          if (user?.email) {
+            console.log('[DEBUG] fetchProfile: trying fallback search by email', user.email);
+            fallbackRes = await supabase
+              .from('profiles')
+              .select('full_name, phone, wallet_type')
+              .eq('email', user.email)
+              .maybeSingle();
+          }
+          if ((!fallbackRes || !fallbackRes.data) && user?.phone) {
+            console.log('[DEBUG] fetchProfile: trying fallback search by phone', user.phone);
+            fallbackRes = await supabase
+              .from('profiles')
+              .select('full_name, phone, wallet_type')
+              .eq('phone', user.phone)
+              .maybeSingle();
+          }
+          console.log('[DEBUG] fetchProfile fallback result', fallbackRes);
+          if (fallbackRes && !fallbackRes.error && fallbackRes.data) {
+            const d = fallbackRes.data as any;
+            const fullName = d.full_name ?? '';
+            const phone = d.phone ?? '';
+            const walletType = d.wallet_type ?? '';
+            setUserProfile({ full_name: fullName, phone, walletType });
+            setEditProfile({ full_name: fullName, phone, walletType });
+            try {
+              localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: fullName, phone, walletType, role: 'vendor' }));
+            } catch (e) {
+              // ignore
+            }
+          }
+        } catch (e) {
+          console.warn('[DEBUG] fetchProfile fallback failed', e);
+        }
       }
     } catch (error) {
-      // Profile might not exist yet, that's ok
+      console.error('[DEBUG] fetchProfile error', error);
     }
-  }, [user]);
-
+  }, [user, editProfile.walletType]);
   const fetchProducts = useCallback(async () => {
     if (!user) return;
-    
+  
     try {
       const { data, error } = await supabase
         .from('products')
         .select('*')
         .eq('vendor_id', user.id)
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       // Convertir null en undefined pour compatibilité avec le type Product
       const mappedData = (data || []).map(p => ({
@@ -189,10 +233,9 @@ const VendorDashboard = () => {
       });
     }
   }, [user, toast]);
-
   const fetchOrders = useCallback(async () => {
     if (!user) return;
-    
+  
     try {
       const { data, error } = await supabase
         .from('orders')
@@ -205,7 +248,6 @@ const VendorDashboard = () => {
         .eq('vendor_id', user.id)
         .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
@@ -230,13 +272,12 @@ const VendorDashboard = () => {
       });
     }
   }, [user, toast]);
-
   const fetchTransactions = useCallback(async () => {
     if (!user) return;
-    
+  
     try {
       // Récupérer les transactions de paiement (payouts) pour ce vendeur
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
       const { data, error } = await (supabase as any)
         .from('payment_transactions')
         .select(`
@@ -246,26 +287,89 @@ const VendorDashboard = () => {
         .eq('orders.vendor_id', user.id)
         .eq('transaction_type', 'payout')
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       setTransactions(data || []);
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
     }
   }, [user]);
-
+  // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
+    const fetchOrCreateProfile = async () => {
+      // If Auth provider already has a complete profile from Supabase,
+      // prefer that authoritative profile for UI display/editing.
+      // Always fetch from Supabase, never use cached profile for display
+      // This ensures the UI always shows backend data
+      if (user?.id) {
+        console.log('[DEBUG] user.id', user.id);
+        // Debug: show current supabase session and user before DB ops
+        try {
+          const sess = await supabase.auth.getSession();
+          console.log('[DEBUG] supabase.auth.getSession before select', sess);
+          const userInfo = await supabase.auth.getUser();
+          console.log('[DEBUG] supabase.auth.getUser before select', userInfo);
+        } catch (e) {
+          console.warn('[DEBUG] supabase session/getUser check failed', e);
+        }
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('full_name, phone, wallet_type')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (!error && data) {
+          // Defensive: check that data is a profile row, not an error object
+          if (
+            typeof data === 'object' &&
+            data !== null &&
+            'full_name' in data &&
+            'phone' in data &&
+            'wallet_type' in data
+          ) {
+            setUserProfile({
+              full_name: (data as any).full_name ?? '',
+              phone: (data as any).phone ?? ''
+            });
+            setEditProfile({
+              full_name: (data as any).full_name ?? '',
+              phone: (data as any).phone ?? '',
+              walletType: (data as any).wallet_type ?? ''
+            });
+          } else {
+            // If data is not a valid profile row, log for debug
+            console.error('[DEBUG] Unexpected data shape from Supabase', data);
+          }
+        } else if (error) {
+          console.error('[DEBUG] fetchOrCreateProfile error', error);
+          // Attempt to create if not found
+          if (error.code === 'PGRST116') { // Row not found
+            const { error: insertError } = await supabase
+              .from('profiles')
+              .insert({
+                id: user.id,
+                full_name: '',
+                phone: user.phone || '',
+                role: 'vendor'
+              });
+            if (insertError) {
+              console.error('[DEBUG] Profile creation error', insertError);
+            } else {
+              // Re-fetch after creation
+              fetchProfile();
+            }
+          }
+        }
+      }
+    };
     const fetchData = async () => {
       setLoading(true);
+      await fetchOrCreateProfile();
       await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
       setLoading(false);
     };
-
     if (user) {
       fetchData();
     }
   }, [user, fetchProfile, fetchProducts, fetchOrders, fetchTransactions]);
-
   // Live updates: écoute les changements sur les commandes du vendeur
   useEffect(() => {
     if (!user?.id) return;
@@ -289,18 +393,34 @@ const VendorDashboard = () => {
         }
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
   }, [user?.id, fetchOrders, fetchTransactions]);
-
+  // Ensure walletType is populated from the DB if it's missing after auth/profile loads
+  useEffect(() => {
+    const ensureWalletType = async () => {
+      if (!user?.id) return;
+      // If we already have a walletType in editProfile or in authUserProfile, do nothing
+      const existing = editProfile.walletType || (authUserProfile && (authUserProfile as any)['walletType']) || (authUserProfile && (authUserProfile as any)['wallet_type']);
+      if (existing && String(existing).trim() !== '') return;
+      try {
+        const { data, error } = await supabase.from('profiles').select('wallet_type').eq('id', user.id).maybeSingle();
+        if (!error && data) {
+          const wt = (data as any).wallet_type ?? '';
+          if (wt) setEditProfile(prev => ({ ...prev, walletType: String(wt) }));
+        }
+      } catch (e) {
+        // silent
+      }
+    };
+    ensureWalletType();
+  }, [user?.id, authUserProfile, editProfile.walletType]);
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
     const randomNumber = Math.floor(1000 + Math.random() * 9000);
     return `PD${randomNumber}`;
   };
-
   const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price || !newProduct.description) {
       toast({
@@ -310,7 +430,6 @@ const VendorDashboard = () => {
       });
       return;
     }
-
     setAdding(true);
     try {
       if (!user?.id) {
@@ -329,14 +448,11 @@ const VendorDashboard = () => {
           is_available: true,
           stock_quantity: 0
         });
-
       if (error) throw error;
-
       toast({
         title: 'Succès',
         description: 'Produit ajouté avec succès'
       });
-
       setNewProduct({ name: '', price: '', description: '', warranty: '' });
       setAddModalOpen(false);
       fetchProducts();
@@ -350,10 +466,8 @@ const VendorDashboard = () => {
       setAdding(false);
     }
   };
-
   const handleEditProduct = async () => {
     if (!editProduct) return;
-
     setEditing(true);
     try {
       const { error } = await supabase
@@ -365,14 +479,11 @@ const VendorDashboard = () => {
           warranty: editProduct.warranty
         })
         .eq('id', editProduct.id);
-
       if (error) throw error;
-
       toast({
         title: 'Succès',
         description: 'Produit modifié avec succès'
       });
-
       setEditModalOpen(false);
       setEditProduct(null);
       fetchProducts();
@@ -386,24 +497,19 @@ const VendorDashboard = () => {
       setEditing(false);
     }
   };
-
   const handleDeleteProduct = async () => {
     if (!deleteProductId) return;
-
     setDeleting(true);
     try {
       const { error } = await supabase
         .from('products')
         .delete()
         .eq('id', deleteProductId);
-
       if (error) throw error;
-
       toast({
         title: 'Succès',
         description: 'Produit supprimé avec succès'
       });
-
       setDeleteDialogOpen(false);
       setDeleteProductId(null);
       fetchProducts();
@@ -417,11 +523,9 @@ const VendorDashboard = () => {
       setDeleting(false);
     }
   };
-
   const handleProfileChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setEditProfile({ ...editProfile, [e.target.name]: e.target.value });
   };
-
   const handleSaveProfile = async () => {
     if (!user?.id) {
       toast({
@@ -431,12 +535,12 @@ const VendorDashboard = () => {
       });
       return;
     }
-    
+  
     setSavingProfile(true);
     try {
       console.log('Mise à jour profil vendeur pour user:', user.id);
       console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType });
-      
+    
       const { data, error } = await supabase
         .from('profiles')
         .update({
@@ -446,23 +550,45 @@ const VendorDashboard = () => {
         })
         .eq('id', user.id)
         .select();
-
       console.log('Résultat update:', { data, error });
-
       if (error) {
-        console.error('Erreur Supabase:', error);
+        console.error('Erreur Supabase détaillée:', { code: error.code, details: error.details, hint: error.hint, message: error.message });
         throw error;
       }
-
       toast({
         title: 'Succès',
         description: 'Profil mis à jour avec succès'
       });
-
+      // If DB returned the updated row, prefer the saved wallet_type; otherwise keep the edited value
+      let savedWallet = editProfile.walletType || '';
+      if (Array.isArray(data) && data[0]) {
+        const savedRow: any = data[0];
+        if (typeof savedRow.wallet_type === 'string') {
+          savedWallet = savedRow.wallet_type;
+        }
+      }
+      try {
+        const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
+        const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
+        cacheObj.full_name = editProfile.full_name;
+        cacheObj.phone = editProfile.phone;
+        cacheObj.walletType = savedWallet;
+        localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+      } catch (e) {
+        console.warn('[DEBUG] failed to update cached profile after save', e);
+      }
       setUserProfile({
         full_name: editProfile.full_name,
-        phone: editProfile.phone
+        phone: editProfile.phone,
+        walletType: savedWallet
       });
+      setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
+      // Re-fetch profile from DB to ensure the latest saved value (including wallet_type)
+      try {
+        await fetchProfile();
+      } catch (e) {
+        console.warn('[DEBUG] fetchProfile after save failed', e);
+      }
       setIsEditingProfile(false);
     } catch (error: unknown) {
       console.error('Erreur sauvegarde profil:', error);
@@ -476,14 +602,12 @@ const VendorDashboard = () => {
       setSavingProfile(false);
     }
   };
-
   // Fonction pour copier le code produit
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 1200);
   };
-
   // Calculate stats
   const totalProducts = products.length;
   const activeProducts = products.filter(p => p.is_available).length;
@@ -491,7 +615,11 @@ const VendorDashboard = () => {
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
-
+  // DEBUG: Affiche la valeur du profil vendeur à chaque rendu
+  console.log('userProfile', userProfile);
+  // Résolution directe depuis userProfile (toujours à jour après modif/fetch)
+  const resolvedWalletType = userProfile?.walletType || '';
+  console.log('resolvedWalletType (from userProfile)', resolvedWalletType);
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -499,16 +627,13 @@ const VendorDashboard = () => {
       </div>
     );
   }
-
   // Fonction pour déconnexion
   const handleSignOut = async () => {
     await signOut();
     navigate('/');
   };
-
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
-
       {/* Header Moderne - Style similaire à BuyerDashboard */}
       <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
@@ -518,12 +643,9 @@ const VendorDashboard = () => {
           <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
-
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
-
       {/* ...section stats supprimée... */}
-
       {/* Navigation - Desktop Tabs */}
       <div className="hidden md:block">
         <Tabs defaultValue="products" className="space-y-6">
@@ -541,12 +663,11 @@ const VendorDashboard = () => {
               <span>Compte</span>
             </TabsTrigger>
           </TabsList>
-
         {/* Products Tab */}
         <TabsContent value="products" className="space-y-6">
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
-            <Button 
+            <Button
               onClick={() => setAddModalOpen(true)}
               className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
             >
@@ -554,7 +675,6 @@ const VendorDashboard = () => {
               Ajouter
             </Button>
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             {products.map((product) => (
               <Card
@@ -565,9 +685,9 @@ const VendorDashboard = () => {
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-lg">{product.name}</CardTitle>
-                    <StatusBadge 
-                      status={product.is_available ? 'active' : 'inactive'} 
-                      size="sm" 
+                    <StatusBadge
+                      status={product.is_available ? 'active' : 'inactive'}
+                      size="sm"
                     />
                   </div>
                 </CardHeader>
@@ -575,7 +695,7 @@ const VendorDashboard = () => {
                   <p className="text-gray-600 text-sm mb-3 line-clamp-2">
                     {product.description}
                   </p>
-                  
+                
                   {/* Code Produit - Format texte simple avec bouton copier */}
                   <div className="flex items-center mb-2">
                     <span
@@ -593,7 +713,7 @@ const VendorDashboard = () => {
                     </span>
                     {/* Bouton Copier supprimé */}
                   </div>
-                  
+                
                   <div className="space-y-2 mb-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Prix:</span>
@@ -607,8 +727,8 @@ const VendorDashboard = () => {
                       <Eye className="h-4 w-4 mr-1" />
                       Voir
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => {
                         setEditProduct({
@@ -620,8 +740,8 @@ const VendorDashboard = () => {
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => {
                         setDeleteProductId(product.id);
@@ -635,13 +755,12 @@ const VendorDashboard = () => {
               </Card>
             ))}
           </div>
-
           {products.length === 0 && (
             <div className="text-center py-12">
               <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">Aucun produit</h3>
               <p className="text-gray-500 mb-4">Commencez par ajouter votre premier produit</p>
-              <Button 
+              <Button
                 onClick={() => setAddModalOpen(true)}
                 className="bg-green-500 hover:bg-green-600"
               >
@@ -651,7 +770,6 @@ const VendorDashboard = () => {
             </div>
           )}
         </TabsContent>
-
         {/* Orders Tab */}
         <TabsContent value="orders" className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-900">Commandes</h2>
@@ -681,7 +799,7 @@ const VendorDashboard = () => {
                       <div className="flex items-center mb-1">
                         <span className="text-sm font-semibold text-gray-800 w-40">Statut commande :</span>
                         <span className="ml-auto text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22'}}>
-                          {STATUS_LABELS_FR[order.status] || order.status}
+                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                         </span>
                       </div>
                       <div className="flex items-center text-sm text-gray-800 mb-1">
@@ -760,11 +878,10 @@ const VendorDashboard = () => {
             </CardContent>
           </Card>
         </TabsContent>
-
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-900">Statistiques</h2>
-          
+        
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
@@ -790,7 +907,6 @@ const VendorDashboard = () => {
                 </div>
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
@@ -817,11 +933,10 @@ const VendorDashboard = () => {
             </Card>
           </div>
         </TabsContent>
-
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-900">Mon Profil</h2>
-          
+        
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
@@ -834,20 +949,32 @@ const VendorDashboard = () => {
                       <label className="text-sm font-medium text-gray-500">Nom complet</label>
                       <p className="text-lg">{userProfile?.full_name || 'Non renseigné'}</p>
                     </div>
-
                     <div>
                       <label className="text-sm font-medium text-gray-500">Téléphone</label>
                       <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-500">Type de wallet</label>
-                      <p className="text-lg">{editProfile.walletType || 'Non renseigné'}</p>
+                      <p className="text-lg">{walletTypeLabel(resolvedWalletType)}</p>
+                      {resolvedWalletType && (
+                        <p className="text-xs text-gray-400 mt-1">(raw: {resolvedWalletType})</p>
+                      )}
                     </div>
-                    <Button 
+                    <Button
                       onClick={() => setIsEditingProfile(true)}
                       className="bg-green-500 hover:bg-green-600"
                     >
                       Modifier le profil
+                    </Button>
+                    <Button
+                      onClick={async () => {
+                        await fetchProfile();
+                        toast({ title: 'Profil rafraîchi', description: 'Vérifiez le type de wallet.' });
+                      }}
+                      variant="outline"
+                      className="mt-2"
+                    >
+                      Rafraîchir profil
                     </Button>
                   </>
                 ) : (
@@ -861,7 +988,6 @@ const VendorDashboard = () => {
                         placeholder="Votre nom complet"
                       />
                     </div>
-
                     <div>
                       <label className="text-sm font-medium">Téléphone</label>
                       <Input
@@ -882,20 +1008,21 @@ const VendorDashboard = () => {
                       >
                         <option value="">Choisir un wallet...</option>
                         <option value="wave-senegal">Wave Sénégal</option>
-                        <option value="orange-money-senegal">Orange Money Sénégal</option>
-                        <option value="orange_senegal">Orange Money Sénégal (alt)</option>
-                        <option value="orange-money">Orange Money</option>
+                        <option value="orange-money">Orange Money Sénégal</option>
                       </select>
+                      {editProfile.walletType && (
+                        <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType})</p>
+                      )}
                     </div>
                     <div className="flex space-x-2">
-                      <Button 
+                      <Button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
                         className="bg-green-500 hover:bg-green-600"
                       >
                         {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                       </Button>
-                      <Button 
+                      <Button
                         variant="outline"
                         onClick={() => setIsEditingProfile(false)}
                       >
@@ -906,7 +1033,6 @@ const VendorDashboard = () => {
                 )}
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader>
                 <CardTitle>Paramètres du compte</CardTitle>
@@ -924,15 +1050,16 @@ const VendorDashboard = () => {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
-                  <p className="text-lg">
-                    {editProfile.walletType || 'Non renseigné'}
-                  </p>
+                  <p className="text-lg">{walletTypeLabel(editProfile.walletType)}</p>
+                  {editProfile.walletType && (
+                    <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType})</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-500">Rôle</label>
                   <p className="text-lg">Vendeur</p>
                 </div>
-                <Button 
+                <Button
                   variant="destructive"
                   onClick={signOut}
                 >
@@ -944,7 +1071,6 @@ const VendorDashboard = () => {
         </TabsContent>
       </Tabs>
       </div>
-
       {/* Navigation Mobile - Bottom Navigation Bar */}
       <div className="md:hidden">
         <Tabs defaultValue="products" className="pb-20 px-4">
@@ -953,7 +1079,7 @@ const VendorDashboard = () => {
               <div className="space-y-6">
                 <div className="flex justify-between items-center gap-2">
                   <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
-                  <Button 
+                  <Button
                     onClick={() => setAddModalOpen(true)}
                 className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
                   >
@@ -961,7 +1087,6 @@ const VendorDashboard = () => {
                     Ajouter
                   </Button>
                 </div>
-
                 <div className="grid gap-4">
                   {products.map((product) => (
                     <Card
@@ -990,7 +1115,7 @@ const VendorDashboard = () => {
                               {product.name}
                             </h3>
                             <p className="text-sm text-gray-600 mt-1 break-words whitespace-normal">{product.description}</p>
-                            
+                          
                             {/* Code Produit - Format texte simple avec bouton copier */}
                             <div
                               className="flex items-center mb-2"
@@ -1043,7 +1168,6 @@ const VendorDashboard = () => {
                 </div>
               </div>
             </TabsContent>
-
             <TabsContent value="orders" className="mt-0">
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Commandes ({totalOrders})</h2>
@@ -1133,11 +1257,9 @@ const VendorDashboard = () => {
                 </div>
               </div>
             </TabsContent>
-
             <TabsContent value="analytics" className="mt-0">
               {/* ...onglet Statistiques supprimé... */}
             </TabsContent>
-
             <TabsContent value="profile" className="mt-0">
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Mon Compte</h2>
@@ -1158,6 +1280,12 @@ const VendorDashboard = () => {
                           <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
                         </div>
                         <div>
+                          <label className="text-xs font-medium text-gray-400">[DEBUG] Profil reçu</label>
+                          <pre className="text-xs bg-gray-100 rounded p-2 overflow-x-auto text-gray-700 border border-gray-200">
+                            {JSON.stringify(userProfile, null, 2)}
+                          </pre>
+                        </div>
+                        <div>
                           <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
                           <select
                             className="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-100 text-gray-700 mt-1"
@@ -1169,15 +1297,23 @@ const VendorDashboard = () => {
                             <option value="wave-senegal">Wave Sénégal</option>
                             <option value="orange-money-senegal">Orange Money Sénégal</option>
                           </select>
+                          <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType || 'vide'})</p> {/* Debug pour voir la valeur état */}
                         </div>
-                        <Button 
+                        <Button
                           onClick={() => setIsEditingProfile(true)}
                           className="w-full bg-green-500 hover:bg-green-600"
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
                         </Button>
-                        <Button 
+                        {/* DEBUG: Affichage brut du profil vendeur */}
+                        <div style={{ marginTop: 12 }}>
+                          <label className="text-xs font-medium text-gray-400">[DEBUG] Profil reçu</label>
+                          <pre className="text-xs bg-gray-100 rounded p-2 overflow-x-auto text-gray-700 border border-gray-200">
+                            {JSON.stringify(userProfile, null, 2)}
+                          </pre>
+                        </div>
+                        <Button
                           variant="outline"
                           onClick={signOut}
                           className="w-full mt-2 flex items-center justify-center"
@@ -1223,14 +1359,14 @@ const VendorDashboard = () => {
                           </select>
                         </div>
                         <div className="flex space-x-2">
-                          <Button 
+                          <Button
                             onClick={handleSaveProfile}
                             disabled={savingProfile}
                             className="flex-1 bg-green-500 hover:bg-green-600"
                           >
                             {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                           </Button>
-                          <Button 
+                          <Button
                             variant="outline"
                             onClick={() => setIsEditingProfile(false)}
                             className="flex-1"
@@ -1238,7 +1374,7 @@ const VendorDashboard = () => {
                             Annuler
                           </Button>
                         </div>
-                        <Button 
+                        <Button
                           variant="outline"
                           onClick={signOut}
                           className="w-full mt-2 flex items-center justify-center"
@@ -1253,27 +1389,26 @@ const VendorDashboard = () => {
               </div>
             </TabsContent>
           </div>
-
           {/* Bottom Navigation Bar - Fixed */}
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 shadow-lg">
             <TabsList className="w-full h-16 bg-white rounded-none border-0">
               <div className="flex w-full h-16 bg-white justify-around items-center px-2">
-                <TabsTrigger 
-                  value="products" 
+                <TabsTrigger
+                  value="products"
                   className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <Package className="h-5 w-5" />
                   <span className="text-xs font-medium">Produits</span>
                 </TabsTrigger>
-                <TabsTrigger 
-                  value="orders" 
+                <TabsTrigger
+                  value="orders"
                   className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <ShoppingCart className="h-5 w-5" />
                   <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
-                <TabsTrigger 
-                  value="profile" 
+                <TabsTrigger
+                  value="profile"
                   className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
                 >
                   <User className="h-5 w-5" />
@@ -1285,7 +1420,6 @@ const VendorDashboard = () => {
         </Tabs>
       </div>
       </main>
-
       {/* Add Product Modal */}
       <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -1332,7 +1466,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setAddModalOpen(false)}>
               Annuler
             </Button>
-            <Button 
+            <Button
               onClick={handleAddProduct}
               disabled={adding}
               className="bg-green-500 hover:bg-green-600"
@@ -1342,7 +1476,6 @@ const VendorDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       {/* Edit Product Modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -1391,7 +1524,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setEditModalOpen(false)}>
               Annuler
             </Button>
-            <Button 
+            <Button
               onClick={handleEditProduct}
               disabled={editing}
               className="bg-green-500 hover:bg-green-600"
@@ -1401,7 +1534,6 @@ const VendorDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
@@ -1415,7 +1547,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Annuler
             </Button>
-            <Button 
+            <Button
               variant="destructive"
               onClick={handleDeleteProduct}
               disabled={deleting}
@@ -1425,7 +1557,6 @@ const VendorDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       {/* Call Confirmation Dialog */}
       <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
         <DialogContent>
@@ -1448,5 +1579,4 @@ const VendorDashboard = () => {
     </div>
   );
 };
-
 export default VendorDashboard;

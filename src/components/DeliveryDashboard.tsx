@@ -60,24 +60,133 @@ const DeliveryDashboard = () => {
     }
   }, [user]);
 
+  // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
-    const fetchProfile = async () => {
+    const fetchOrCreateProfile = async () => {
       if (user?.id) {
+        console.log('[DEBUG] Delivery fetchOrCreateProfile start', { userId: user.id });
         const { data, error } = await supabase
           .from('profiles')
           .select('full_name, phone')
           .eq('id', user.id)
-          .single();
-        if (!error && data) {
-          setUserProfile(data as ProfileRow);
+          .maybeSingle();
+        console.log('[DEBUG] Delivery select profiles result', { data, error });
+        let profileData = data;
+        if (error || !profileData) {
+          // If not found, create a new profile row for this user
+          // But if the client is an SMS-authenticated session (no access_token),
+          // avoid attempting the insert and use the SMS session cache instead.
+          try {
+            const smsRaw = localStorage.getItem('sms_auth_session');
+            if (smsRaw) {
+              try {
+                const sms = JSON.parse(smsRaw);
+                if (sms?.profileId && sms.profileId === user.id) {
+                  profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
+                  // Cache for offline use
+                  try {
+                    localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: profileData.full_name, phone: profileData.phone, role: 'delivery' }));
+                    console.log('[DEBUG] Delivery cached SMS profile to localStorage');
+                  } catch (e) {
+                    console.warn('[DEBUG] failed to cache sms profile', e);
+                  }
+                }
+              } catch (e) {
+                // ignore parse errors and continue to attempt insert
+              }
+            }
+
+            if (!profileData) {
+              const { error: insertError, data: insertData } = await supabase
+                .from('profiles')
+                .insert({ id: user.id, full_name: '', phone: '' });
+              console.log('[DEBUG] Delivery insert profiles result', { insertError, insertData });
+              if (!insertError) {
+                profileData = { full_name: '', phone: '' };
+              } else {
+                // Insert failed: build a UI fallback from cached profile / sms / user metadata
+                try {
+                  // Do NOT read `auth_cached_profile_v1` as authoritative for display.
+                  // Build a concrete fallback object from SMS session or user metadata.
+                  const fallback: { full_name?: string; phone?: string } = { full_name: '', phone: '' };
+
+                  // Prefer SMS session when available
+                  const smsRaw2 = localStorage.getItem('sms_auth_session');
+                  if (smsRaw2) {
+                    try {
+                      const parsed = JSON.parse(smsRaw2) as unknown;
+                      if (parsed && typeof parsed === 'object') {
+                        const sms2 = parsed as Record<string, unknown>;
+                        const smsName = typeof sms2.fullName === 'string' ? sms2.fullName as string : '';
+                        const smsPhone = typeof sms2.phone === 'string' ? sms2.phone as string : '';
+                        if (smsName) fallback.full_name = smsName;
+                        if (smsPhone) fallback.phone = smsPhone;
+                      }
+                    } catch (e) {
+                      console.warn('[DEBUG] failed to parse sms_auth_session', e);
+                    }
+                  }
+
+                  // Fall back to Supabase user metadata / email
+                  if (!fallback.full_name && !fallback.phone) {
+                    const userMeta = user.user_metadata as Record<string, unknown> | undefined;
+                    const maybePhone = typeof userMeta?.phone === 'string' ? (userMeta.phone as string) : user.email || '';
+                    const maybeFull = typeof userMeta?.full_name === 'string' ? (userMeta.full_name as string) : '';
+                    if (maybeFull) fallback.full_name = maybeFull;
+                    if (maybePhone) fallback.phone = maybePhone;
+                  }
+
+                  if (!fallback.full_name || String(fallback.full_name).trim() === '') {
+                    const p = String(fallback.phone || '');
+                    const last4 = p.replace(/[^0-9]/g, '').slice(-4);
+                    fallback.full_name = last4 ? `Livreur ${last4}` : 'Livreur';
+                  }
+                  profileData = { full_name: fallback.full_name || '', phone: fallback.phone || '' };
+                  try {
+                    localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: profileData.full_name, phone: profileData.phone, role: 'delivery' }));
+                    console.log('[DEBUG] Delivery cached fallback profile to localStorage');
+                  } catch (e) {
+                    console.warn('[DEBUG] failed to cache fallback profile', e);
+                  }
+                } catch (e) {
+                  console.warn('[DEBUG] building fallback profile failed', e);
+                }
+
+                // Log detailed insert error without using `any`
+                const extractErrorMeta = (err: unknown) => {
+                  if (!err || typeof err !== 'object') return { details: undefined as string | undefined, hint: undefined as string | undefined };
+                  const e = err as Record<string, unknown>;
+                  return {
+                    details: typeof e['details'] === 'string' ? (e['details'] as string) : undefined,
+                    hint: typeof e['hint'] === 'string' ? (e['hint'] as string) : undefined,
+                  };
+                };
+                const { details, hint } = extractErrorMeta(insertError);
+                console.error('[DEBUG] Delivery insert error details', {
+                  message: insertError.message,
+                  details,
+                  hint,
+                  code: insertError.code
+                });
+              }
+            }
+          } catch (ex) {
+            console.error('[DEBUG] Exception during Profile insert/fallback', ex);
+          }
+        }
+        if (profileData) {
+          setUserProfile({
+            full_name: profileData.full_name || '',
+            phone: profileData.phone || ''
+          });
           setEditProfile({
-            full_name: data.full_name || '',
-            phone: data.phone || ''
+            full_name: profileData.full_name || '',
+            phone: profileData.phone || ''
           });
         }
       }
     };
-    fetchProfile();
+    fetchOrCreateProfile();
   }, [user]);
 
   useEffect(() => {

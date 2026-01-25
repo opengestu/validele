@@ -48,15 +48,17 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     return <Navigate to="/auth" replace />;
   }
 
-  // Si l'utilisateur est connecté mais n'a pas de profil complet,
-  // le rediriger vers la page d'authentification pour compléter son inscription
-  if (!userProfile || !userProfile.full_name) {
-    console.log('Profil incomplet, redirection vers /auth');
-    return <Navigate to="/auth" replace />;
-  }
+  // Autoriser l'accès même si le profil utilisateur n'est pas encore complet.
+  // Les pages protégées (dashboards) sont responsables de créer/compléter
+  // la ligne de profil dans la base de données et d'afficher un formulaire
+  // de complétion si nécessaire. Rediriger automatiquement vers /auth
+  // empêche l'accès immédiat après authentification (problème signalé).
+  // Si vous souhaitez forcer la complétion, implémentez une page dédiée
+  // de "profile setup" et redirigez explicitement vers celle-ci.
+  // (On continue si `userProfile` est absent ou `full_name` vide.)
 
-  // Vérification du rôle si requis
-  if (requiredRole && userProfile.role !== requiredRole) {
+  // Vérification du rôle si requis (sécurisée si `userProfile` n'est pas encore chargé)
+  if (requiredRole && userProfile?.role && userProfile.role !== requiredRole) {
     // Rediriger vers le bon dashboard selon le rôle
     const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 
                         userProfile.role === 'delivery' ? '/delivery' : '/buyer';

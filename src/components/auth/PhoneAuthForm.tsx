@@ -259,50 +259,35 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         const last9 = digitsOnly.slice(-9);
         console.log('Recherche profil: formattedPhone=', formattedPhone, 'last9=', last9);
 
-        // Rechercher en utilisant une correspondance tolérante sur les 9 derniers chiffres
-        let existingProfiles: Array<{ id: string; full_name: string; role: string }> | null = null;
+        // Rechercher le profil via l'endpoint admin backend pour récupérer le flag `hasPin`
         try {
-          const { data: profilesData, error: searchError } = await supabase
-            .from('profiles')
-            .select('id, full_name, role')
-            .ilike('phone', `%${last9}%`)
-            .limit(1);
-          existingProfiles = (profilesData as Array<{ id: string; full_name: string; role: string }>) || null;
-          if (searchError) console.error('Erreur recherche profil:', searchError);
-        } catch (err) {
-          console.error('Erreur recherche profil (catch):', err);
-        }
-
-        if (existingProfiles && existingProfiles.length > 1) {
-          console.warn('Plusieurs profils correspondent aux 9 derniers chiffres:', existingProfiles.map(p => p.id));
-        }
-        const existingUser = existingProfiles && existingProfiles.length > 0 ? existingProfiles[0] : null;
-        if (existingUser && existingUser.full_name) {
-          let pinHash: string | null = null;
-          try {
-            const { data: pinData } = await supabase
-              .from('profiles')
-              .select('pin_hash')
-              .eq('id', existingUser.id)
-              .maybeSingle();
-            pinHash = (pinData as { pin_hash?: string | null })?.pin_hash || null;
-          } catch (e) {
-            console.log('Colonne pin_hash non disponible:', e);
+          const existsResp = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(formattedPhone)}`));
+          if (existsResp.ok) {
+            const json = await existsResp.json().catch(() => null);
+            if (json && json.exists && json.profile) {
+              const p = json.profile as { id: string; full_name?: string; role?: string; hasPin?: boolean; phone?: string };
+              // On ne récupère PAS le pin côté client pour des raisons de sécurité.
+              setExistingProfile({
+                id: p.id,
+                full_name: p.full_name || '',
+                role: (p.role ?? 'buyer') as 'buyer' | 'vendor' | 'delivery',
+                // Utiliser un sentinel pour indiquer qu'un PIN existe côté serveur
+                pin_hash: p.hasPin ? '__SERVER__' : null
+              });
+              setHasCheckedProfile(true);
+              setStep('login-pin');
+              toast({
+                title: `Bonjour ${p.full_name?.split(' ')[0] ?? ''} ! 👋`,
+                description: "Entrez votre code PIN pour vous connecter",
+              });
+              setLoading(false);
+              return;
+            }
+          } else {
+            console.error('Erreur vérification existence profil (server):', existsResp.status);
           }
-          setExistingProfile({
-            id: existingUser.id,
-            full_name: existingUser.full_name,
-            role: existingUser.role,
-            pin_hash: pinHash
-          });
-          setHasCheckedProfile(true);
-          setStep('login-pin');
-          toast({
-            title: `Bonjour ${existingUser.full_name.split(' ')[0]} ! 👋`,
-            description: "Entrez votre code PIN pour vous connecter",
-          });
-          setLoading(false);
-          return;
+        } catch (err) {
+          console.error('Erreur vérification existence profil (catch):', err);
         }
         setHasCheckedProfile(true);
       }
@@ -499,7 +484,46 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         navigate(redirectPath, { replace: true });
         return;
       }
-      // Si échec, essayer avec le PIN hash stocké (utilisateurs avec PIN)
+
+      // Si échec Supabase Auth, vérifier côté serveur via l'endpoint admin `POST /auth/login-pin`
+      try {
+        const loginResp = await fetch(apiUrl('/auth/login-pin'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone, pin: enteredPin })
+        });
+        if (loginResp.ok) {
+          const body = await loginResp.json().catch(() => ({}));
+          // Le serveur peut renvoyer un token (JWT) ou simplement { success: true }
+          if (body.token) {
+            localStorage.setItem('auth_token', body.token);
+          }
+
+          // Créer la session locale
+          localStorage.setItem('sms_auth_session', JSON.stringify({
+            phone: formData.phone,
+            profileId: existingProfile.id,
+            role: existingProfile.role,
+            fullName: existingProfile.full_name,
+            loginTime: new Date().toISOString()
+          }));
+
+          toast({
+            title: "Connexion réussie ! 🎉",
+            description: `Content de vous revoir, ${existingProfile.full_name}`,
+          });
+          // Attendre un peu pour que le toast s'affiche
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
+                             existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+          window.location.href = redirectPath;
+          return;
+        }
+      } catch (e) {
+        console.error('Erreur vérification /auth/login-pin:', e);
+      }
+
+      // Fallback: si l'app client connaissait un pin_hash plaintext (rare / legacy), comparer localement
       if (existingProfile.pin_hash && enteredPin === existingProfile.pin_hash) {
         console.log('PIN CORRECT (via pin_hash) !');
        
