@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { apiUrl, postProfileUpdate } from '@/lib/api';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -104,6 +105,21 @@ const VendorDashboard = () => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const fetchProfile = useCallback(async () => {
     if (!user) return;
+
+    // If SMS session present, use authUserProfile from useAuth instead of calling Supabase (no token available)
+    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (smsSessionStr) {
+      console.log('[DEBUG] VendorDashboard: detected sms_auth_session, using authUserProfile from useAuth');
+      if (authUserProfile) {
+        setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined, walletType: (authUserProfile as any).walletType ?? (authUserProfile as any).wallet_type ?? undefined });
+        setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '', walletType: (authUserProfile as any).walletType ?? (authUserProfile as any).wallet_type ?? '' });
+      } else {
+        setUserProfile(null);
+        setEditProfile({ full_name: '', phone: '', walletType: '' });
+      }
+      return;
+    }
+
     const walletColumnMissing = (err: { message?: string } | null) =>
       Boolean(err?.message && (err.message.includes("column") && err.message.includes("wallet")));
     try {
@@ -204,7 +220,7 @@ const VendorDashboard = () => {
     } catch (error) {
       console.error('[DEBUG] fetchProfile error', error);
     }
-  }, [user, editProfile.walletType]);
+  }, [user, authUserProfile, editProfile.walletType]);
   const fetchProducts = useCallback(async () => {
     if (!user) return;
   
@@ -538,58 +554,85 @@ const VendorDashboard = () => {
   
     setSavingProfile(true);
     try {
-      console.log('Mise à jour profil vendeur pour user:', user.id);
-      console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType });
-    
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        // Use backend admin endpoint for SMS-auth users
+        console.log('[DEBUG] VendorDashboard: updating profile via backend for SMS session', { id: user.id });
+        const { ok, json, error, url } = await postProfileUpdate({ profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType || null });
+        console.log('[DEBUG] VendorDashboard profile update via backend result', { ok, url, error });
+        if (!ok) throw new Error(`Backend update failed: ${JSON.stringify(error)}`);
+        const saved = json?.profile ?? json;
+        const savedWallet = (saved?.wallet_type ?? editProfile.walletType) || '';
+
+        try {
+          const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
+          const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
+          cacheObj.full_name = saved?.full_name ?? editProfile.full_name;
+          cacheObj.phone = saved?.phone ?? editProfile.phone;
+          cacheObj.walletType = savedWallet;
+          localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+        } catch (e) {
+          console.warn('[DEBUG] failed to update cached profile after save', e);
+        }
+
+        setUserProfile({ full_name: saved?.full_name ?? editProfile.full_name, phone: saved?.phone ?? editProfile.phone, walletType: savedWallet });
+        setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
+        setIsEditingProfile(false);
+        toast({ title: 'Succès', description: 'Profil mis à jour avec succès' });
+      } else {
+        console.log('Mise à jour profil vendeur pour user:', user.id);
+        console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType });
+      
+        const { data, error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: editProfile.full_name,
+            phone: editProfile.phone,
+            wallet_type: editProfile.walletType || null,
+          })
+          .eq('id', user.id)
+          .select();
+        console.log('Résultat update:', { data, error });
+        if (error) {
+          console.error('Erreur Supabase détaillée:', { code: error.code, details: error.details, hint: error.hint, message: error.message });
+          throw error;
+        }
+        toast({
+          title: 'Succès',
+          description: 'Profil mis à jour avec succès'
+        });
+        // If DB returned the updated row, prefer the saved wallet_type; otherwise keep the edited value
+        let savedWallet = editProfile.walletType || '';
+        if (Array.isArray(data) && data[0]) {
+          const savedRow: any = data[0];
+          if (typeof savedRow.wallet_type === 'string') {
+            savedWallet = savedRow.wallet_type;
+          }
+        }
+        try {
+          const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
+          const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
+          cacheObj.full_name = editProfile.full_name;
+          cacheObj.phone = editProfile.phone;
+          cacheObj.walletType = savedWallet;
+          localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+        } catch (e) {
+          console.warn('[DEBUG] failed to update cached profile after save', e);
+        }
+        setUserProfile({
           full_name: editProfile.full_name,
           phone: editProfile.phone,
-          wallet_type: editProfile.walletType || null,
-        })
-        .eq('id', user.id)
-        .select();
-      console.log('Résultat update:', { data, error });
-      if (error) {
-        console.error('Erreur Supabase détaillée:', { code: error.code, details: error.details, hint: error.hint, message: error.message });
-        throw error;
-      }
-      toast({
-        title: 'Succès',
-        description: 'Profil mis à jour avec succès'
-      });
-      // If DB returned the updated row, prefer the saved wallet_type; otherwise keep the edited value
-      let savedWallet = editProfile.walletType || '';
-      if (Array.isArray(data) && data[0]) {
-        const savedRow: any = data[0];
-        if (typeof savedRow.wallet_type === 'string') {
-          savedWallet = savedRow.wallet_type;
+          walletType: savedWallet
+        });
+        setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
+        // Re-fetch profile from DB to ensure the latest saved value (including wallet_type)
+        try {
+          await fetchProfile();
+        } catch (e) {
+          console.warn('[DEBUG] fetchProfile after save failed', e);
         }
+        setIsEditingProfile(false);
       }
-      try {
-        const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
-        const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
-        cacheObj.full_name = editProfile.full_name;
-        cacheObj.phone = editProfile.phone;
-        cacheObj.walletType = savedWallet;
-        localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
-      } catch (e) {
-        console.warn('[DEBUG] failed to update cached profile after save', e);
-      }
-      setUserProfile({
-        full_name: editProfile.full_name,
-        phone: editProfile.phone,
-        walletType: savedWallet
-      });
-      setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
-      // Re-fetch profile from DB to ensure the latest saved value (including wallet_type)
-      try {
-        await fetchProfile();
-      } catch (e) {
-        console.warn('[DEBUG] fetchProfile after save failed', e);
-      }
-      setIsEditingProfile(false);
     } catch (error: unknown) {
       console.error('Erreur sauvegarde profil:', error);
       const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');

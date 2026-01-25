@@ -202,4 +202,71 @@ router.post('/migrate-pin', async (req, res) => {
   }
 });
 
+// Endpoint pour permettre aux clients SMS (sans session Supabase) de mettre à jour
+// leur profil via le backend admin (utilise supabaseAdmin pour bypasser RLS).
+router.post('/profile/update', async (req, res) => {
+  const missing = ensureSupabase(req, res);
+  if (missing) return missing;
+
+  const { profileId, full_name, phone, wallet_type, company_name, vehicle_info, address, push_token } = req.body || {};
+  if (!profileId) return res.status(400).json({ error: 'Missing profileId' });
+
+  try {
+    const updatePayload = {};
+    if (typeof full_name === 'string') updatePayload.full_name = full_name;
+    if (typeof phone === 'string') updatePayload.phone = phone;
+    if (typeof wallet_type !== 'undefined') updatePayload.wallet_type = wallet_type;
+    if (typeof company_name !== 'undefined') updatePayload.company_name = company_name;
+    if (typeof vehicle_info !== 'undefined') updatePayload.vehicle_info = vehicle_info;
+    if (typeof address !== 'undefined') updatePayload.address = address;
+    if (typeof push_token !== 'undefined') updatePayload.push_token = push_token;
+
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .update(updatePayload)
+      .eq('id', profileId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.error('[AUTH] profile.update error', error);
+      return res.status(500).json({ error: error.message || 'Failed to update profile' });
+    }
+
+    return res.json({ success: true, profile: data });
+  } catch (err) {
+    console.error('[AUTH] /profile/update error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Endpoint admin pour récupérer un profil par id (utile pour frontends non-auth comme SMS sessions)
+router.get('/profile/:id', async (req, res) => {
+  const missing = ensureSupabase(req, res);
+  if (missing) return missing;
+
+  const id = (req.params && req.params.id) ? String(req.params.id) : null;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[AUTH] profile.get error', error);
+      return res.status(500).json({ error: error.message || 'Failed to fetch profile' });
+    }
+
+    if (!data) return res.status(404).json({ error: 'Profile not found' });
+
+    return res.json({ success: true, profile: data });
+  } catch (err) {
+    console.error('[AUTH] /profile/:id error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
 module.exports = router;

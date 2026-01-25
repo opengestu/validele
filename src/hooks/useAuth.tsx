@@ -150,6 +150,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const fetchUserProfile = async (userId: string, userEmail: string) => {
       try {
         console.log('[DEBUG] fetchUserProfile start', { userId });
+        // Affiche l'id de l'utilisateur connecté pour debug
+        console.log('User ID connecté (utilisé pour la requête Supabase):', userId);
         // Essayer de récupérer le profil existant
         const { data: profile, error } = await supabase
           .from('profiles')

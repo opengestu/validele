@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Dialog } from '@capacitor/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { notifyWelcome } from '@/services/notifications';
+import { apiUrl, postProfileUpdate } from '@/lib/api';
 
 /**
  * Composant qui initialise les notifications push après connexion.
@@ -19,6 +20,24 @@ const PushNotificationSetup = () => {
   // Fonction pour sauvegarder le token dans Supabase
   const saveTokenToSupabase = async (token: string, userId: string) => {
     try {
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        // SMS-auth sessions cannot update Supabase directly due to RLS — use backend admin endpoint
+        try {
+          const { ok, json, error, url } = await postProfileUpdate({ profileId: userId, push_token: token });
+          console.log('[DEBUG] PushNotificationSetup postProfileUpdate result', { ok, url, error });
+          if (!ok) {
+            console.error('Erreur sauvegarde token via backend:', error);
+            return;
+          }
+          console.log('✅ Token FCM sauvegardé via backend');
+          return;
+        } catch (e) {
+          console.error('Erreur sauvegarde token via backend (catch):', e);
+          // Fall through to try supabase directly
+        }
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update({ push_token: token })

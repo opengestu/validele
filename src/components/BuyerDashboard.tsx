@@ -19,7 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { API_BASE, apiUrl } from '@/lib/api';
+import { API_BASE, apiUrl, postProfileUpdate } from '@/lib/api';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import.meta.env;
@@ -81,10 +81,11 @@ const BuyerDashboard = () => {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
   const [processingPayment, setProcessingPayment] = useState(false);
-  const [userProfile, setUserProfile] = useState<{ phone: string; full_name?: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editProfile, setEditProfile] = useState<{ full_name?: string; phone?: string; walletType?: string }>({});
+  // Profile state for user information
+  const [userProfile, setUserProfile] = useState<{ full_name?: string; phone?: string } | null>(null);
+  const [editProfile, setEditProfile] = useState<{ full_name: string; phone: string }>({ full_name: '', phone: '' });
   const [savingProfile, setSavingProfile] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrModalValue, setQrModalValue] = useState('');
@@ -251,141 +252,148 @@ const BuyerDashboard = () => {
     warmUpBackend();
   }, []);
 
+  // Synchronize user profile from Supabase
   useEffect(() => {
-    const fetchOrCreateProfile = async () => {
-      // If the AuthProvider already loaded a complete profile from Supabase,
-      // prefer that authoritative source for UI display and editing.
-      if (authUserProfile && authUserProfile.id === user?.id) {
-        setUserProfile({ full_name: authUserProfile.full_name || '', phone: authUserProfile.phone || '' });
-        setEditProfile({ full_name: authUserProfile.full_name || '', phone: authUserProfile.phone || '' });
+    const fetchProfile = async () => {
+      if (!user) {
+        setUserProfile(null);
+        setEditProfile({ full_name: '', phone: '' });
         return;
       }
 
-      if (user?.id) {
-        try {
-      // Immediate: use cached profile if available to populate UI quickly
-      // NOTE: do not use cached profile for initial display. Keep cache only
-      // as a persistence layer but prefer authoritative data from Supabase.
-
-          const { data, error } = await supabase
-            .from('profiles')
-            .select('full_name, phone, wallet_type')
-            .eq('id', user.id)
-            .maybeSingle();
-
-          console.log('[DEBUG] Buyer select profiles', { data, error });
-
-          const extractString = (obj: unknown, key: string) => {
-            if (!obj || typeof obj !== 'object') return '';
-            const v = (obj as Record<string, unknown>)[key];
-            return typeof v === 'string' ? v : '';
-          };
-
-          let profileData: { full_name?: string; phone?: string; walletType?: string } | null = null;
-
-          if (!error && data) {
-            profileData = {
-              full_name: extractString(data, 'full_name'),
-              phone: extractString(data, 'phone'),
-              walletType: extractString(data, 'wallet_type')
-            };
-          }
-
-          if (!profileData) {
-            // Try to insert (may fail if no token). If insert fails, fallback to cached/sms/user metadata
-            try {
-              const { error: insertError, data: insertData } = await supabase
-                .from('profiles')
-                .insert({ id: user.id, full_name: '', phone: '' });
-              console.log('[DEBUG] Buyer insert profiles', { insertError, insertData });
-              if (!insertError) {
-                profileData = { full_name: '', phone: '' };
-              }
-            } catch (insertEx) {
-              console.warn('[DEBUG] Buyer profile insert exception', insertEx);
-            }
-          }
-
-          if (!profileData) {
-            // Build fallback from cache / sms / metadata
-              try {
-              // Do NOT read `auth_cached_profile_v1` here for display. Prefer
-              // runtime sources (sms_auth_session or user metadata) when DB row
-              // is missing. The cache remains written elsewhere but is not used
-              // as authoritative UI source.
-              // Start with a concrete fallback object to avoid unions that
-              // confuse TypeScript control-flow analysis.
-              const fallback: { full_name?: string; phone?: string; walletType?: string } = { full_name: '', phone: '', walletType: '' };
-
-              // Try SMS session first if we don't already have a phone
-              if (!fallback.phone) {
-                const smsRaw = localStorage.getItem('sms_auth_session');
-                if (smsRaw) {
-                  try {
-                    const parsed = JSON.parse(smsRaw) as unknown;
-                    if (parsed && typeof parsed === 'object') {
-                      const smsObj = parsed as Record<string, unknown>;
-                      const smsName = typeof smsObj.name === 'string' ? smsObj.name as string : '';
-                      const smsPhone = typeof smsObj.phone === 'string' ? smsObj.phone as string : '';
-                      if (smsName) fallback.full_name = smsName;
-                      if (smsPhone) fallback.phone = smsPhone;
-                    }
-                  } catch (e) {
-                    console.warn('[DEBUG] failed to parse sms_auth_session', e);
-                  }
-                }
-              }
-
-              // Fall back to user metadata when SMS didn't provide enough
-              if (!fallback.full_name && !fallback.phone) {
-                const userMeta = user.user_metadata as Record<string, unknown> | undefined;
-                const maybePhone = typeof userMeta?.phone === 'string' ? (userMeta.phone as string) : user.email || '';
-                const maybeFull = typeof userMeta?.full_name === 'string' ? (userMeta.full_name as string) : '';
-                const maybeWallet = typeof (userMeta && (userMeta as Record<string, unknown>)['wallet_type']) === 'string' ? (userMeta as Record<string, unknown>)['wallet_type'] as string : '';
-                if (maybeFull) fallback.full_name = maybeFull;
-                if (maybePhone) fallback.phone = maybePhone;
-                if (maybeWallet) fallback.walletType = maybeWallet;
-              }
-
-              if (!fallback.full_name || String(fallback.full_name).trim() === '') {
-                const p = String(fallback.phone || '');
-                const last4 = p.replace(/[^0-9]/g, '').slice(-4);
-                fallback.full_name = last4 ? `Client ${last4}` : 'Client';
-              }
-
-              profileData = { full_name: fallback.full_name || '', phone: fallback.phone || '', walletType: fallback.walletType || '' };
-
-              try {
-                localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: profileData.full_name, phone: profileData.phone, walletType: profileData.walletType, role: 'buyer' }));
-                console.log('[DEBUG] Buyer cached fallback profile to localStorage');
-              } catch (e) {
-                console.warn('[DEBUG] failed to cache fallback profile', e);
-              }
-            } catch (e) {
-              console.warn('[DEBUG] building fallback profile failed', e);
-            }
-          }
-
-          if (profileData) {
-            setUserProfile({ full_name: profileData.full_name || '', phone: profileData.phone || '' });
-            setEditProfile({ full_name: profileData.full_name || '', phone: profileData.phone || '' });
-          }
-        } catch (e) {
-          console.error('[DEBUG] fetchOrCreateProfile failed', e);
+      // If we are in SMS auth mode, use the cached profile from useAuth and avoid calling Supabase (no auth token)
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        console.log('[DEBUG] BuyerDashboard: detected sms_auth_session, using authUserProfile from useAuth');
+        if (authUserProfile) {
+          setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined });
+          setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '' });
+        } else {
+          setUserProfile(null);
+          setEditProfile({ full_name: '', phone: '' });
         }
+        return;
+      }
+
+      try {
+        // Debug: show supabase session and user info before DB ops
+        try {
+          const sessRes = await supabase.auth.getSession();
+          const sess = sessRes.data?.session ?? null;
+          console.log('[DEBUG] BuyerDashboard supabase session before select', { hasSession: !!sess, userId: sess?.user?.id });
+        } catch (e) {
+          console.warn('[DEBUG] BuyerDashboard supabase.getSession failed', e);
+        }
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('full_name, phone')
+          .eq('id', user.id)
+          .single();
+
+        if (!error && data) {
+          setUserProfile({ 
+            full_name: data.full_name ?? undefined, 
+            phone: data.phone ?? undefined 
+          });
+          // Do not setEditProfile here, only set from userProfile when opening drawer
+        } else {
+          console.error('[DEBUG] BuyerDashboard fetchProfile error', error);
+          // Si le profil n'existe pas, le créer automatiquement
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: user.id,
+              full_name: '',
+              phone: '',
+              role: 'buyer',
+            });
+          if (!insertError) {
+            setUserProfile({ full_name: '', phone: '' });
+          } else {
+            setUserProfile(null);
+          }
+          setEditProfile({ full_name: '', phone: '' });
+        }
+      } catch (err) {
+        console.error('[DEBUG] BuyerDashboard unexpected error fetching profile', err);
+        setUserProfile(null);
+        setEditProfile({ full_name: '', phone: '' });
       }
     };
-    fetchOrCreateProfile();
+    fetchProfile();
   }, [user, authUserProfile]);
 
+  // Sync editProfile with userProfile when opening the drawer
   useEffect(() => {
-    if (userProfile && user) {
+    if (drawerOpen && userProfile) {
       setEditProfile({
         full_name: userProfile.full_name || '',
         phone: userProfile.phone || ''
       });
     }
-  }, [userProfile, user]);
+    if (!drawerOpen) {
+      setIsEditing(false);
+    }
+  }, [drawerOpen, userProfile]);
+  // Handler pour sauvegarder le profil
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    setSavingProfile(true);
+    try {
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        // For SMS-authenticated users, try backend admin endpoints (with fallbacks)
+        console.log('[DEBUG] BuyerDashboard: updating profile via backend for SMS session', { id: user.id });
+        const { ok, json, error, url } = await postProfileUpdate({ profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone });
+        console.log('[DEBUG] BuyerDashboard profile update via backend result', { ok, url, error });
+        if (!ok) throw new Error(`Backend update failed: ${JSON.stringify(error)}`);
+        const saved = json?.profile ?? json;
+        setUserProfile({ full_name: saved?.full_name ?? editProfile.full_name, phone: saved?.phone ?? editProfile.phone });
+        // update local cache
+        try {
+          const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
+          const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'buyer' };
+          cacheObj.full_name = saved?.full_name ?? editProfile.full_name;
+          cacheObj.phone = saved?.phone ?? editProfile.phone;
+          localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+        } catch (e) {
+          // ignore
+        }
+      } else {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: editProfile.full_name,
+            phone: editProfile.phone
+          })
+          .eq('id', user.id);
+        if (error) throw error;
+        // Relire le profil depuis Supabase après la sauvegarde
+        const { data, error: fetchError } = await supabase
+          .from('profiles')
+          .select('full_name, phone')
+          .eq('id', user.id)
+          .single();
+        if (!fetchError && data) {
+          setUserProfile({
+            full_name: data.full_name ?? undefined,
+            phone: data.phone ?? undefined
+          });
+        }
+      }
+
+      setDrawerOpen(false);
+      toast({ title: 'Profil mis à jour', description: 'Vos informations ont été enregistrées.' });
+    } catch (error) {
+      console.error('[DEBUG] BuyerDashboard handleSaveProfile error', error);
+      toast({ title: 'Erreur', description: 'Impossible de sauvegarder le profil', variant: 'destructive' });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  // (Synchronisation déjà gérée ci-dessus)
 
   useEffect(() => {
     const channel = supabase
@@ -519,52 +527,7 @@ const BuyerDashboard = () => {
     setPaymentModalOpen(false);
   };
 
-  const handleSaveProfile = async () => {
-    if (!user) {
-      toast({ title: 'Erreur', description: "Vous n'êtes pas connecté.", variant: 'destructive' });
-      return;
-    }
-    setSavingProfile(true);
-    // Update profile
-    const updates: { full_name?: string; phone?: string } = {
-      full_name: editProfile.full_name,
-      phone: editProfile.phone
-    };
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', user.id);
-    setSavingProfile(false);
-    if (!profileError) {
-      toast({ title: 'Profil mis à jour', description: 'Vos informations ont été enregistrées.' });
-      setDrawerOpen(false);
-      setIsEditing(false);
-      // Recharger le profil
-      const { data } = await supabase.from('profiles').select('full_name, phone, wallet_type').eq('id', user.id).maybeSingle();
-      const extractString = (obj: unknown, key: string) => {
-        if (!obj || typeof obj !== 'object') return '';
-        const v = (obj as Record<string, unknown>)[key];
-        return typeof v === 'string' ? v : '';
-      };
-      const full_name = data ? extractString(data, 'full_name') || '' : editProfile.full_name;
-      const phone = data ? extractString(data, 'phone') || '' : editProfile.phone;
-      const walletType = data ? extractString(data, 'wallet_type') || '' : '';
-      setUserProfile({ phone: phone || '', full_name: full_name || '' });
-      // Update cache
-      try {
-        const cacheRaw = localStorage.getItem('auth_cached_profile_v1');
-        const cacheObj = cacheRaw ? JSON.parse(cacheRaw) : { id: user.id, email: user.email || '', full_name, phone, role: 'buyer' };
-        cacheObj.full_name = full_name || cacheObj.full_name;
-        cacheObj.phone = phone || cacheObj.phone;
-        if (walletType) cacheObj.walletType = walletType;
-        localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
-      } catch (e) {
-        console.warn('[DEBUG] failed to update cached profile after save', e);
-      }
-    } else {
-      toast({ title: 'Erreur', description: profileError?.message || 'Erreur inconnue', variant: 'destructive' });
-    }
-  };
+  // ...profile save handler removed...
 
   const handleSignOut = async () => {
     await signOut();
@@ -1088,121 +1051,87 @@ const BuyerDashboard = () => {
 
       {/* Header Client moderne - dégradé orange Validèl */}
       <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6 relative">
-        <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
-          <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
-            Validèl
-          </h1>
-          <p className="text-white/90 text-sm mt-1">Espace Client</p>
+        <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col items-center md:items-start">
+            <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
+              Validèl
+            </h1>
+            <p className="text-white/90 text-sm mt-1">Espace Client</p>
+          </div>
+          {/* Affichage du profil */}
+          {userProfile && (
+            <div className="flex flex-col items-end bg-white/10 rounded-xl px-5 py-3" style={{ minWidth: 220 }}>
+              <span className="text-white font-semibold text-lg" style={{ letterSpacing: 0.5 }}>{userProfile.full_name || 'Nom non défini'}</span>
+              <span className="text-white/90 text-sm mt-1">{userProfile.phone || 'Téléphone non défini'}</span>
+            </div>
+          )}
+          {/* Bouton paramètres */}
+          <button
+            className="hidden md:flex absolute top-6 right-8 items-center justify-center w-10 h-10 rounded-full hover:bg-white/10"
+            onClick={() => { setDrawerOpen(true); }}
+            aria-label="Paramètres"
+          >
+            <Settings className="h-5 w-5 text-white" />
+          </button>
+          {/* Hamburger mobile à gauche */}
+          <button
+            className="md:hidden absolute top-6 left-6 flex items-center justify-center w-9 h-9 rounded-full hover:bg-white/10"
+            onClick={() => { setDrawerOpen(true); }}
+            aria-label="Paramètres"
+          >
+            <Settings className="h-5 w-5 text-white" />
+          </button>
         </div>
-        {/* Avatar desktop */}
-        <button
-          className="hidden md:flex absolute top-6 right-8 items-center justify-center w-10 h-10 rounded-full hover:bg-white/10"
-          onClick={() => { setDrawerOpen(true); setIsEditing(true); }}
-          aria-label="Paramètres"
-        >
-          <Settings className="h-5 w-5 text-white" />
-        </button>
-        {/* Hamburger mobile à gauche */}
-        <button
-          className="md:hidden absolute top-6 left-6 flex items-center justify-center w-9 h-9 rounded-full hover:bg-white/10"
-          onClick={() => { setDrawerOpen(true); setIsEditing(true); }}
-          aria-label="Paramètres"
-        >
-          <Settings className="h-5 w-5 text-white" />
-        </button>
       </header>
 
-      {/* Drawer desktop */}
+      {/* Drawer de profil */}
       {drawerOpen && (
-        <div className="hidden md:flex fixed inset-0 z-50 bg-black bg-opacity-30 justify-end">
-          <div className="bg-white w-full max-w-sm h-full shadow-lg p-6 flex flex-col">
-            <div className="flex items-center gap-3 mb-6">
-              <UserCircle className="h-10 w-10 text-gray-400" />
-              <span className="font-bold text-lg">Mon profil</span>
-            </div>
-            <form className="flex flex-col gap-4 flex-1" onSubmit={async (e) => {
-              e.preventDefault();
-              await handleSaveProfile();
-            }}>
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 32, minWidth: 320, boxShadow: '0 4px 24px #0002', maxWidth: '90vw' }}>
+            <h2 style={{ fontWeight: 700, fontSize: 20, marginBottom: 16 }}>Mon profil</h2>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 500, fontSize: 14 }}>Nom complet</label>
               <input
-                className="border rounded px-3 py-2"
-                name="full_name"
-                placeholder="Nom complet"
-                value={editProfile.full_name || ''}
+                type="text"
+                value={editProfile.full_name}
                 onChange={e => setEditProfile(p => ({ ...p, full_name: e.target.value }))}
-                maxLength={40}
-                required
+                style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12 }}
+                placeholder="Votre nom complet"
               />
+              <label style={{ fontWeight: 500, fontSize: 14 }}>Téléphone</label>
               <input
-                className="border rounded px-3 py-2"
-                name="phone"
-                placeholder="Téléphone"
-                value={editProfile.phone || ''}
+                type="tel"
+                value={editProfile.phone}
                 onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
-                required
+                style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12 }}
+                placeholder="Votre numéro de téléphone"
               />
-              <div className="flex gap-2 mt-4">
-                <Button type="submit" className="flex-1 bg-green-500 hover:bg-green-600" disabled={savingProfile}>
-                  {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
-                </Button>
-                <Button type="button" variant="outline" className="flex-1" onClick={() => { setDrawerOpen(false); setIsEditing(false); }}>
-                  Annuler
-                </Button>
-              </div>
-              <Button
-                type="button"
-                className="w-full mt-2 bg-red-600 hover:bg-red-700"
-                onClick={handleSignOut}
-              >
-                Déconnexion
-              </Button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Drawer mobile */}
-      {drawerOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-black bg-opacity-40 flex justify-end">
-          <div className="bg-white w-full max-w-xs h-full shadow-lg p-6 flex flex-col">
-            <div className="flex flex-col items-center gap-2 mb-6">
-              <UserCircle className="h-12 w-12 text-green-500 mb-2" />
-              <span className="font-bold text-lg">Mon profil</span>
             </div>
-            <form className="flex flex-col gap-3 flex-1" onSubmit={async (e) => { e.preventDefault(); await handleSaveProfile(); }}>
-              <input
-                className="border rounded px-3 py-2 text-sm"
-                name="full_name"
-                placeholder="Nom complet"
-                value={editProfile.full_name || ''}
-                onChange={e => setEditProfile(p => ({ ...p, full_name: e.target.value }))}
-                maxLength={40}
-                required
-              />
-              <input
-                className="border rounded px-3 py-2 text-sm"
-                name="phone"
-                placeholder="Téléphone"
-                value={editProfile.phone || ''}
-                onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
-                required
-              />
-              <div className="flex gap-2 mt-2">
-                <Button type="submit" className="flex-1 bg-green-500 hover:bg-green-600" disabled={savingProfile}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={savingProfile}
+                  style={{ flex: 1, background: '#24BD5C', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer', opacity: savingProfile ? 0.7 : 1 }}
+                >
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
-                </Button>
-                <Button type="button" variant="outline" className="flex-1" onClick={() => { setDrawerOpen(false); setIsEditing(false); }}>
+                </button>
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer' }}
+                >
                   Annuler
-                </Button>
+                </button>
               </div>
-              <Button
-                type="button"
-                className="w-full mt-2 bg-red-600 hover:bg-red-700"
+              <button
                 onClick={handleSignOut}
+                style={{ width: '100%', background: '#e53e3e', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
               >
-                Déconnexion
-              </Button>
-            </form>
+                Se déconnecter
+              </button>
+            </div>
           </div>
         </div>
       )}

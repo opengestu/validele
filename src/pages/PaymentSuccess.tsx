@@ -4,6 +4,7 @@ import Confetti from 'react-confetti';
 import jsPDF from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { getProfileById } from '@/lib/api';
 import validelLogo from '@/assets/validel-logo.png';
 import { notifyVendorNewOrder } from '@/services/notifications';
 
@@ -45,11 +46,27 @@ const PaymentSuccess = () => {
       }
       setOrder(orderData);
       // 2. Récupère le profil acheteur
-      const { data: buyerData } = await supabase
-        .from('profiles')
-        .select('full_name, email')
-        .eq('id', orderData.buyer_id)
-        .single();
+      let buyerData = null;
+      try {
+        const res = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', orderData.buyer_id)
+          .single();
+        buyerData = res.data;
+      } catch (e) {
+        console.warn('[PaymentSuccess] supabase get buyer profile failed, will try backend admin', e);
+      }
+
+      if (!buyerData) {
+        try {
+          const { ok, json, url } = await getProfileById(orderData.buyer_id);
+          console.log('[PaymentSuccess] getProfileById result', { ok, url });
+          if (ok) buyerData = json?.profile ?? json;
+        } catch (e) {
+          console.warn('[PaymentSuccess] backend get profile failed', e);
+        }
+      }
       setBuyer(buyerData);
       // 3. Récupère le produit
       const { data: productData } = await supabase
