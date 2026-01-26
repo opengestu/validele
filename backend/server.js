@@ -806,6 +806,18 @@ async function requireAdmin(req, res, next) {
     try {
       const { data, error } = await supabase.auth.getUser(token);
       if (!error && data?.user) {
+        console.log('[ADMIN] requireAdmin: supabase user id detected ->', data.user.id);
+        // Also accept users who have role='admin' in profiles table
+        try {
+          const { data: profRow, error: profErr } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
+          if (!profErr && profRow && profRow.role === 'admin') {
+            console.log('[ADMIN] requireAdmin: profile role=admin, granting access for', data.user.id);
+            req.adminUser = data.user;
+            return next();
+          }
+        } catch (e) {
+          console.warn('[ADMIN] requireAdmin: error checking profile role:', e?.message || e);
+        }
         if (adminUserId && data.user.id === adminUserId) {
           req.adminUser = data.user;
           return next();
@@ -820,6 +832,7 @@ async function requireAdmin(req, res, next) {
           console.error('[ADMIN] Error checking admin_users:', adminErr);
           return res.status(500).json({ success: false, error: 'Server error checking admin users' });
         }
+        console.log('[ADMIN] requireAdmin: admin_users lookup', { adminRow });
         if (adminRow && adminRow.id) {
           req.adminUser = data.user;
           return next();
