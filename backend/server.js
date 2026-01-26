@@ -1,6 +1,5 @@
-// ...existing code...
-
-// Endpoint pour ajout produit par un vendeur (bypass RLS pour session SMS)
+// ...initialisation et middlewares...
+// Ajout du endpoint après l'initialisation de app
 app.post('/api/vendor/add-product', async (req, res) => {
   try {
     // Vérification basique de l'identité du vendeur (id transmis dans le body, à sécuriser selon ton flux réel)
@@ -30,6 +29,11 @@ app.post('/api/vendor/add-product', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
+// ...existing code...
+
+// ...existing code...
+
+// (À placer après const app = express;)
 // backend/server.js
 // INSPECT: server.js - checking DB and routes
 const express = require('express');
