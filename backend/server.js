@@ -4,6 +4,14 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 require('dotenv').config();
+// Support both SUPABASE_ANON_KEY and VITE_SUPABASE_ANON_KEY used on Render
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
+const SUPABASE_ANON_KEY_SOURCE = process.env.SUPABASE_ANON_KEY ? 'SUPABASE_ANON_KEY' : (process.env.VITE_SUPABASE_ANON_KEY ? 'VITE_SUPABASE_ANON_KEY' : (process.env.SUPABASE_KEY ? 'SUPABASE_KEY' : (process.env.SUPABASE_CLIENT_KEY ? 'SUPABASE_CLIENT_KEY' : null)));
+if (SUPABASE_ANON_KEY_SOURCE) {
+  console.log('[ADMIN] Supabase anon key source:', SUPABASE_ANON_KEY_SOURCE);
+} else {
+  console.warn('[ADMIN] Supabase anon key not found in environment (SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY)');
+}
 const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
@@ -844,9 +852,8 @@ app.post('/api/admin/login', async (req, res) => {
     if (!email || !password) return res.status(400).json({ success: false, error: 'Email and password required' });
 
     const SUPABASE_URL = process.env.SUPABASE_URL;
-    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-      console.error('[ADMIN] Supabase auth config missing');
+      console.error('[ADMIN] Supabase auth config missing. SUPABASE_URL present?', !!SUPABASE_URL, 'anonKeySource:', SUPABASE_ANON_KEY_SOURCE);
       return res.status(500).json({ success: false, error: 'Server config error' });
     }
 
@@ -895,7 +902,10 @@ app.post('/api/admin/refresh', async (req, res) => {
     if (!refreshToken) return res.status(400).json({ success: false, error: 'Missing refresh token' });
 
     const SUPABASE_URL = process.env.SUPABASE_URL;
-    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      console.error('[ADMIN] Supabase auth config missing. SUPABASE_URL present?', !!SUPABASE_URL, 'anonKeySource:', SUPABASE_ANON_KEY_SOURCE);
+      return res.status(500).json({ success: false, error: 'Server config error' });
+    }
     const params = new URLSearchParams();
     params.append('grant_type', 'refresh_token');
     params.append('refresh_token', refreshToken);
