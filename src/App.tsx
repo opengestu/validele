@@ -25,6 +25,7 @@ import DeliveryDashboard from "@/components/DeliveryDashboard";
 import OrderDetails from "@/components/OrderDetails";
 import QRScanner from "@/components/QRScanner";
 import AdminDashboard from "@/components/AdminDashboard";
+import AdminLoginForm from "@/components/AdminLoginForm";
 import NotFound from "./pages/NotFound";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import ColorDemo from "./components/ColorDemo";
@@ -78,6 +79,8 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+              {/* Preview route to view the admin login form without being authenticated */}
+              <Route path="/admin-login" element={<AdminLoginForm />} />
               {/* Protected Routes for Buyers */}
               <Route 
                 path="/buyer" 
