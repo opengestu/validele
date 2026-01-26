@@ -907,21 +907,16 @@ app.post('/api/admin/login', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Server config error' });
     }
 
-    const params = new URLSearchParams();
-    params.append('grant_type', 'password');
-    params.append('email', String(email));
-    params.append('password', String(password));
+    // Use Supabase JS SDK for authentication to avoid edge-cases with direct token endpoint parsing
+    const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({ email: String(email), password: String(password) });
+    if (loginErr || !loginData?.session?.access_token) {
+      console.error('[ADMIN] login error:', loginErr || 'no session returned');
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
 
-    const r = await axios.post(`${SUPABASE_URL}/auth/v1/token`, params.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', apikey: SUPABASE_ANON_KEY }
-    });
-
-    const data = r.data || {};
-    const accessToken = data.access_token;
-    const refreshToken = data.refresh_token;
-    const expiresIn = Number(data.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
-
-    if (!accessToken) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    const accessToken = loginData.session.access_token;
+    const refreshToken = loginData.session.refresh_token;
+    const expiresIn = Number(loginData.session.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
 
     // Verify user & admin status
     const { data: userRes } = await supabase.auth.getUser(accessToken);
