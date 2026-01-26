@@ -939,8 +939,9 @@ app.post('/api/admin/login', async (req, res) => {
     }
 
     // Set httpOnly cookies
-    res.cookie('admin_access', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: expiresIn * 1000 });
-    if (refreshToken) res.cookie('admin_refresh', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/admin/refresh' });
+    // Pour permettre l'auth cross-site (localhost <-> Render), il faut SameSite=None et Secure
+    res.cookie('admin_access', accessToken, { httpOnly: true, secure: true, sameSite: 'none', maxAge: expiresIn * 1000 });
+    if (refreshToken) res.cookie('admin_refresh', refreshToken, { httpOnly: true, secure: true, sameSite: 'none', path: '/api/admin/refresh' });
 
     return res.json({ success: true });
   } catch (err) {
