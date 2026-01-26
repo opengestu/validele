@@ -840,8 +840,42 @@ app.post('/api/admin/login-local', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Profile not found' });
     }
 
-    // Verify PIN (current app stores pin_plain in pin_hash)
-    if (!profile.pin_hash || String(pin) !== String(profile.pin_hash)) {
+    // Verify PIN
+    // Support both plaintext legacy pins and bcrypt-hashed pins (used by SMS registration)
+    let isPinValid = false;
+    try {
+      const pinStored = String(profile.pin_hash || '');
+      // bcrypt hash detection
+      if (/^\$2[aby]\$/.test(pinStored)) {
+        try {
+          const bcrypt = require('bcryptjs');
+          isPinValid = await bcrypt.compare(String(pin), pinStored);
+        } catch (bcryptErr) {
+          console.error('[ADMIN] bcrypt compare error during login-local:', bcryptErr);
+          // fallback to plain equality
+          isPinValid = String(pin) === pinStored;
+        }
+      } else {
+        // Plaintext equality (legacy)
+        isPinValid = String(pin) === pinStored;
+        // If match and bcrypt available, migrate to bcrypt for safety
+        if (isPinValid) {
+          try {
+            const bcrypt = require('bcryptjs');
+            const newHash = await bcrypt.hash(String(pin), 10);
+            await supabase.from('profiles').update({ pin_hash: newHash }).eq('id', profileId);
+            console.log('[ADMIN] Migrated plain PIN to bcrypt for admin profile', profileId);
+          } catch (migErr) {
+            console.warn('[ADMIN] Failed to migrate plain PIN to bcrypt:', migErr);
+          }
+        }
+      }
+    } catch (verifyErr) {
+      console.error('[ADMIN] Error verifying PIN:', verifyErr);
+      return res.status(500).json({ success: false, error: 'Server error' });
+    }
+
+    if (!isPinValid) {
       return res.status(401).json({ success: false, error: 'Invalid PIN' });
     }
 
