@@ -863,7 +863,42 @@ async function requireAdmin(req, res, next) {
 // POST /api/admin/login - authenticate admin via email/password and set httpOnly cookies
 app.post('/api/admin/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    // Robust parsing: accept well-formed JSON, and fall back to tolerant parsing
+    // for common malformed bodies (PowerShell single-quoted JSON, urlencoded payloads, etc.).
+    let { email, password } = req.body || {};
+
+    if ((!email || !password) && req.rawBody) {
+      const raw = String(req.rawBody || '').trim();
+      // Remove wrapping single quotes often added by shells: e.g. '\'{...}\''
+      let normalized = raw.replace(/^'+/, '').replace(/'+$/, '');
+      let parsed = null;
+
+      try {
+        parsed = JSON.parse(normalized);
+      } catch (jsonErr1) {
+        // Try converting simple single quotes to double quotes (best-effort)
+        try {
+          parsed = JSON.parse(normalized.replace(/'/g, '"'));
+        } catch (jsonErr2) {
+          // Try parsing as urlencoded form
+          try {
+            const qs = require('querystring');
+            parsed = qs.parse(normalized);
+          } catch (qsErr) {
+            parsed = null;
+          }
+        }
+      }
+
+      if (parsed) {
+        // Mask password in logs
+        const snippet = (typeof normalized === 'string' ? normalized.replace(/("password"\s*:\s*)"([^"]+)"/gi, '$1"***"').replace(/('password'\s*:\s*)'([^']+)'/gi, "$1'***'") : '');
+        console.log('[ADMIN] tolerant-parse login body, snippet:', snippet.slice(0, 200));
+        email = email || parsed.email;
+        password = password || parsed.password;
+      }
+    }
+
     if (!email || !password) return res.status(400).json({ success: false, error: 'Email and password required' });
 
     const SUPABASE_URL = process.env.SUPABASE_URL;
