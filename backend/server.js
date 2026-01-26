@@ -1,3 +1,5 @@
+// ...existing code...
+
 // Endpoint pour ajout produit par un vendeur (bypass RLS pour session SMS)
 app.post('/api/vendor/add-product', async (req, res) => {
   try {
