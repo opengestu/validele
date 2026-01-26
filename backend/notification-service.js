@@ -174,23 +174,10 @@ async function notifyBuyerPaymentFailed(buyerId, orderDetails) {
     }
   }
 
-  // essayer d'envoyer un SMS si on a le numéro
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('phone')
-        .eq('id', buyerId)
-        .maybeSingle();
-      if (!error && data?.phone) {
-        const smsText = `Votre paiement pour la commande ${orderDetails.orderCode || ''} a échoué sur VALIDEL. Ouvrez l'app pour réessayer.`;
-        smsResult = await sendD7SMSNotify(data.phone, smsText);
-        console.log(`[NOTIF] SMS paiement échoué envoyé à ${data.phone}`);
-      }
-    } catch (error) {
-      console.error('[NOTIF] Erreur envoi SMS paiement échoué:', error?.message || error);
-    }
-  }
+  // Par design : ne PAS envoyer de SMS pour les paiements échoués ou en pending.
+  // Les SMS ne sont envoyés que pour les notifications de type "order in progress" ou pour l'inscription OTP.
+  // Nous conservons ici un log clair pour indiquer qu'on n'envoie pas de SMS sur échec de paiement.
+  console.log('[NOTIF] SMS pour paiement échoué désactivé par configuration (aucun SMS envoyé)');
 
   return { sent: !!(pushResult || smsResult), pushResult, smsResult };
 }
