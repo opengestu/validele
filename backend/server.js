@@ -18,10 +18,20 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 const app = express();
 
 // CORS global, avant toute route
-app.use(cors({
-  origin: '*', // Pour la prod, remplace par l'URL de ton frontend si besoin
+const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser (curl) or same-origin server requests
+    if (!origin) return callback(null, true);
+    // Allow explicit VITE_DEV_ORIGIN
+    if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return callback(null, true);
+    // Allow any localhost or 127.0.0.1 on any port (dev convenience)
+    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'), false);
+  },
   credentials: true
-}));
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -41,7 +51,6 @@ process.on('unhandledRejection', function (reason, p) {
 });
 
 app.use(express.json({ type: '*/*' })); // Force le parsing JSON même si le header n'est pas exactement application/json
-app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 
 // Middleware de gestion d'erreur globale pour attraper les erreurs de parsing JSON

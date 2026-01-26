@@ -113,18 +113,20 @@ const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'timers'|'payouts'|'payouts_history'>('orders');
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
-  // Allow access if the logged-in user matches either the VITE admin id or the adminId param in the URL
-  const isAdminUser = !!(userProfile && (userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)));
+  // If we have a userProfile, ensure it matches the admin id or the adminId param.
+  // If there is no userProfile (not signed-in via supabase), allow the page to attempt admin login via cookies.
+  const isAdminUser = userProfile ? !!(userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)) : true;
 
 
   useEffect(() => {
-    if (!isAdminUser) {
+    // If the user is known and not admin, block access. If userProfile is missing, allow showing login form.
+    if (userProfile && !isAdminUser) {
       setLoading(false);
       return;
     }
     fetchData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdminUser]);
+  }, [userProfile, adminId]);
 
   const getAuthHeader = (): HeadersInit => {
     const adminToken = localStorage.getItem('admin_token');
@@ -178,21 +180,21 @@ const AdminDashboard: React.FC = () => {
     setLoading(true);
     try {
       const headers = getAuthHeader();
-      const oRes = await fetch(apiUrl('/api/admin/orders'), { headers });
+      const oRes = await fetch(apiUrl('/api/admin/orders'), { headers, credentials: 'include' });
       if (oRes.status === 401) {
         setShowAdminLogin(true);
         setLoading(false);
         return;
       }
-      const tRes = await fetch(apiUrl('/api/admin/transactions'), { headers });
+      const tRes = await fetch(apiUrl('/api/admin/transactions'), { headers, credentials: 'include' });
       if (tRes.status === 401) {
         setShowAdminLogin(true);
         setLoading(false);
         return;
       }
 
-      const timRes = await fetch(apiUrl('/api/admin/timers'), { headers });
-      const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers });
+      const timRes = await fetch(apiUrl('/api/admin/timers'), { headers, credentials: 'include' });
+      const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers, credentials: 'include' });
 
       const oJson = await oRes.json();
       const tJson = await tRes.json();
@@ -243,7 +245,7 @@ const AdminDashboard: React.FC = () => {
   const startTimer = async (orderId: string, durationSeconds: number, message?: string) => {
     try {
       const res = await fetch(apiUrl('/api/admin/start-timer'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ orderId, durationSeconds, message })
       });
       const json = await res.json();
@@ -259,7 +261,7 @@ const AdminDashboard: React.FC = () => {
   const cancelTimer = async (timerId: string) => {
     try {
       const res = await fetch(apiUrl('/api/admin/cancel-timer'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ timerId })
       });
       const json = await res.json();
@@ -276,7 +278,7 @@ const AdminDashboard: React.FC = () => {
     if (!userId) return toast({ title: 'Erreur', description: 'Utilisateur introuvable', variant: 'destructive' });
     try {
       const res = await fetch(apiUrl('/api/admin/notify'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ userId, title, body })
       });
       const json = await res.json();
@@ -293,9 +295,10 @@ const AdminDashboard: React.FC = () => {
     try {
       // 1) verify eligibility (server-side authoritative check)
       const verifyRes = await fetch(apiUrl('/api/admin/verify-and-payout'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: false })
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: false })
       });
       const verifyJson = await verifyRes.json();
+
       if (!verifyRes.ok) throw new Error(verifyJson.error || 'Erreur vérification');
 
       const report = verifyJson.report;
@@ -310,7 +313,7 @@ const AdminDashboard: React.FC = () => {
 
       // 3) execute payout
       const execRes = await fetch(apiUrl('/api/admin/verify-and-payout'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true })
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true })
       });
       const execJson = await execRes.json();
       if (!execRes.ok) throw new Error(execJson.error || 'Erreur exécution payout');
