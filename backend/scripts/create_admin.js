@@ -35,14 +35,28 @@ async function main() {
       console.log('Created user id:', user.id);
     } else {
       console.log('Found user id:', user.id);
+      // If a password is provided, update the existing user's password to the provided one
+      if (password) {
+        console.log(`Updating password for existing user ${user.id}...`);
+        try {
+          const { data: updated, error: updateErr } = await supabase.auth.admin.updateUserById(user.id, { password, email_confirm: true });
+          if (updateErr) {
+            console.warn('Warning: could not update password for existing user:', updateErr.message || updateErr);
+          } else {
+            console.log('Password updated for user id:', user.id);
+          }
+        } catch (e) {
+          console.warn('Warning: error while updating password for existing user:', e?.message || e);
+        }
+      }
     }
 
-    // Ensure profile exists (upsert)
-    const { error: profileErr } = await supabase.from('profiles').upsert({ id: user.id, full_name: user.user_metadata?.full_name || null, phone: user.user_metadata?.phone || null, role: 'admin' }, { onConflict: 'id' });
+    // Ensure profile exists (upsert) - role must be 'vendor', 'buyer', or 'delivery' (not 'admin')
+    const { error: profileErr } = await supabase.from('profiles').upsert({ id: user.id, full_name: user.user_metadata?.full_name || null, phone: user.user_metadata?.phone || null, role: 'vendor' }, { onConflict: 'id' });
     if (profileErr) {
       console.warn('Warning: could not upsert profile. Error:', profileErr.message || profileErr);
     } else {
-      console.log('Profile ensured (upsert).');
+      console.log('Profile ensured (upsert, role vendor).');
     }
 
     // Insert into admin_users table

@@ -943,7 +943,8 @@ app.post('/api/admin/login', async (req, res) => {
     res.cookie('admin_access', accessToken, { httpOnly: true, secure: true, sameSite: 'none', maxAge: expiresIn * 1000 });
     if (refreshToken) res.cookie('admin_refresh', refreshToken, { httpOnly: true, secure: true, sameSite: 'none', path: '/api/admin/refresh' });
 
-    return res.json({ success: true });
+    // Return session tokens so the frontend can initialize the Supabase client session
+    return res.json({ success: true, access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn, user_id: user.id });
   } catch (err) {
     console.error('[ADMIN] login error:', err?.response?.data || err?.message || err);
     return res.status(401).json({ success: false, error: 'Invalid credentials' });

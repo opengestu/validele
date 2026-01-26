@@ -57,9 +57,19 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // de "profile setup" et redirigez explicitement vers celle-ci.
   // (On continue si `userProfile` est absent ou `full_name` vide.)
 
-  // Vérification du rôle si requis (sécurisée si `userProfile` n'est pas encore chargé)
-  if (requiredRole && userProfile?.role && userProfile.role !== requiredRole) {
-    // Rediriger vers le bon dashboard selon le rôle
+
+  // Correction : si requiredRole est 'admin', on autorise l'accès même si userProfile n'est pas encore chargé,
+  // mais on bloque explicitement l'accès aux autres rôles si userProfile est chargé et différent de 'admin'.
+  if (requiredRole === 'admin') {
+    if (userProfile && userProfile.role !== 'admin') {
+      // Si le profil est chargé et n'est pas admin, on redirige
+      const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 
+                          userProfile.role === 'delivery' ? '/delivery' : '/buyer';
+      return <Navigate to={redirectPath} replace />;
+    }
+    // Sinon, on laisse passer (même si userProfile n'est pas encore chargé)
+  } else if (requiredRole && userProfile?.role && userProfile.role !== requiredRole) {
+    // Pour les autres rôles, logique standard
     const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 
                         userProfile.role === 'delivery' ? '/delivery' : '/buyer';
     return <Navigate to={redirectPath} replace />;
