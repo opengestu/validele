@@ -1,11 +1,21 @@
 // ...initialisation et middlewares...
 // Ajout du endpoint après l'initialisation de app
+// Endpoint sécurisé pour ajout produit par un vendeur (bypass RLS pour session SMS)
 app.post('/api/vendor/add-product', async (req, res) => {
   try {
-    // Vérification basique de l'identité du vendeur (id transmis dans le body, à sécuriser selon ton flux réel)
     const { vendor_id, name, price, description, warranty, code, is_available, stock_quantity } = req.body || {};
     if (!vendor_id || !name || !price || !description || !code) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
+    }
+    // Vérification d'authentification (Bearer token)
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user || user.id !== vendor_id) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
     }
     // Insert via service key (bypass RLS)
     const { data, error } = await supabase
@@ -13,7 +23,7 @@ app.post('/api/vendor/add-product', async (req, res) => {
       .insert({
         vendor_id,
         name,
-        price,
+        price: Number(price),
         description,
         warranty,
         code,
@@ -21,9 +31,10 @@ app.post('/api/vendor/add-product', async (req, res) => {
         stock_quantity: stock_quantity !== undefined ? stock_quantity : 0
       });
     if (error) {
-      return res.status(500).json({ success: false, error: error.message || 'Erreur lors de l\'ajout du produit' });
+      console.error('[API] Erreur ajout produit:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur insertion produit' });
     }
-    return res.json({ success: true, product: data && data[0] });
+    return res.json({ success: true, product: data?.[0] });
   } catch (err) {
     console.error('[API] /api/vendor/add-product error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
