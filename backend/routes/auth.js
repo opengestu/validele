@@ -98,7 +98,7 @@ router.post('/login-pin', async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('profiles')
-      .select('id, pin_hash, phone')
+      .select('id, pin_hash, phone, role')
       .ilike('phone', `%${last9}%`)
       .limit(1);
 
@@ -112,6 +112,13 @@ router.post('/login-pin', async (req, res) => {
     }
 
     const user = data[0];
+
+    // SECURITY: disallow PIN-based login for admin profiles
+    if (user && user.role === 'admin') {
+      console.warn('[LOGIN-PIN] PIN login attempt blocked for admin profile:', user.id);
+      return res.status(403).json({ error: 'PIN login disabled for admin; please use email/password' });
+    }
+
     const pinHash = user.pin_hash;
     console.log('[LOGIN-PIN] PIN reçu:', pin);
     console.log('[LOGIN-PIN] PIN hash stocké:', pinHash);

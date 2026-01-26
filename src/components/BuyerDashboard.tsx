@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { API_BASE, apiUrl, postProfileUpdate } from '@/lib/api';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
+import useNetwork from '@/hooks/useNetwork';
 import.meta.env;
 
 // Temporary placeholders for payment logos — replace with real imports if available
@@ -79,6 +80,7 @@ const BuyerDashboard = () => {
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const isOnline = useNetwork();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
   const [processingPayment, setProcessingPayment] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -151,8 +153,20 @@ const BuyerDashboard = () => {
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
       setOrders(normalizedOrders);
+      try { localStorage.setItem(`cached_buyer_orders_${user.id}`, JSON.stringify(normalizedOrders)); } catch(e) { /* ignore cache errors */ }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
+      // Fallback: use cached orders when offline
+      try {
+        const cached = localStorage.getItem(`cached_buyer_orders_${user?.id}`);
+        if (cached) {
+          setOrders(JSON.parse(cached));
+          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
       toast({
         title: "Erreur",
         description: "Impossible de charger les commandes",
@@ -191,16 +205,31 @@ const BuyerDashboard = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setTransactions((data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>);
+      const txs = (data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
+      setTransactions(txs);
+      try { localStorage.setItem(`cached_buyer_transactions_${user.id}`, JSON.stringify(txs)); } catch(e) { /* ignore */ }
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
+      try {
+        const cached = localStorage.getItem(`cached_buyer_transactions_${user?.id}`);
+        if (cached) {
+          setTransactions(JSON.parse(cached));
+          toast({ title: 'Hors-ligne', description: 'Affichage des transactions en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
     }
-  }, [user]);
+  }, [user, toast]);
 
   useEffect(() => {
     fetchOrders();
     fetchTransactions();
   }, [fetchOrders, fetchTransactions]);
+
+  // Offline banner is rendered within the layout UI below
+
 
   // Listener pour rafraîchir les commandes quand l'utilisateur revient du navigateur de paiement
   useEffect(() => {
@@ -208,7 +237,7 @@ const BuyerDashboard = () => {
 
     const setupBrowserListener = async () => {
       const listener = await Browser.addListener('browserFinished', () => {
-        console.log('[BuyerDashboard] Utilisateur revenu du paiement, rafraîchissement...');
+        
         // Rafraîchir les commandes après 1 seconde
         setTimeout(() => {
           fetchOrders();
@@ -264,7 +293,7 @@ const BuyerDashboard = () => {
       // If we are in SMS auth mode, use the cached profile from useAuth and avoid calling Supabase (no auth token)
       const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
       if (smsSessionStr) {
-        console.log('[DEBUG] BuyerDashboard: detected sms_auth_session, using authUserProfile from useAuth');
+        
         if (authUserProfile) {
           setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined });
           setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '' });
@@ -280,9 +309,9 @@ const BuyerDashboard = () => {
         try {
           const sessRes = await supabase.auth.getSession();
           const sess = sessRes.data?.session ?? null;
-          console.log('[DEBUG] BuyerDashboard supabase session before select', { hasSession: !!sess, userId: sess?.user?.id });
+          
         } catch (e) {
-          console.warn('[DEBUG] BuyerDashboard supabase.getSession failed', e);
+          console.warn('BuyerDashboard supabase.getSession failed', e);
         }
 
         const { data, error } = await supabase
@@ -298,7 +327,7 @@ const BuyerDashboard = () => {
           });
           // Do not setEditProfile here, only set from userProfile when opening drawer
         } else {
-          console.error('[DEBUG] BuyerDashboard fetchProfile error', error);
+          console.error('BuyerDashboard fetchProfile error', error);
           // Si le profil n'existe pas, le créer automatiquement
           const { error: insertError } = await supabase
             .from('profiles')
@@ -316,7 +345,7 @@ const BuyerDashboard = () => {
           setEditProfile({ full_name: '', phone: '' });
         }
       } catch (err) {
-        console.error('[DEBUG] BuyerDashboard unexpected error fetching profile', err);
+        console.error('BuyerDashboard unexpected error fetching profile', err);
         setUserProfile(null);
         setEditProfile({ full_name: '', phone: '' });
       }
@@ -344,9 +373,9 @@ const BuyerDashboard = () => {
       const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
       if (smsSessionStr) {
         // For SMS-authenticated users, try backend admin endpoints (with fallbacks)
-        console.log('[DEBUG] BuyerDashboard: updating profile via backend for SMS session', { id: user.id });
+        
         const { ok, json, error, url } = await postProfileUpdate({ profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone });
-        console.log('[DEBUG] BuyerDashboard profile update via backend result', { ok, url, error });
+        
         if (!ok) throw new Error(`Backend update failed: ${JSON.stringify(error)}`);
         const saved = json?.profile ?? json;
         setUserProfile({ full_name: saved?.full_name ?? editProfile.full_name, phone: saved?.phone ?? editProfile.phone });
@@ -386,7 +415,7 @@ const BuyerDashboard = () => {
       setDrawerOpen(false);
       toast({ title: 'Profil mis à jour', description: 'Vos informations ont été enregistrées.' });
     } catch (error) {
-      console.error('[DEBUG] BuyerDashboard handleSaveProfile error', error);
+      console.error('BuyerDashboard handleSaveProfile error', error);
       toast({ title: 'Erreur', description: 'Impossible de sauvegarder le profil', variant: 'destructive' });
     } finally {
       setSavingProfile(false);
@@ -399,11 +428,11 @@ const BuyerDashboard = () => {
     const channel = supabase
       .channel('orders-changes-buyer')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
-        console.log('BuyerDashboard: Changement orders détecté', payload);
+        
         fetchOrders();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, payload => {
-        console.log('BuyerDashboard: Changement transactions détecté', payload);
+        
         fetchTransactions();
       })
       .subscribe();
@@ -1058,13 +1087,7 @@ const BuyerDashboard = () => {
             </h1>
             <p className="text-white/90 text-sm mt-1">Espace Client</p>
           </div>
-          {/* Affichage du profil */}
-          {userProfile && (
-            <div className="flex flex-col items-end bg-white/10 rounded-xl px-5 py-3" style={{ minWidth: 220 }}>
-              <span className="text-white font-semibold text-lg" style={{ letterSpacing: 0.5 }}>{userProfile.full_name || 'Nom non défini'}</span>
-              <span className="text-white/90 text-sm mt-1">{userProfile.phone || 'Téléphone non défini'}</span>
-            </div>
-          )}
+          {/* Profil masqué dans l'entête — accessible via le bouton Paramètres (drawer) */}
           {/* Bouton paramètres */}
           <button
             className="hidden md:flex absolute top-6 right-8 items-center justify-center w-10 h-10 rounded-full hover:bg-white/10"
@@ -1083,6 +1106,15 @@ const BuyerDashboard = () => {
           </button>
         </div>
       </header>
+
+      {/* Banniere hors-ligne */}
+      {!isOnline && (
+        <div className="mx-auto max-w-5xl px-4">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 p-3 text-center mb-4">
+            Vous êtes hors‑ligne — l'affichage provient du cache local. Certaines actions peuvent être limitées.
+          </div>
+        </div>
+      )}
 
       {/* Drawer de profil */}
       {drawerOpen && (

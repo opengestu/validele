@@ -149,16 +149,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Fonction pour récupérer le profil utilisateur (sans création automatique)
     const fetchUserProfile = async (userId: string, userEmail: string) => {
       try {
-        console.log('[DEBUG] fetchUserProfile start', { userId });
+        
         // Affiche l'id de l'utilisateur connecté pour debug
-        console.log('User ID connecté (utilisé pour la requête Supabase):', userId);
+        
         // Essayer de récupérer le profil existant
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .maybeSingle();
-        console.log('[DEBUG] fetchUserProfile result', { profile, error });
+        
         
         if (error && error.code !== 'PGRST116') {
           // Log détaillé de l'erreur
@@ -171,7 +171,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             };
           };
           const { details, hint } = extractErrorMeta(error);
-          console.error('[DEBUG] Erreur lors du chargement du profil:', {
+          console.error('Erreur lors du chargement du profil:', {
             message: error.message,
             details,
             hint,
@@ -182,7 +182,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
             if (cached && cached.id === userId) {
-              console.log('[DEBUG] fetchUserProfile returning cached profile due to network/offline', cached);
+              
               return cached;
             }
           }
@@ -200,29 +200,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             wallet_type: typeof profObj.wallet_type === 'string' ? profObj.wallet_type as string : (typeof profObj.walletType === 'string' ? profObj.walletType as string : null)
           };
           writeCachedProfile(completeProfile);
-          console.log('[DEBUG] fetchUserProfile completeProfile', completeProfile);
+          
           return completeProfile;
         } else {
           // Profil inexistant ou incomplet - ne pas créer automatiquement
           // L'utilisateur doit compléter son inscription
-          console.log('[DEBUG] Profil inexistant ou incomplet pour:', userId);
+          
           // Hors ligne: si on a déjà un profil complet en cache, l'utiliser
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             const cached = readCachedProfile();
             if (cached && cached.id === userId && cached.full_name && cached.full_name.trim() !== '') {
-              console.log('[DEBUG] fetchUserProfile returning cached profile (offline)', cached);
+              
               return cached;
             }
           }
           return null;
         }
       } catch (error) {
-        console.error('[DEBUG] Erreur lors de la récupération du profil:', error);
+        console.error('Erreur lors de la récupération du profil:', error);
         // Hors ligne / problème réseau: tenter le cache
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
           const cached = readCachedProfile();
           if (cached?.id === userId) {
-            console.log('[DEBUG] fetchUserProfile returning cached profile in catch', cached);
+            
             return cached;
           }
         }
@@ -234,7 +234,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const applySupabaseAuthState = (event: string, activeSession: Session | null) => {
       if (!mounted) return;
 
-      console.log('Auth state changed:', event, activeSession?.user?.id);
+      
       
       setSession(activeSession);
       setUser(activeSession?.user ?? null);
@@ -372,10 +372,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         try {
           if (session && !localStorage.getItem(SUPABASE_SESSION_KEY)) {
             persistSupabaseSession(session);
-            console.log('[DEBUG] persisted session to localStorage (bootstrap)');
+            
           }
         } catch (e) {
-          console.warn('[DEBUG] failed to persist session during bootstrap', e);
+          console.warn('failed to persist session during bootstrap', e);
         }
 
         // Defensive: ensure the Supabase client internal state is initialized
@@ -389,10 +389,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               access_token: session.access_token,
               refresh_token: session.refresh_token,
             });
-            console.log('[DEBUG] supabase.auth.setSession called during bootstrap');
+            
           }
         } catch (e) {
-          console.warn('[DEBUG] supabase.auth.setSession failed during bootstrap', e);
+          console.warn('supabase.auth.setSession failed during bootstrap', e);
         }
 
         // Si aucune session n'est retournée, essayer de restaurer la dernière session valide (<24h)

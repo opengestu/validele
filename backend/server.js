@@ -7,6 +7,7 @@ require('dotenv').config();
 const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
+const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
@@ -22,6 +23,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+app.use(cookieParser());
 
 // Mount auth routes (added for phone existence check and PIN login)
 try {
@@ -757,10 +759,16 @@ async function requireAdmin(req, res, next) {
     const adminUserId = process.env.ADMIN_USER_ID;
 
     const authHeader = req.headers['authorization'] || req.headers['Authorization'];
-    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'Missing Authorization header' });
+    let token = null;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.cookies && (req.cookies.admin_access || req.cookies.admin_token)) {
+      // Accept admin access token from httpOnly cookie set by /api/admin/login
+      token = req.cookies.admin_access || req.cookies.admin_token;
     }
-    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Missing Authorization token or admin cookie' });
+    }
 
     // 1) Supabase token (preferred)
     try {
@@ -820,6 +828,126 @@ async function requireAdmin(req, res, next) {
   }
 }
 
+// POST /api/admin/login - authenticate admin via email/password and set httpOnly cookies
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ success: false, error: 'Email and password required' });
+
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      console.error('[ADMIN] Supabase auth config missing');
+      return res.status(500).json({ success: false, error: 'Server config error' });
+    }
+
+    const params = new URLSearchParams();
+    params.append('grant_type', 'password');
+    params.append('email', String(email));
+    params.append('password', String(password));
+
+    const r = await axios.post(`${SUPABASE_URL}/auth/v1/token`, params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', apikey: SUPABASE_ANON_KEY }
+    });
+
+    const data = r.data || {};
+    const accessToken = data.access_token;
+    const refreshToken = data.refresh_token;
+    const expiresIn = Number(data.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
+
+    if (!accessToken) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+
+    // Verify user & admin status
+    const { data: userRes } = await supabase.auth.getUser(accessToken);
+    const user = userRes?.user;
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+
+    const adminIdEnv = process.env.ADMIN_USER_ID;
+    if (adminIdEnv && user.id !== adminIdEnv) {
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    }
+
+    // Set httpOnly cookies
+    res.cookie('admin_access', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: expiresIn * 1000 });
+    if (refreshToken) res.cookie('admin_refresh', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/admin/refresh' });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[ADMIN] login error:', err?.response?.data || err?.message || err);
+    return res.status(401).json({ success: false, error: 'Invalid credentials' });
+  }
+});
+
+// POST /api/admin/refresh - rotate refresh token and set new cookies
+app.post('/api/admin/refresh', async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.admin_refresh || req.body?.refresh_token;
+    if (!refreshToken) return res.status(400).json({ success: false, error: 'Missing refresh token' });
+
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
+    const params = new URLSearchParams();
+    params.append('grant_type', 'refresh_token');
+    params.append('refresh_token', refreshToken);
+
+    const r = await axios.post(`${SUPABASE_URL}/auth/v1/token`, params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', apikey: SUPABASE_ANON_KEY }
+    });
+
+    const data = r.data || {};
+    const accessToken = data.access_token;
+    const newRefresh = data.refresh_token;
+    const expiresIn = Number(data.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
+
+    if (!accessToken) return res.status(401).json({ success: false, error: 'Invalid refresh token' });
+
+    // Verify admin status
+    const { data: userRes } = await supabase.auth.getUser(accessToken);
+    const user = userRes?.user;
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
+    const adminIdEnv = process.env.ADMIN_USER_ID;
+    if (adminIdEnv && user.id !== adminIdEnv) {
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    }
+
+    res.cookie('admin_access', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: expiresIn * 1000 });
+    if (newRefresh) res.cookie('admin_refresh', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/admin/refresh' });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[ADMIN] refresh error:', err?.response?.data || err?.message || err);
+    return res.status(401).json({ success: false, error: 'Invalid refresh token' });
+  }
+});
+
+// POST /api/admin/logout - clear admin cookies
+app.post('/api/admin/logout', async (req, res) => {
+  res.clearCookie('admin_access', { path: '/' });
+  res.clearCookie('admin_refresh', { path: '/api/admin/refresh' });
+  return res.json({ success: true });
+});
+
+// GET /api/admin/validate - validate current admin session (cookie)
+app.get('/api/admin/validate', async (req, res) => {
+  try {
+    const token = req.cookies?.admin_access;
+    if (!token) return res.status(401).json({ success: false, error: 'No admin session' });
+    const { data: userRes } = await supabase.auth.getUser(token);
+    const user = userRes?.user;
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
+    const adminIdEnv = process.env.ADMIN_USER_ID;
+    if (adminIdEnv && user.id !== adminIdEnv) {
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    }
+    return res.json({ success: true, user });
+  } catch (err) {
+    console.error('[ADMIN] validate error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // POST /api/admin/login-local - exchange local PIN to a short-lived admin token
 app.post('/api/admin/login-local', async (req, res) => {
   try {
@@ -829,7 +957,7 @@ app.post('/api/admin/login-local', async (req, res) => {
     // Fetch profile
     const { data: profile, error: profileErr } = await supabase
       .from('profiles')
-      .select('id, pin_hash')
+      .select('id, pin_hash, role')
       .eq('id', profileId)
       .maybeSingle();
     if (profileErr) {
@@ -838,6 +966,12 @@ app.post('/api/admin/login-local', async (req, res) => {
     }
     if (!profile || !profile.id) {
       return res.status(404).json({ success: false, error: 'Profile not found' });
+    }
+
+    // Disallow PIN login for admin role on admin login-local endpoint
+    if (profile.role === 'admin') {
+      console.warn('[ADMIN] PIN login attempt blocked for admin profile via login-local:', profileId);
+      return res.status(403).json({ success: false, error: 'PIN login disabled for admin; please use email/password' });
     }
 
     // Verify PIN
@@ -898,9 +1032,8 @@ app.post('/api/admin/login-local', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Not an admin' });
     }
 
-    // Issue token
     const token = generateAdminToken(profileId);
-    return res.json({ success: true, token, expires_in: parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10) });
+    return res.json({ success: true, token, expires_in: Number(process.env.ADMIN_TOKEN_TTL || '3600') });
   } catch (err) {
     console.error('[ADMIN] login-local error:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });

@@ -25,12 +25,12 @@ const PushNotificationSetup = () => {
         // SMS-auth sessions cannot update Supabase directly due to RLS — use backend admin endpoint
         try {
           const { ok, json, error, url } = await postProfileUpdate({ profileId: userId, push_token: token });
-          console.log('[DEBUG] PushNotificationSetup postProfileUpdate result', { ok, url, error });
+          
           if (!ok) {
             console.error('Erreur sauvegarde token via backend:', error);
             return;
           }
-          console.log('✅ Token FCM sauvegardé via backend');
+          
           return;
         } catch (e) {
           console.error('Erreur sauvegarde token via backend (catch):', e);
@@ -45,8 +45,6 @@ const PushNotificationSetup = () => {
 
       if (error) {
         console.error('Erreur sauvegarde token:', error);
-      } else {
-        console.log('✅ Token FCM sauvegardé dans Supabase');
       }
     } catch (err) {
       console.error('Erreur sauvegarde token:', err);
@@ -77,7 +75,7 @@ const PushNotificationSetup = () => {
         try {
           await PushNotifications.createChannel(channel);
         } catch (channelErr) {
-          console.log('Canal peut-être déjà existant:', channelErr);
+          // Channel may already exist, ignore
         }
 
         // Si on a déjà un token en cache et que le welcome n'a pas été envoyé,
@@ -110,7 +108,7 @@ const PushNotificationSetup = () => {
 
         // Écouter le token
         PushNotifications.addListener('registration', async (token) => {
-          console.log('🔔 Token FCM:', token.value);
+          
 
           // Garder une copie locale du token pour retry si besoin
           try {
@@ -142,7 +140,7 @@ const PushNotificationSetup = () => {
         });
 
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
-          console.log('📬 Notification reçue (foreground):', notification);
+          
           // Afficher une alerte quand l'app est au premier plan
           Dialog.alert({
             title: notification.title || 'Notification',
@@ -151,7 +149,7 @@ const PushNotificationSetup = () => {
         });
 
         PushNotifications.addListener('pushNotificationActionPerformed', (event) => {
-          console.log('📬 Action sur notification:', event);
+          
         });
 
         setInitialized(true);

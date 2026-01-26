@@ -44,12 +44,13 @@ import {
 } from '@/components/dashboard';
 import validelLogo from '@/assets/validel-logo.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
+import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon } from './CustomIcons';
 type ProfileRow = {
   full_name: string | null;
   phone: string | null;
-  walletType?: string | null;
+  wallet_type?: string | null;
 };
 const VendorDashboard = () => {
   const { user, signOut, userProfile: authUserProfile } = useAuth();
@@ -83,39 +84,42 @@ const VendorDashboard = () => {
   const [userProfile, setUserProfile] = useState<{
     full_name?: string;
     phone?: string;
-    walletType?: string;
+    wallet_type?: string;
   } | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfile, setEditProfile] = useState({
     full_name: '',
     phone: '',
-    walletType: ''
+    wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
   // Map DB or cached wallet types to readable labels
-  const walletTypeLabel = (type?: string | null) => {
-    if (!type || type.trim() === '') return 'Non renseigné';
-    const t = String(type).toLowerCase();
-    if (t.includes('wave')) return 'Wave Sénégal';
-    if (t.includes('orange')) return 'Orange Money';
-    if (t === 'wave-senegal') return 'Wave Sénégal'; // Cas spécifique
-    return type; // Affiche raw si inconnu, pour debug
-  };
+  // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  // Network status
+  const isOnline = useNetwork();
   const fetchProfile = useCallback(async () => {
     if (!user) return;
 
     // If SMS session present, use authUserProfile from useAuth instead of calling Supabase (no token available)
     const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
     if (smsSessionStr) {
-      console.log('[DEBUG] VendorDashboard: detected sms_auth_session, using authUserProfile from useAuth');
+      
       if (authUserProfile) {
-        setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined, walletType: (authUserProfile as any).walletType ?? (authUserProfile as any).wallet_type ?? undefined });
-        setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '', walletType: (authUserProfile as any).walletType ?? (authUserProfile as any).wallet_type ?? '' });
+        setUserProfile({
+          full_name: authUserProfile.full_name ?? undefined,
+          phone: authUserProfile.phone ?? undefined,
+          wallet_type: (authUserProfile as any).wallet_type ?? (authUserProfile as any).walletType ?? undefined
+        });
+        setEditProfile({
+          full_name: authUserProfile.full_name ?? '',
+          phone: authUserProfile.phone ?? '',
+          wallet_type: (authUserProfile as any).wallet_type ?? (authUserProfile as any).walletType ?? ''
+        });
       } else {
         setUserProfile(null);
-        setEditProfile({ full_name: '', phone: '', walletType: '' });
+        setEditProfile({ full_name: '', phone: '', wallet_type: '' });
       }
       return;
     }
@@ -128,13 +132,13 @@ const VendorDashboard = () => {
         .select('full_name, phone, wallet_type')
         .eq('id', user.id)
         .maybeSingle<ProfileRow>();
-      console.log('[DEBUG] fetchProfile raw result', { data, error });
+      
       let profileData: ProfileRow | null = null;
       if (!error && data) {
         profileData = {
           full_name: (data as any).full_name ?? null,
           phone: (data as any).phone ?? null,
-          walletType: (data as any).wallet_type ?? null // Assure que wallet_type est capturé
+          wallet_type: (data as any).wallet_type ?? null
         };
       }
       if (error && !walletColumnMissing(error)) {
@@ -143,48 +147,32 @@ const VendorDashboard = () => {
       if (profileData) {
         const fullName = profileData.full_name ?? '';
         const phone = profileData.phone ?? '';
-        let walletType = profileData.walletType ?? '';
-        // Si vide, fallback à cache sans overwrite null
-        if (!walletType) {
-          try {
-            const raw = localStorage.getItem('auth_cached_profile_v1');
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              walletType = parsed.walletType || '';
-            }
-          } catch (e) {
-            console.warn(e); // intentional log
-          }
-        }
-        console.log('[DEBUG] fetchProfile normalized', { fullName, phone, walletType });
-        setUserProfile({ full_name: fullName, phone, walletType });
+        setUserProfile({ full_name: fullName, phone, wallet_type: profileData.wallet_type ?? undefined });
         setEditProfile(prev => ({
           ...prev,
           full_name: fullName || prev.full_name,
           phone: phone || prev.phone,
-          walletType: walletType || prev.walletType
+          wallet_type: profileData.wallet_type ?? prev.wallet_type ?? ''
         }));
-        // Cache avec valeur non vide
+        // Cache sans walletType
         try {
           localStorage.setItem('auth_cached_profile_v1', JSON.stringify({
             id: user.id,
             email: user.email || '',
             full_name: fullName,
             phone,
-            walletType: walletType || editProfile.walletType || '', // Persiste la précédente si vide
             role: 'vendor'
           }));
-          console.log('[DEBUG] cached profile (with walletType) to localStorage');
         } catch (e) {
-          console.warn('[DEBUG] failed to cache profile', e);
+          console.warn('VendorDashboard failed to cache profile', e);
         }
       } else {
-        console.log('[DEBUG] fetchProfile: no profile row returned');
+        
         // Fallback: try finding the profile by phone or email if available
         try {
           let fallbackRes: any = null;
           if (user?.email) {
-            console.log('[DEBUG] fetchProfile: trying fallback search by email', user.email);
+            
             fallbackRes = await supabase
               .from('profiles')
               .select('full_name, phone, wallet_type')
@@ -192,35 +180,34 @@ const VendorDashboard = () => {
               .maybeSingle();
           }
           if ((!fallbackRes || !fallbackRes.data) && user?.phone) {
-            console.log('[DEBUG] fetchProfile: trying fallback search by phone', user.phone);
+            
             fallbackRes = await supabase
               .from('profiles')
               .select('full_name, phone, wallet_type')
               .eq('phone', user.phone)
               .maybeSingle();
           }
-          console.log('[DEBUG] fetchProfile fallback result', fallbackRes);
+          
           if (fallbackRes && !fallbackRes.error && fallbackRes.data) {
             const d = fallbackRes.data as any;
             const fullName = d.full_name ?? '';
             const phone = d.phone ?? '';
-            const walletType = d.wallet_type ?? '';
-            setUserProfile({ full_name: fullName, phone, walletType });
-            setEditProfile({ full_name: fullName, phone, walletType });
+            setUserProfile({ full_name: fullName, phone, wallet_type: d.wallet_type ?? undefined });
+            setEditProfile({ full_name: fullName, phone, wallet_type: d.wallet_type ?? '' });
             try {
-              localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: fullName, phone, walletType, role: 'vendor' }));
+              localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: fullName, phone, role: 'vendor' }));
             } catch (e) {
               // ignore
             }
           }
         } catch (e) {
-          console.warn('[DEBUG] fetchProfile fallback failed', e);
+          console.warn('VendorDashboard fetchProfile fallback failed', e);
         }
       }
     } catch (error) {
-      console.error('[DEBUG] fetchProfile error', error);
+      console.error('VendorDashboard fetchProfile error', error);
     }
-  }, [user, authUserProfile, editProfile.walletType]);
+  }, [user, authUserProfile]);
   const fetchProducts = useCallback(async () => {
     if (!user) return;
   
@@ -241,11 +228,28 @@ const VendorDashboard = () => {
         is_available: p.is_available ?? true
       })) as Product[];
       setProducts(mappedData);
+      try {
+        localStorage.setItem(`cached_products_${user.id}`, JSON.stringify(mappedData));
+      } catch (e) {
+        // ignore cache failures
+      }
     } catch (error) {
+      // Try to use cached products if offline
+      try {
+        const cached = localStorage.getItem(`cached_products_${user?.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Product[];
+          setProducts(parsed);
+          toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
       toast({
         title: "Erreur",
         description: "Impossible de charger les produits",
-        variant: "destructive",
+        variant: 'destructive'
       });
     }
   }, [user, toast]);
@@ -281,6 +285,18 @@ const VendorDashboard = () => {
       })) as Order[];
       setOrders(mappedOrders.filter(order => order.status !== 'pending'));
     } catch (error) {
+      // Try to load cached orders when offline
+      try {
+        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Order[];
+          setOrders(parsed);
+          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
       toast({
         title: "Erreur",
         description: "Impossible de charger les commandes",
@@ -305,10 +321,27 @@ const VendorDashboard = () => {
         .order('created_at', { ascending: false });
       if (error) throw error;
       setTransactions(data || []);
+      try {
+        localStorage.setItem(`cached_transactions_${user.id}`, JSON.stringify(data || []));
+      } catch (e) {
+        // ignore
+      }
     } catch (error) {
+      // Try cached transactions
+      try {
+        const cached = localStorage.getItem(`cached_transactions_${user?.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as any[];
+          setTransactions(parsed as any || []);
+          toast({ title: 'Hors-ligne', description: 'Affichage des transactions en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user]);
+  }, [user, toast]);
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
@@ -317,15 +350,12 @@ const VendorDashboard = () => {
       // Always fetch from Supabase, never use cached profile for display
       // This ensures the UI always shows backend data
       if (user?.id) {
-        console.log('[DEBUG] user.id', user.id);
-        // Debug: show current supabase session and user before DB ops
+        // Fetch latest profile from Supabase and populate local edit state
         try {
-          const sess = await supabase.auth.getSession();
-          console.log('[DEBUG] supabase.auth.getSession before select', sess);
-          const userInfo = await supabase.auth.getUser();
-          console.log('[DEBUG] supabase.auth.getUser before select', userInfo);
+          await supabase.auth.getSession().catch(() => {});
+          await supabase.auth.getUser().catch(() => {});
         } catch (e) {
-          console.warn('[DEBUG] supabase session/getUser check failed', e);
+          // Ignore transient session read errors
         }
         const { data, error } = await supabase
           .from('profiles')
@@ -343,12 +373,13 @@ const VendorDashboard = () => {
           ) {
             setUserProfile({
               full_name: (data as any).full_name ?? '',
-              phone: (data as any).phone ?? ''
+              phone: (data as any).phone ?? '',
+              wallet_type: (data as any).wallet_type ?? ''
             });
             setEditProfile({
               full_name: (data as any).full_name ?? '',
               phone: (data as any).phone ?? '',
-              walletType: (data as any).wallet_type ?? ''
+              wallet_type: (data as any).wallet_type ?? ''
             });
           } else {
             // If data is not a valid profile row, log for debug
@@ -413,25 +444,7 @@ const VendorDashboard = () => {
       supabase.removeChannel(channel);
     };
   }, [user?.id, fetchOrders, fetchTransactions]);
-  // Ensure walletType is populated from the DB if it's missing after auth/profile loads
-  useEffect(() => {
-    const ensureWalletType = async () => {
-      if (!user?.id) return;
-      // If we already have a walletType in editProfile or in authUserProfile, do nothing
-      const existing = editProfile.walletType || (authUserProfile && (authUserProfile as any)['walletType']) || (authUserProfile && (authUserProfile as any)['wallet_type']);
-      if (existing && String(existing).trim() !== '') return;
-      try {
-        const { data, error } = await supabase.from('profiles').select('wallet_type').eq('id', user.id).maybeSingle();
-        if (!error && data) {
-          const wt = (data as any).wallet_type ?? '';
-          if (wt) setEditProfile(prev => ({ ...prev, walletType: String(wt) }));
-        }
-      } catch (e) {
-        // silent
-      }
-    };
-    ensureWalletType();
-  }, [user?.id, authUserProfile, editProfile.walletType]);
+  // Suppression de l'effet ensureWalletType
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
     const randomNumber = Math.floor(1000 + Math.random() * 9000);
@@ -558,37 +571,39 @@ const VendorDashboard = () => {
       if (smsSessionStr) {
         // Use backend admin endpoint for SMS-auth users
         console.log('[DEBUG] VendorDashboard: updating profile via backend for SMS session', { id: user.id });
-        const { ok, json, error, url } = await postProfileUpdate({ profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType || null });
+        const { ok, json, error, url } = await postProfileUpdate({ profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.wallet_type });
         console.log('[DEBUG] VendorDashboard profile update via backend result', { ok, url, error });
         if (!ok) throw new Error(`Backend update failed: ${JSON.stringify(error)}`);
         const saved = json?.profile ?? json;
-        const savedWallet = (saved?.wallet_type ?? editProfile.walletType) || '';
 
         try {
           const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
           const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
           cacheObj.full_name = saved?.full_name ?? editProfile.full_name;
           cacheObj.phone = saved?.phone ?? editProfile.phone;
-          cacheObj.walletType = savedWallet;
+          cacheObj.wallet_type = saved?.wallet_type ?? editProfile.wallet_type;
           localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
         } catch (e) {
           console.warn('[DEBUG] failed to update cached profile after save', e);
         }
 
-        setUserProfile({ full_name: saved?.full_name ?? editProfile.full_name, phone: saved?.phone ?? editProfile.phone, walletType: savedWallet });
-        setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
+        setUserProfile({
+          full_name: saved?.full_name ?? editProfile.full_name,
+          phone: saved?.phone ?? editProfile.phone,
+          wallet_type: saved?.wallet_type ?? editProfile.wallet_type
+        });
         setIsEditingProfile(false);
         toast({ title: 'Succès', description: 'Profil mis à jour avec succès' });
       } else {
         console.log('Mise à jour profil vendeur pour user:', user.id);
-        console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.walletType });
-      
+        console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone, wallet_type: editProfile.wallet_type });
+
         const { data, error } = await supabase
           .from('profiles')
           .update({
             full_name: editProfile.full_name,
             phone: editProfile.phone,
-            wallet_type: editProfile.walletType || null,
+            wallet_type: editProfile.wallet_type
           })
           .eq('id', user.id)
           .select();
@@ -602,35 +617,12 @@ const VendorDashboard = () => {
           description: 'Profil mis à jour avec succès'
         });
         // If DB returned the updated row, prefer the saved wallet_type; otherwise keep the edited value
-        let savedWallet = editProfile.walletType || '';
-        if (Array.isArray(data) && data[0]) {
-          const savedRow: any = data[0];
-          if (typeof savedRow.wallet_type === 'string') {
-            savedWallet = savedRow.wallet_type;
-          }
-        }
-        try {
-          const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
-          const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'vendor' };
-          cacheObj.full_name = editProfile.full_name;
-          cacheObj.phone = editProfile.phone;
-          cacheObj.walletType = savedWallet;
-          localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
-        } catch (e) {
-          console.warn('[DEBUG] failed to update cached profile after save', e);
-        }
+        const updated = (data && data[0]) ? data[0] : null;
         setUserProfile({
-          full_name: editProfile.full_name,
-          phone: editProfile.phone,
-          walletType: savedWallet
+          full_name: updated?.full_name ?? editProfile.full_name,
+          phone: updated?.phone ?? editProfile.phone,
+          wallet_type: updated?.wallet_type ?? editProfile.wallet_type
         });
-        setEditProfile(prev => ({ ...prev, walletType: savedWallet }));
-        // Re-fetch profile from DB to ensure the latest saved value (including wallet_type)
-        try {
-          await fetchProfile();
-        } catch (e) {
-          console.warn('[DEBUG] fetchProfile after save failed', e);
-        }
         setIsEditingProfile(false);
       }
     } catch (error: unknown) {
@@ -658,11 +650,7 @@ const VendorDashboard = () => {
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
-  // DEBUG: Affiche la valeur du profil vendeur à chaque rendu
-  console.log('userProfile', userProfile);
-  // Résolution directe depuis userProfile (toujours à jour après modif/fetch)
-  const resolvedWalletType = userProfile?.walletType || '';
-  console.log('resolvedWalletType (from userProfile)', resolvedWalletType);
+  // wallet_type supprimé
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -686,6 +674,12 @@ const VendorDashboard = () => {
           <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
+        </div>
+      )}
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
       {/* ...section stats supprimée... */}
@@ -997,11 +991,10 @@ const VendorDashboard = () => {
                       <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Type de wallet</label>
-                      <p className="text-lg">{walletTypeLabel(resolvedWalletType)}</p>
-                      {resolvedWalletType && (
-                        <p className="text-xs text-gray-400 mt-1">(raw: {resolvedWalletType})</p>
-                      )}
+                      <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                      <p className="text-lg">
+                        {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                      </p>
                     </div>
                     <Button
                       onClick={() => setIsEditingProfile(true)}
@@ -1041,23 +1034,26 @@ const VendorDashboard = () => {
                       />
                     </div>
                     <div>
-                      <label className="text-sm font-medium">Type de wallet</label>
+                      <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                      <p className="text-lg">
+                        {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Wallet utilisé</label>
                       <select
-                        name="walletType"
-                        value={editProfile.walletType}
-                        onChange={handleProfileChange}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2"
+                        name="wallet_type"
+                        value={editProfile.wallet_type}
+                        onChange={e => setEditProfile(p => ({ ...p, wallet_type: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 mt-1"
                         title="Type de wallet pour recevoir les paiements"
                       >
                         <option value="">Choisir un wallet...</option>
-                        <option value="wave-senegal">Wave Sénégal</option>
-                        <option value="orange-money">Orange Money Sénégal</option>
+                        <option value="wave-senegal">Wave</option>
+                        <option value="orange-money">Orange Money</option>
                       </select>
-                      {editProfile.walletType && (
-                        <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType})</p>
-                      )}
                     </div>
-                    <div className="flex space-x-2">
+                    <div className="flex space-x-2 mt-4">
                       <Button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
@@ -1091,13 +1087,7 @@ const VendorDashboard = () => {
                     {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'Non disponible'}
                   </p>
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
-                  <p className="text-lg">{walletTypeLabel(editProfile.walletType)}</p>
-                  {editProfile.walletType && (
-                    <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType})</p>
-                  )}
-                </div>
+                {/* Wallet utilisé supprimé */}
                 <div>
                   <label className="text-sm font-medium text-gray-500">Rôle</label>
                   <p className="text-lg">Vendeur</p>
@@ -1323,24 +1313,10 @@ const VendorDashboard = () => {
                           <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
                         </div>
                         <div>
-                          <label className="text-xs font-medium text-gray-400">[DEBUG] Profil reçu</label>
-                          <pre className="text-xs bg-gray-100 rounded p-2 overflow-x-auto text-gray-700 border border-gray-200">
-                            {JSON.stringify(userProfile, null, 2)}
-                          </pre>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
-                          <select
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-100 text-gray-700 mt-1"
-                            value={editProfile.walletType}
-                            disabled
-                            title="Type de compte de paiement utilisé"
-                          >
-                            <option value="">Non défini</option>
-                            <option value="wave-senegal">Wave Sénégal</option>
-                            <option value="orange-money-senegal">Orange Money Sénégal</option>
-                          </select>
-                          <p className="text-xs text-gray-400 mt-1">(raw: {editProfile.walletType || 'vide'})</p> {/* Debug pour voir la valeur état */}
+                          <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                          <p className="text-lg">
+                            {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                          </p>
                         </div>
                         <Button
                           onClick={() => setIsEditingProfile(true)}
@@ -1349,13 +1325,6 @@ const VendorDashboard = () => {
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
                         </Button>
-                        {/* DEBUG: Affichage brut du profil vendeur */}
-                        <div style={{ marginTop: 12 }}>
-                          <label className="text-xs font-medium text-gray-400">[DEBUG] Profil reçu</label>
-                          <pre className="text-xs bg-gray-100 rounded p-2 overflow-x-auto text-gray-700 border border-gray-200">
-                            {JSON.stringify(userProfile, null, 2)}
-                          </pre>
-                        </div>
                         <Button
                           variant="outline"
                           onClick={signOut}
@@ -1386,18 +1355,16 @@ const VendorDashboard = () => {
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Compte de paiement</label>
+                          <label className="text-sm font-medium">Wallet utilisé</label>
                           <select
-                            name="walletType"
-                            value={editProfile.walletType}
-                            onChange={handleProfileChange}
+                            name="wallet_type"
+                            value={editProfile.wallet_type}
+                            onChange={e => setEditProfile(p => ({ ...p, wallet_type: e.target.value }))}
                             className="w-full border border-gray-300 rounded-md px-3 py-2 mt-1"
-                            title="Type de compte de paiement utilisé"
+                            title="Type de wallet pour recevoir les paiements"
                           >
-                            <option value="">Choisir un compte...</option>
-                            <option value="wave-senegal">Wave Sénégal</option>
-                            <option value="orange-money-senegal">Orange Money Sénégal</option>
-                            <option value="orange_senegal">Orange Money Sénégal (alt)</option>
+                            <option value="">Choisir un wallet...</option>
+                            <option value="wave-senegal">Wave</option>
                             <option value="orange-money">Orange Money</option>
                           </select>
                         </div>

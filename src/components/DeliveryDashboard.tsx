@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { postProfileUpdate, getProfileById } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
 
@@ -64,13 +65,13 @@ const DeliveryDashboard = () => {
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
       if (user?.id) {
-        console.log('[DEBUG] Delivery fetchOrCreateProfile start', { userId: user.id });
+        
         const { data, error } = await supabase
           .from('profiles')
           .select('full_name, phone')
           .eq('id', user.id)
           .maybeSingle();
-        console.log('[DEBUG] Delivery select profiles result', { data, error });
+        
         let profileData = data;
         if (error || !profileData) {
           // If not found, create a new profile row for this user
@@ -81,16 +82,48 @@ const DeliveryDashboard = () => {
             if (smsRaw) {
               try {
                 const sms = JSON.parse(smsRaw);
-                if (sms?.profileId && sms.profileId === user.id) {
-                  profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
-                  // Cache for offline use
-                  try {
-                    localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: profileData.full_name, phone: profileData.phone, role: 'delivery' }));
-                    console.log('[DEBUG] Delivery cached SMS profile to localStorage');
-                  } catch (e) {
-                    console.warn('[DEBUG] failed to cache sms profile', e);
+
+                // Prefer an authoritative server read when possible (handles updates made via admin endpoints)
+                try {
+                  const check = await getProfileById(user.id);
+                  
+                  if (check.ok && check.json && check.json.profile) {
+                    profileData = check.json.profile;
+                    try {
+                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
+                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
+                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
+                      
+                    } catch (e) {
+                      console.warn('[DEBUG] failed to cache profile from backend GET', e);
+                    }
+                  } else if (sms?.profileId && sms.profileId === user.id) {
+                    // Fallback to SMS session values if backend GET can't be used
+                    profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
+                    try {
+                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
+                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
+                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
+                      
+                    } catch (e) {
+                      console.warn('[DEBUG] failed to cache sms profile', e);
+                    }
+                  }
+                } catch (e) {
+                  // If GET fails, still fall back to SMS values when present
+                  if (sms?.profileId && sms.profileId === user.id) {
+                    profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
+                    try {
+                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
+                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
+                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
+                      
+                    } catch (e2) {
+                      console.warn('[DEBUG] failed to cache sms profile after GET fail', e2);
+                    }
                   }
                 }
+
               } catch (e) {
                 // ignore parse errors and continue to attempt insert
               }
@@ -293,35 +326,85 @@ const DeliveryDashboard = () => {
     
     setSavingProfile(true);
     try {
-      console.log('Mise à jour profil pour user:', user.id);
-      console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone });
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
       
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({
+      if (smsSessionStr) {
+        // Use backend admin endpoints for SMS-auth users (no token on client)
+        const payload = { profileId: user.id, full_name: editProfile.full_name, phone: editProfile.phone };
+        
+        const { ok, json, error, url } = await postProfileUpdate(payload);
+        
+        if (!ok) {
+          // Silent server check for robustness (no debug UI message)
+          try {
+            await getProfileById(user.id);
+          } catch (e) {
+            // ignore
+          }
+          toast({ title: 'Erreur', description: 'Impossible de mettre à jour le profil', variant: 'destructive' });
+          throw new Error(`Backend update failed: ${JSON.stringify(error)}`);
+        }
+        const saved = json?.profile ?? json;
+        setUserProfile({ full_name: saved?.full_name ?? editProfile.full_name, phone: saved?.phone ?? editProfile.phone });
+        try {
+          const cachedRaw = localStorage.getItem('auth_cached_profile_v1');
+          const cacheObj = cachedRaw ? JSON.parse(cachedRaw) : { id: user.id, email: user.email || '', full_name: editProfile.full_name, phone: editProfile.phone, role: 'delivery' };
+          cacheObj.full_name = saved?.full_name ?? editProfile.full_name;
+          cacheObj.phone = saved?.phone ?? editProfile.phone;
+          localStorage.setItem('auth_cached_profile_v1', JSON.stringify(cacheObj));
+        } catch (e) {
+          // ignore
+        }
+        // Also update the sms_auth_session fallback so the UI doesn't revert on reload
+        try {
+          const smsRaw = localStorage.getItem('sms_auth_session');
+          if (smsRaw) {
+            try {
+              const smsObj = JSON.parse(smsRaw);
+              smsObj.fullName = saved?.full_name ?? smsObj.fullName ?? editProfile.full_name;
+              smsObj.phone = saved?.phone ?? smsObj.phone ?? editProfile.phone;
+              localStorage.setItem('sms_auth_session', JSON.stringify(smsObj));
+              console.log('[DEBUG] Updated sms_auth_session after backend profile update');
+            } catch (e) {
+              console.warn('[DEBUG] failed to update sms_auth_session', e);
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+        toast({ title: 'Succès', description: 'Profil mis à jour' });
+        setIsEditingProfile(false);
+      } else {
+        console.log('Mise à jour profil pour user:', user.id);
+        console.log('Données:', { full_name: editProfile.full_name, phone: editProfile.phone });
+        
+        const { data, error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: editProfile.full_name,
+            phone: editProfile.phone
+          })
+          .eq('id', user.id)
+          .select();
+
+        console.log('Résultat update:', { data, error });
+
+        if (error) {
+          console.error('Erreur Supabase:', error);
+          throw error;
+        }
+
+        toast({
+          title: 'Succès',
+          description: 'Profil mis à jour avec succès'
+        });
+
+        setUserProfile({
           full_name: editProfile.full_name,
           phone: editProfile.phone
-        })
-        .eq('id', user.id)
-        .select();
-
-      console.log('Résultat update:', { data, error });
-
-      if (error) {
-        console.error('Erreur Supabase:', error);
-        throw error;
+        });
+        setIsEditingProfile(false);
       }
-
-      toast({
-        title: 'Succès',
-        description: 'Profil mis à jour avec succès'
-      });
-
-      setUserProfile({
-        full_name: editProfile.full_name,
-        phone: editProfile.phone
-      });
-      setIsEditingProfile(false);
     } catch (error: unknown) {
       console.error('Erreur sauvegarde profil:', error);
       const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
