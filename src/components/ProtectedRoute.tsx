@@ -15,9 +15,10 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
 
   // Affichage de chargement - attendre que l'authentification soit prête
   if (loading) {
+    // During auth bootstrap we do not show a large overlay spinner; show a simple lightweight text
     return (
-      <div className="min-h-screen bg-gray-50">
-        <OverlaySpinner message="Chargement..." visible />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center text-gray-600">Chargement...</div>
       </div>
     );
   }
