@@ -1004,9 +1004,12 @@ app.post('/api/admin/refresh', async (req, res) => {
       if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
 
-    res.cookie('admin_access', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: expiresIn * 1000 });
-    if (newRefresh) res.cookie('admin_refresh', newRefresh, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/admin/refresh' });
-    return res.json({ success: true });
+    // Use SameSite=None; Secure to allow cross-site usage (frontend on localhost)
+    res.cookie('admin_access', accessToken, { httpOnly: true, secure: true, sameSite: 'none', maxAge: expiresIn * 1000 });
+    if (newRefresh) res.cookie('admin_refresh', newRefresh, { httpOnly: true, secure: true, sameSite: 'none', path: '/api/admin/refresh' });
+
+    // Also return tokens so frontend can initialize supabase client session
+    return res.json({ success: true, access_token: accessToken, refresh_token: newRefresh, expires_in: expiresIn, user_id: user.id });
   } catch (err) {
     console.error('[ADMIN] refresh error:', err?.response?.data || err?.message || err);
     return res.status(401).json({ success: false, error: 'Invalid refresh token' });

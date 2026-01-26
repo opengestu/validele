@@ -461,11 +461,41 @@ const VendorDashboard = () => {
     }
     setAdding(true);
     try {
+      // Ensure user session exists before attempting DB write
+      const { data: { session } = {} } = await supabase.auth.getSession();
+      if (!session || !session.user) {
+        // Try to refresh session via backend using refresh cookie
+        try {
+          const r = await fetch(apiUrl('/api/admin/refresh'), { method: 'POST', credentials: 'include' });
+          const json = await r.json().catch(() => ({}));
+          if (r.ok && (json?.access_token || json?.refresh_token)) {
+            // Initialize client session if tokens provided
+            try {
+              await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
+            } catch (e) {
+              console.warn('Failed to set supabase session from refresh:', e);
+            }
+          } else {
+            toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
+            await signOut();
+            navigate('/auth');
+            return;
+          }
+        } catch (err) {
+          console.error('Error refreshing admin session:', err);
+          toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
+          await signOut();
+          navigate('/auth');
+          return;
+        }
+      }
+
       if (!user?.id) {
         throw new Error('User not authenticated');
       }
+
       const code = await generateProductCode();
-      const { error } = await supabase
+      const { data: insertData, error } = await supabase
         .from('products')
         .insert({
           vendor_id: user.id,
@@ -477,7 +507,18 @@ const VendorDashboard = () => {
           is_available: true,
           stock_quantity: 0
         });
-      if (error) throw error;
+
+      if (error) {
+        // Handle auth error specifically
+        if ((error as any)?.status === 401 || (error as any)?.message?.toLowerCase?.().includes('unauthorized')) {
+          toast({ title: 'Session expirée', description: 'Vous devez vous reconnecter pour ajouter un produit', variant: 'destructive' });
+          await signOut();
+          navigate('/auth');
+          return;
+        }
+        throw error;
+      }
+
       toast({
         title: 'Succès',
         description: 'Produit ajouté avec succès'
@@ -485,10 +526,12 @@ const VendorDashboard = () => {
       setNewProduct({ name: '', price: '', description: '', warranty: '' });
       setAddModalOpen(false);
       fetchProducts();
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('handleAddProduct error:', error);
+      const msg = (error && typeof error === 'object' && 'message' in error) ? (error as any).message : String(error || 'Erreur inconnue');
       toast({
         title: 'Erreur',
-        description: 'Impossible d\'ajouter le produit',
+        description: msg || 'Impossible d\'ajouter le produit',
         variant: 'destructive'
       });
     } finally {
@@ -651,6 +694,23 @@ const VendorDashboard = () => {
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
   // wallet_type supprimé
+  // Fonction pour déconnexion (déclarée avant tout return pour respecter les Hooks rules)
+  const [signingOut, setSigningOut] = React.useState(false);
+  const handleSignOut = async () => {
+    try {
+      setSigningOut(true);
+      await signOut();
+      toast({ title: 'Déconnecté', description: 'Vous avez été déconnecté avec succès' });
+      // Ensure redirect to auth page
+      navigate('/auth');
+    } catch (err) {
+      console.error('Erreur lors de la déconnexion:', err);
+      toast({ title: 'Erreur', description: 'Impossible de se déconnecter pour le moment', variant: 'destructive' });
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -658,11 +718,6 @@ const VendorDashboard = () => {
       </div>
     );
   }
-  // Fonction pour déconnexion
-  const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
-  };
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
       {/* Header Moderne - Style similaire à BuyerDashboard */}
@@ -1094,9 +1149,10 @@ const VendorDashboard = () => {
                 </div>
                 <Button
                   variant="destructive"
-                  onClick={signOut}
+                  onClick={handleSignOut}
+                  disabled={signingOut}
                 >
-                  Se déconnecter
+                  {signingOut ? 'Déconnexion...' : 'Se déconnecter'}
                 </Button>
               </CardContent>
             </Card>
@@ -1327,11 +1383,12 @@ const VendorDashboard = () => {
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={signOut}
+                          onClick={handleSignOut}
+                          disabled={signingOut}
                           className="w-full mt-2 flex items-center justify-center"
                         >
                           <LogOut className="h-4 w-4 mr-2" />
-                          Déconnexion
+                          {signingOut ? 'Déconnexion...' : 'Déconnexion'}
                         </Button>
                       </div>
                     ) : (
