@@ -40,7 +40,16 @@ const corsOptions = {
   credentials: true
 };
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({
+  // Capture raw body for better debugging of invalid JSON requests (kept truncated when logged)
+  verify: (req, res, buf, encoding) => {
+    try {
+      req.rawBody = buf.toString(encoding || 'utf8');
+    } catch (e) {
+      req.rawBody = '';
+    }
+  }
+}));
 app.use(cookieParser());
 
 // Mount auth routes (added for phone existence check and PIN login)
@@ -58,14 +67,20 @@ process.on('unhandledRejection', function (reason, p) {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-app.use(express.json({ type: '*/*' })); // Force le parsing JSON même si le header n'est pas exactement application/json
+// Force le parsing URL-encoded pour les formulaires
 app.use(express.urlencoded({ extended: true }));
 
 // Middleware de gestion d'erreur globale pour attraper les erreurs de parsing JSON
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    console.error('Bad JSON:', err.message);
-    return res.status(400).json({ success: false, message: 'Requête JSON invalide.' });
+    const raw = String(req.rawBody || '');
+    // Mask password values to avoid logging secrets
+    const masked = raw.replace(/("password"\s*:\s*)"([^"]+)"/gi, '$1"***"').replace(/('password'\s*:\s*)'([^']+)'/gi, "$1'***'");
+    console.error('Bad JSON:', err.message, 'rawSnippet:', masked.slice(0, 200));
+
+    const hint = "Vérifiez que le body est du JSON valide. PowerShell: Invoke-RestMethod -Uri 'https://<votre-backend>/api/admin/login' -Method Post -ContentType 'application/json' -Body (@{ email='..'; password='..' } | ConvertTo-Json). Avec curl sur Windows, préférez 'curl.exe' ou utilisez un fichier payload.json et 'curl -d @payload.json'.";
+
+    return res.status(400).json({ success: false, message: 'Requête JSON invalide.', hint });
   }
   next();
 });
