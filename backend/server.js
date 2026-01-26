@@ -918,15 +918,24 @@ app.post('/api/admin/login', async (req, res) => {
     const refreshToken = loginData.session.refresh_token;
     const expiresIn = Number(loginData.session.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
 
-    // Verify user & admin status
+
+    // Vérification stricte du rôle admin dans profiles
     const { data: userRes } = await supabase.auth.getUser(accessToken);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid credentials' });
 
-    const adminIdEnv = process.env.ADMIN_USER_ID;
-    if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
-      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    // Vérifier que le profil a bien role = 'admin'
+    const { data: profile, error: profileErr } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profileErr) {
+      console.error('[ADMIN] Error checking profile role:', profileErr);
+      return res.status(500).json({ success: false, error: 'Server error checking profile' });
+    }
+    if (!profile || profile.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
 
     // Set httpOnly cookies
