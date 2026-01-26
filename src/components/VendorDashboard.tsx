@@ -450,6 +450,11 @@ const VendorDashboard = () => {
     const randomNumber = Math.floor(1000 + Math.random() * 9000);
     return `PD${randomNumber}`;
   };
+  // Détection session SMS
+  const isSMSAuth = () => {
+    return !!(typeof window !== 'undefined' && localStorage.getItem('sms_auth_session'));
+  };
+
   const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price || !newProduct.description) {
       toast({
@@ -461,71 +466,82 @@ const VendorDashboard = () => {
     }
     setAdding(true);
     try {
-      // Ensure user session exists before attempting DB write
-      const { data: { session } = {} } = await supabase.auth.getSession();
-      if (!session || !session.user) {
-        // Try to refresh session via backend using refresh cookie
-        try {
-          const r = await fetch(apiUrl('/api/admin/refresh'), { method: 'POST', credentials: 'include' });
-          const json = await r.json().catch(() => ({}));
-          if (r.ok && (json?.access_token || json?.refresh_token)) {
-            // Initialize client session if tokens provided
-            try {
-              await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
-            } catch (e) {
-              console.warn('Failed to set supabase session from refresh:', e);
-            }
-          } else {
-            toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
-            await signOut();
-            navigate('/auth');
-            return;
-          }
-        } catch (err) {
-          console.error('Error refreshing admin session:', err);
+      let insertOk = false;
+      let insertError: string | null = null;
+      const code = await generateProductCode();
+      if (isSMSAuth()) {
+        // Appel backend pour session SMS
+        if (!user?.id) {
+          throw new Error('Utilisateur non identifié');
+        }
+        const response = await fetch('/api/vendor/add-product', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vendor_id: user.id,
+            name: newProduct.name,
+            price: parseInt(newProduct.price),
+            description: newProduct.description,
+            warranty: newProduct.warranty,
+            code,
+            is_available: true,
+            stock_quantity: 0
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          insertOk = true;
+        } else {
+          insertError = result.error || 'Erreur lors de l\'ajout du produit';
+        }
+      } else {
+        // Auth classique : vérifie la session
+        const { data: { session } = {} } = await supabase.auth.getSession();
+        if (!session || !session.user) {
           toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
           await signOut();
           navigate('/auth');
           return;
         }
-      }
-
-      if (!user?.id) {
-        throw new Error('User not authenticated');
-      }
-
-      const code = await generateProductCode();
-      const { data: insertData, error } = await supabase
-        .from('products')
-        .insert({
-          vendor_id: user.id,
-          name: newProduct.name,
-          price: parseInt(newProduct.price),
-          description: newProduct.description,
-          warranty: newProduct.warranty,
-          code,
-          is_available: true,
-          stock_quantity: 0
-        });
-
-      if (error) {
-        // Handle auth error specifically
-        if ((error as any)?.status === 401 || (error as any)?.message?.toLowerCase?.().includes('unauthorized')) {
-          toast({ title: 'Session expirée', description: 'Vous devez vous reconnecter pour ajouter un produit', variant: 'destructive' });
-          await signOut();
-          navigate('/auth');
-          return;
+        if (!user?.id) {
+          throw new Error('User not authenticated');
         }
-        throw error;
+        const { data: insertData, error } = await supabase
+          .from('products')
+          .insert({
+            vendor_id: user.id,
+            name: newProduct.name,
+            price: parseInt(newProduct.price),
+            description: newProduct.description,
+            warranty: newProduct.warranty,
+            code,
+            is_available: true,
+            stock_quantity: 0
+          });
+        if (error) {
+          if ((error as any)?.status === 401 || (error as any)?.message?.toLowerCase?.().includes('unauthorized')) {
+            toast({ title: 'Session expirée', description: 'Vous devez vous reconnecter pour ajouter un produit', variant: 'destructive' });
+            await signOut();
+            navigate('/auth');
+            return;
+          }
+          insertError = error.message ? String(error.message) : 'Erreur lors de l\'ajout du produit';
+        } else {
+          insertOk = true;
+        }
       }
 
-      toast({
-        title: 'Succès',
-        description: 'Produit ajouté avec succès'
-      });
-      setNewProduct({ name: '', price: '', description: '', warranty: '' });
-      setAddModalOpen(false);
-      fetchProducts();
+      if (insertOk) {
+        toast({
+          title: 'Succès',
+          description: 'Produit ajouté avec succès'
+        });
+        setNewProduct({ name: '', price: '', description: '', warranty: '' });
+        setAddModalOpen(false);
+        fetchProducts();
+      } else {
+        throw new Error(insertError || 'Erreur lors de l\'ajout du produit');
+      }
     } catch (error: unknown) {
       console.error('handleAddProduct error:', error);
       const msg = (error && typeof error === 'object' && 'message' in error) ? (error as any).message : String(error || 'Erreur inconnue');
