@@ -131,6 +131,8 @@ app.post('/api/vendor/add-product', async (req, res) => {
     }
     // Debug log détaillé pour diagnostiquer le mismatch d'identifiants et de types
     console.log('[DEBUG] userId:', userId, typeof userId, '| vendor_id:', vendor_id, typeof vendor_id, '| ==', userId == vendor_id, '| ===', userId === vendor_id);
+    // Log la présence de la clé service_role
+    console.log('[DEBUG] Supabase client insert: service_role?', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'YES' : 'NO', '| key starts with:', process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 8) : 'MISSING');
     // Comparaison forcée en string pour éviter tout bug de type ou d'espace
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
@@ -148,6 +150,8 @@ app.post('/api/vendor/add-product', async (req, res) => {
         is_available: is_available !== undefined ? is_available : true,
         stock_quantity: stock_quantity !== undefined ? stock_quantity : 0
       });
+    // Log le résultat de l'insert
+    console.log('[DEBUG] Insert result:', { data, error });
     if (error) {
       console.error('[API] Erreur ajout produit:', error);
       return res.status(500).json({ success: false, error: error.message || 'Erreur insertion produit' });
