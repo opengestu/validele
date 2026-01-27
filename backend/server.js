@@ -127,10 +127,10 @@ app.post('/api/vendor/add-product', async (req, res) => {
       }
       userId = user.id;
     }
-    // Debug log pour diagnostiquer le mismatch d'identifiants
-    console.log('[DEBUG] /api/vendor/add-product - userId (JWT):', userId, '| vendor_id reçu:', vendor_id, '| isSms:', isSms);
-    // Vérifier que le vendor_id correspond bien au token
-    if (userId !== vendor_id) {
+    // Debug log détaillé pour diagnostiquer le mismatch d'identifiants et de types
+    console.log('[DEBUG] userId:', userId, typeof userId, '| vendor_id:', vendor_id, typeof vendor_id, '| ==', userId == vendor_id, '| ===', userId === vendor_id);
+    // Comparaison forcée en string pour éviter tout bug de type ou d'espace
+    if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
     // Insert via service key (bypass RLS)
