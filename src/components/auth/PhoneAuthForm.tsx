@@ -431,158 +431,62 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // Vérifier le PIN pour la connexion (utilisateurs existants)
   const handleLoginPin = async (code?: string) => {
     const enteredPin = code || loginPinDigits.join('');
-    console.log('=== handleLoginPin appelé ===');
-    console.log('PIN entré:', enteredPin);
-    console.log('Longueur PIN:', enteredPin.length);
-   
-    if (enteredPin.length !== 4) {
-      console.log('PIN incomplet, retour');
-      return;
-    }
-    console.log('existingProfile:', existingProfile);
-    console.log('PIN stocké:', existingProfile?.pin_hash);
+    if (enteredPin.length !== 4) return;
     if (!existingProfile) {
-      toast({
-        title: "Erreur",
-        description: "Session expirée, veuillez recommencer",
-        variant: "destructive",
-      });
+      toast({ title: "Erreur", description: "Session expirée, recommencez", variant: "destructive" });
       setStep('phone');
       return;
     }
     setLoading(true);
     try {
-      // Essayer d'abord la connexion via Supabase Auth (utilisateurs inscrits via backend SMS)
       const formattedPhone = formatPhoneNumber(formData.phone);
-      const virtualEmail = formattedPhone.replace('+', '') + '@sms.validele.app';
-      console.log('Tentative de connexion Supabase Auth avec:', virtualEmail);
-      let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: virtualEmail,
-        password: enteredPin,
+      // Appel direct au backend pour valider le PIN et obtenir un JWT
+      const loginResp = await fetch(apiUrl('/auth/login-pin'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: formattedPhone, pin: enteredPin })
       });
-      // Si le compte n'existe pas, le créer automatiquement
-      if (authError && authError.message && authError.message.toLowerCase().includes('invalid login credentials')) {
-        // Crée le compte Supabase Auth (email virtuel + PIN)
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: virtualEmail,
-          password: enteredPin,
-        });
-        if (signUpError) {
-          toast({ title: 'Erreur', description: "Impossible de créer le compte vendeur Supabase : " + signUpError.message, variant: 'destructive' });
-          setLoading(false);
-          return;
-        }
-        // Réessaie la connexion — caster explicitement pour satisfaire TypeScript
-        authData = signUpData as typeof authData;
-        authError = null;
+      const body = await loginResp.json().catch(() => ({}));
+      if (!loginResp.ok) {
+        throw new Error(body.error || 'Code PIN incorrect');
       }
-      if (authData?.session && !authError) {
-        // Connexion réussie via Supabase Auth
-        console.log('Connexion réussie via Supabase Auth');
-        // Synchroniser le PIN localement (migrer vers pin_hash) pour les prochaines connexions
-        try {
-          await fetch('/auth/migrate-pin', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profileId: existingProfile.id, pin: enteredPin })
-          });
-        } catch (e) {
-          console.warn('Impossible de migrer le PIN côté serveur:', e);
-        }
-        await refreshProfile();
-        toast({
-          title: "Connexion réussie ! 🎉",
-          description: `Bienvenue ${existingProfile.full_name}`,
-        });
-        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-        navigate(redirectPath, { replace: true });
-        return;
+      // Succès : stocker token et session
+      const accessToken = body.token;
+      if (accessToken) {
+        localStorage.setItem('auth_token', accessToken);
       }
-
-      // Si échec Supabase Auth, vérifier côté serveur via l'endpoint admin `POST /auth/login-pin`
-      try {
-        const loginResp = await fetch(apiUrl('/auth/login-pin'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: formattedPhone, pin: enteredPin })
-        });
-        if (loginResp.ok) {
-          const body = await loginResp.json().catch(() => ({}));
-          // Le serveur peut renvoyer un token (JWT) ou simplement { success: true }
-          if (body.token) {
-            localStorage.setItem('auth_token', body.token);
-          }
-          // Créer la session locale avec le token JWT
-          localStorage.setItem('sms_auth_session', JSON.stringify({
-            phone: formData.phone,
-            profileId: existingProfile.id,
-            role: existingProfile.role,
-            fullName: existingProfile.full_name,
-            loginTime: new Date().toISOString(),
-            access_token: body.token || undefined
-          }));
-          toast({
-            title: "Connexion réussie ! 🎉",
-            description: `Content de vous revoir, ${existingProfile.full_name}`,
-          });
-          // Attendre un peu pour que le toast s'affiche
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                             existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-          window.location.href = redirectPath;
-          return;
-        }
-      } catch (e) {
-        console.error('Erreur vérification /auth/login-pin:', e);
-      }
-
-      // Fallback: si l'app client connaissait un pin_hash plaintext (rare / legacy), comparer localement
-      if (existingProfile.pin_hash && enteredPin === existingProfile.pin_hash) {
-        console.log('PIN CORRECT (via pin_hash) !');
-       
-        // PIN correct - créer directement la session locale sans envoyer de SMS
-        // Stocker les infos de session dans localStorage
-        localStorage.setItem('sms_auth_session', JSON.stringify({
-          phone: formData.phone,
-          profileId: existingProfile.id,
-          role: existingProfile.role,
-          fullName: existingProfile.full_name,
-          loginTime: new Date().toISOString()
-        }));
-        toast({
-          title: "Connexion réussie ! 🎉",
-          description: `Content de vous revoir, ${existingProfile.full_name}`,
-        });
-        // Attendre un peu pour que le toast s'affiche
-        await new Promise(resolve => setTimeout(resolve, 500));
-        const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-       
-        // Rafraîchir pour charger la session
-        window.location.href = redirectPath;
-      } else {
-        // PIN incorrect
-        console.log('PIN INCORRECT !');
-        console.log('Auth error:', authError?.message);
-        console.log('PIN hash attendu:', existingProfile.pin_hash);
-        console.log('PIN reçu:', enteredPin);
-        toast({
-          title: "Code PIN incorrect",
-          description: "Veuillez réessayer",
-          variant: "destructive",
-        });
-        setLoginPinDigits(['', '', '', '']);
-        loginPinRefs[0].current?.focus();
-      }
-    } catch (error) {
-      console.error('Erreur dans handleLoginPin:', error);
+      localStorage.setItem('sms_auth_session', JSON.stringify({
+        phone: formData.phone,
+        profileId: existingProfile.id,
+        role: existingProfile.role,
+        fullName: existingProfile.full_name,
+        loginTime: new Date().toISOString(),
+        access_token: accessToken || undefined
+      }));
       toast({
-        title: "Erreur de connexion",
-        description: "Une erreur est survenue, veuillez réessayer",
+        title: "Connexion réussie ! 🎉",
+        description: `Content de vous revoir, ${existingProfile.full_name}`,
+      });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
+                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+      window.location.href = redirectPath;
+      return;
+    } catch (error: unknown) {
+      console.error('Erreur login PIN:', error);
+      let errorMessage = "Veuillez réessayer";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === "object" && error !== null && "message" in error && typeof (error as { message?: string }).message === "string") {
+        errorMessage = (error as { message?: string }).message || errorMessage;
+      }
+      toast({
+        title: "Code PIN incorrect",
+        description: errorMessage,
         variant: "destructive",
       });
       setLoginPinDigits(['', '', '', '']);
+      loginPinRefs[0].current?.focus();
     } finally {
       setLoading(false);
     }

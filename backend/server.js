@@ -127,6 +127,8 @@ app.post('/api/vendor/add-product', async (req, res) => {
       }
       userId = user.id;
     }
+    // Debug log pour diagnostiquer le mismatch d'identifiants
+    console.log('[DEBUG] /api/vendor/add-product - userId (JWT):', userId, '| vendor_id reçu:', vendor_id, '| isSms:', isSms);
     // Vérifier que le vendor_id correspond bien au token
     if (userId !== vendor_id) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
