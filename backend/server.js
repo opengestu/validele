@@ -123,14 +123,17 @@ app.post('/api/vendor/add-product', async (req, res) => {
     // 1. Essayer de décoder comme JWT SMS
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      console.log('[DEBUG] JWT decoded:', typeof decoded === 'object' ? JSON.stringify(decoded).slice(0, 500) : String(decoded));
-      if (decoded && decoded.sub && decoded.auth_mode === 'sms') {
+      console.log('[DEBUG] JWT decoded:', typeof decoded === 'object' ? JSON.stringify(decoded).slice(0, 1000) : String(decoded));
+      // Accept any JWT we issue that contains `sub` as a valid SMS session token.
+      if (decoded && decoded.sub) {
         userId = decoded.sub;
-        isSms = true;
+        // Mark as SMS only if explicit claim present
+        isSms = decoded.auth_mode === 'sms' || decoded.role === 'vendor';
+        console.log('[DEBUG] Token accepted as SMS session:', { userId, isSms });
       }
     } catch (e) {
       console.warn('[DEBUG] JWT verify failed:', e?.message || e);
-      // Pas un JWT SMS valide, on continue
+      // Token not signed by our JWT_SECRET or invalid, continue to supabase check
     }
     // 2. Sinon, essayer comme token Supabase
     if (!userId) {
