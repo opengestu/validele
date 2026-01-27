@@ -581,29 +581,48 @@ const VendorDashboard = () => {
     if (!editProduct) return;
     setEditing(true);
     try {
-      const { error } = await supabase
-        .from('products')
-        .update({
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        const sms = JSON.parse(smsSessionStr);
+        const token = sms.access_token;
+        if (!token) throw new Error('Token d\'authentification manquant. Veuillez vous reconnecter.');
+        const updates = {
           name: editProduct.name,
           price: parseInt(String(editProduct.price)),
           description: editProduct.description,
           warranty: editProduct.warranty
-        })
-        .eq('id', editProduct.id);
-      if (error) throw error;
-      toast({
-        title: 'Succès',
-        description: 'Produit modifié avec succès'
-      });
+        };
+        const resp = await fetch(apiUrl('/api/vendor/update-product'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ vendor_id: sms.profileId, product_id: editProduct.id, updates })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          const errMsg = json?.error || 'Erreur lors de la modification du produit (backend)';
+          throw new Error(errMsg);
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('products')
+          .update({
+            name: editProduct.name,
+            price: parseInt(String(editProduct.price)),
+            description: editProduct.description,
+            warranty: editProduct.warranty
+          })
+          .eq('id', editProduct.id)
+          .select();
+        if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Produit introuvable ou non modifié');
+      }
+      toast({ title: 'Succès', description: 'Produit modifié avec succès' });
       setEditModalOpen(false);
       setEditProduct(null);
       fetchProducts();
     } catch (error) {
-      toast({
-        title: 'Erreur',
-        description: 'Impossible de modifier le produit',
-        variant: 'destructive'
-      });
+      console.error('handleEditProduct error:', error);
+      toast({ title: 'Erreur', description: (error as any)?.message || 'Impossible de modifier le produit', variant: 'destructive' });
     } finally {
       setEditing(false);
     }
@@ -612,24 +631,41 @@ const VendorDashboard = () => {
     if (!deleteProductId) return;
     setDeleting(true);
     try {
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', deleteProductId);
-      if (error) throw error;
-      toast({
-        title: 'Succès',
-        description: 'Produit supprimé avec succès'
-      });
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      // If SMS session, use backend admin endpoint to delete (bypass RLS)
+      if (smsSessionStr) {
+        const sms = JSON.parse(smsSessionStr);
+        const token = sms.access_token;
+        if (!token) throw new Error('Token d\'authentification manquant. Veuillez vous reconnecter.');
+        const resp = await fetch(apiUrl('/api/vendor/delete-product'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ vendor_id: sms.profileId, product_id: deleteProductId })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          const errMsg = json?.error || 'Erreur lors de la suppression du produit (backend)';
+          throw new Error(errMsg);
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('products')
+          .delete()
+          .eq('id', deleteProductId)
+          .select();
+        if (error) throw error;
+        // Ensure a row was actually deleted
+        if (!data || data.length === 0) {
+          throw new Error('Produit introuvable ou non supprimé');
+        }
+      }
+      toast({ title: 'Succès', description: 'Produit supprimé avec succès' });
       setDeleteDialogOpen(false);
       setDeleteProductId(null);
       fetchProducts();
     } catch (error) {
-      toast({
-        title: 'Erreur',
-        description: 'Impossible de supprimer le produit',
-        variant: 'destructive'
-      });
+      console.error('handleDeleteProduct error:', error);
+      toast({ title: 'Erreur', description: (error as any)?.message || 'Impossible de supprimer le produit', variant: 'destructive' });
     } finally {
       setDeleting(false);
     }

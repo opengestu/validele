@@ -183,6 +183,114 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
 
+// Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
+app.post('/api/vendor/delete-product', async (req, res) => {
+  try {
+    console.log('[DEBUG] /api/vendor/delete-product rawBodySnippet:', String(req.rawBody || '').slice(0, 1000));
+    const { vendor_id, product_id } = req.body || {};
+    if (!vendor_id || !product_id) return res.status(400).json({ success: false, error: 'vendor_id et product_id requis' });
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.sub) {
+        userId = decoded.sub;
+      }
+    } catch (e) {
+      console.warn('[DEBUG] /api/vendor/delete-product jwt verify failed:', e?.message || e);
+    }
+
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser for delete:', { user: user ? { id: user.id } : null, authErr });
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+
+    if (String(userId) !== String(vendor_id)) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+    }
+
+    const { data, error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', product_id)
+      .select();
+
+    console.log('[DEBUG] delete result:', { data, error });
+    if (error) {
+      console.error('[API] Erreur suppression produit:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur suppression produit' });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ success: false, error: 'Produit introuvable ou non supprimé' });
+    }
+    return res.json({ success: true, deleted: data[0] });
+  } catch (err) {
+    console.error('[API] /api/vendor/delete-product error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// Endpoint sécurisé pour modification de produit par un vendeur (bypass RLS pour session SMS)
+app.post('/api/vendor/update-product', async (req, res) => {
+  try {
+    console.log('[DEBUG] /api/vendor/update-product rawBodySnippet:', String(req.rawBody || '').slice(0, 1000));
+    const { vendor_id, product_id, updates } = req.body || {};
+    if (!vendor_id || !product_id || !updates) return res.status(400).json({ success: false, error: 'vendor_id, product_id et updates requis' });
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.sub) {
+        userId = decoded.sub;
+      }
+    } catch (e) {
+      console.warn('[DEBUG] /api/vendor/update-product jwt verify failed:', e?.message || e);
+    }
+
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser for update:', { user: user ? { id: user.id } : null, authErr });
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+
+    if (String(userId) !== String(vendor_id)) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+    }
+
+    const { data, error } = await supabase
+      .from('products')
+      .update(updates)
+      .eq('id', product_id)
+      .select();
+
+    console.log('[DEBUG] update result:', { data, error });
+    if (error) {
+      console.error('[API] Erreur modification produit:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur modification produit' });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ success: false, error: 'Produit introuvable ou non modifié' });
+    }
+    return res.json({ success: true, product: data[0] });
+  } catch (err) {
+    console.error('[API] /api/vendor/update-product error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
