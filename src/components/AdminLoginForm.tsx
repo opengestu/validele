@@ -16,6 +16,8 @@ const AdminLoginForm: React.FC = () => {
 
   const submit = async () => {
     setLoading(true);
+    // Enable auth spinner visibility for this flow
+    if (typeof window !== 'undefined') document.body.classList.add('auth-spinner-enabled');
     setError(null);
     try {
       const res = await fetch(apiUrl('/api/admin/login'), {
@@ -51,6 +53,7 @@ const AdminLoginForm: React.FC = () => {
       toast({ title: 'Erreur', description: message, variant: 'destructive' });
     } finally {
       setLoading(false);
+      if (typeof window !== 'undefined') document.body.classList.remove('auth-spinner-enabled');
     }
   };
 

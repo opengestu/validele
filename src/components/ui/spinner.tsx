@@ -19,8 +19,11 @@ export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: Spinn
     return null;
   }
 
+  // Add a helper class so global CSS can hide local spinners when an overlay is active
+  const helperClass = hideWhenGlobal ? 'local-spinner' : 'global-spinner-exempt';
+
   return (
-    <div className={cn("relative", sizeClasses[size], className)}>
+    <div className={cn("relative", sizeClasses[size], helperClass, className)}>
       <svg
         className="animate-spin"
         viewBox="0 0 50 50"

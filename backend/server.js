@@ -19,6 +19,8 @@ if (SUPABASE_ANON_KEY_SOURCE) {
 const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
@@ -105,9 +107,29 @@ app.post('/api/vendor/add-product', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
     }
     const token = authHeader.split(' ')[1];
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !user || user.id !== vendor_id) {
-      return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+    let userId = null;
+    let isSms = false;
+    // 1. Essayer de décoder comme JWT SMS
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.sub && decoded.auth_mode === 'sms') {
+        userId = decoded.sub;
+        isSms = true;
+      }
+    } catch (e) {
+      // Pas un JWT SMS valide, on continue
+    }
+    // 2. Sinon, essayer comme token Supabase
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) {
+        return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      }
+      userId = user.id;
+    }
+    // Vérifier que le vendor_id correspond bien au token
+    if (userId !== vendor_id) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
     // Insert via service key (bypass RLS)
     const { data, error } = await supabase
@@ -413,12 +435,26 @@ app.post('/api/sms/register', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erreur lors de la création du profil' });
     }
 
+    // Générer un token JWT pour l'utilisateur SMS
+    const token = jwt.sign(
+      {
+        sub: userId,
+        phone: formattedPhone,
+        role: safeRole,
+        auth_mode: 'sms'
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     return res.json({
       success: true,
       profileId: userId,
       phone: formattedPhone,
       role: safeRole,
-      fullName: full_name
+      fullName: full_name,
+      token,
+      expiresIn: 7 * 24 * 60 * 60
     });
   } catch (error) {
     console.error('[SMS] Erreur register:', error);

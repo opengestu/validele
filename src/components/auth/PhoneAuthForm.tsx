@@ -121,11 +121,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     if (loading) {
       document.body.style.overflow = 'hidden';
       document.body.classList.add('has-global-spinner');
+      document.body.classList.add('auth-spinner-enabled');
     } else {
       document.body.style.overflow = '';
       document.body.classList.remove('has-global-spinner');
+      document.body.classList.remove('auth-spinner-enabled');
     }
-    return () => { document.body.style.overflow = ''; document.body.classList.remove('has-global-spinner'); };
+    return () => { document.body.style.overflow = ''; document.body.classList.remove('has-global-spinner'); document.body.classList.remove('auth-spinner-enabled'); };
   }, [loading]);
   // Format du numéro de téléphone sénégalais
   const formatPhoneNumber = (phone: string): string => {
@@ -453,12 +455,27 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Essayer d'abord la connexion via Supabase Auth (utilisateurs inscrits via backend SMS)
       const formattedPhone = formatPhoneNumber(formData.phone);
       const virtualEmail = formattedPhone.replace('+', '') + '@sms.validele.app';
-     
       console.log('Tentative de connexion Supabase Auth avec:', virtualEmail);
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: virtualEmail,
         password: enteredPin,
       });
+      // Si le compte n'existe pas, le créer automatiquement
+      if (authError && authError.message && authError.message.toLowerCase().includes('invalid login credentials')) {
+        // Crée le compte Supabase Auth (email virtuel + PIN)
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: virtualEmail,
+          password: enteredPin,
+        });
+        if (signUpError) {
+          toast({ title: 'Erreur', description: "Impossible de créer le compte vendeur Supabase : " + signUpError.message, variant: 'destructive' });
+          setLoading(false);
+          return;
+        }
+        // Réessaie la connexion — caster explicitement pour satisfaire TypeScript
+        authData = signUpData as typeof authData;
+        authError = null;
+      }
       if (authData?.session && !authError) {
         // Connexion réussie via Supabase Auth
         console.log('Connexion réussie via Supabase Auth');
@@ -472,9 +489,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         } catch (e) {
           console.warn('Impossible de migrer le PIN côté serveur:', e);
         }
-
         await refreshProfile();
-       
         toast({
           title: "Connexion réussie ! 🎉",
           description: `Bienvenue ${existingProfile.full_name}`,
@@ -498,16 +513,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           if (body.token) {
             localStorage.setItem('auth_token', body.token);
           }
-
-          // Créer la session locale
+          // Créer la session locale avec le token JWT
           localStorage.setItem('sms_auth_session', JSON.stringify({
             phone: formData.phone,
             profileId: existingProfile.id,
             role: existingProfile.role,
             fullName: existingProfile.full_name,
-            loginTime: new Date().toISOString()
+            loginTime: new Date().toISOString(),
+            access_token: body.token || undefined
           }));
-
           toast({
             title: "Connexion réussie ! 🎉",
             description: `Content de vous revoir, ${existingProfile.full_name}`,
@@ -688,13 +702,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       if (!newProfileId) {
         throw new Error('Réponse serveur invalide (profileId manquant)');
       }
-      // Créer une session SMS dans localStorage
+      // Créer une session SMS dans localStorage avec le token JWT si présent
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: newProfileId,
         role: formData.role,
         fullName: formData.fullName,
-        loginTime: new Date().toISOString()
+        loginTime: new Date().toISOString(),
+        access_token: created && typeof created.token === 'string' ? created.token : undefined,
+        expiresIn: created?.expiresIn
       }));
       toast({
         title: "Compte créé ! 🎊",

@@ -231,6 +231,14 @@
     backdrop-filter: blur(20px);
   }
 
+  /* Hide local spinners by default; only show them when explicitly enabled for auth flows */
+  .local-spinner {
+    display: none;
+  }
+  .auth-spinner-enabled .local-spinner {
+    display: inline-block !important;
+  }
+
   /* When a global overlay spinner is active, hide all local spinners (to keep a single visible) */
   body.has-global-spinner .local-spinner {
     display: none !important;

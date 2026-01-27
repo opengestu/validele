@@ -469,14 +469,23 @@ const VendorDashboard = () => {
       let insertOk = false;
       let insertError: string | null = null;
       const code = await generateProductCode();
-      if (isSMSAuth()) {
-        // Appel backend pour session SMS
-        if (!user?.id) {
-          throw new Error('Utilisateur non identifié');
-        }
-        const response = await fetch('/api/vendor/add-product', {
+      if (!user?.id) {
+        throw new Error('Utilisateur non identifié');
+      }
+      // Vérifie si session SMS (auth locale)
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      let productResp: { success?: boolean; error?: string } | null = null;
+      if (smsSessionStr) {
+        // Utilise le backend sécurisé avec le token JWT
+        const smsSession = JSON.parse(smsSessionStr);
+        const token = smsSession.access_token;
+        if (!token) throw new Error('Token d\'authentification manquant. Veuillez vous reconnecter.');
+        const resp = await fetch(apiUrl('/api/vendor/add-product'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({
             vendor_id: user.id,
             name: newProduct.name,
@@ -488,24 +497,14 @@ const VendorDashboard = () => {
             stock_quantity: 0
           })
         });
-        const result = await response.json();
-        if (result.success) {
-          insertOk = true;
+        productResp = await resp.json();
+        if (!resp.ok || !productResp || !productResp.success) {
+          insertError = productResp && typeof productResp.error === 'string' ? productResp.error : 'Erreur lors de l\'ajout du produit (backend)';
         } else {
-          insertError = result.error || 'Erreur lors de l\'ajout du produit';
+          insertOk = true;
         }
       } else {
-        // Auth classique : vérifie la session
-        const { data: { session } = {} } = await supabase.auth.getSession();
-        if (!session || !session.user) {
-          toast({ title: 'Session expirée', description: 'Veuillez vous reconnecter', variant: 'destructive' });
-          await signOut();
-          navigate('/auth');
-          return;
-        }
-        if (!user?.id) {
-          throw new Error('User not authenticated');
-        }
+        // Utilisateur Supabase classique
         const { data: insertData, error } = await supabase
           .from('products')
           .insert({
@@ -530,7 +529,6 @@ const VendorDashboard = () => {
           insertOk = true;
         }
       }
-
       if (insertOk) {
         toast({
           title: 'Succès',
