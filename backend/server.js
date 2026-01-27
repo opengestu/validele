@@ -298,6 +298,31 @@ app.post('/api/otp/verify', async (req, res) => {
 
     const result = await verifyOTP(formattedPhone, code);
 
+// Génération de JWT pour vendeur SMS après login (à appeler côté frontend après login PIN ou OTP validé)
+app.post('/api/vendor/generate-jwt', async (req, res) => {
+  try {
+    const { vendor_id, phone } = req.body;
+    if (!vendor_id || !phone) {
+      return res.status(400).json({ success: false, error: 'vendor_id et phone requis' });
+    }
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+    const payload = {
+      sub: vendor_id,
+      phone: phone,
+      auth_mode: 'sms',
+      role: 'vendor',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600 // 1h
+    };
+    const token = jwt.sign(payload, JWT_SECRET);
+    res.json({ success: true, token });
+  } catch (err) {
+    console.error('[API] /api/vendor/generate-jwt error:', err);
+    res.status(500).json({ success: false, error: 'Erreur génération JWT' });
+  }
+});
+
     if (result.valid) {
       res.json({ success: true, valid: true });
     } else {

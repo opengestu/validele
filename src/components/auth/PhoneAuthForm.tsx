@@ -451,7 +451,23 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         throw new Error(body.error || 'Code PIN incorrect');
       }
       // Succès : stocker token et session
-      const accessToken = body.token;
+      let accessToken = body.token;
+      // Si c'est un vendeur, générer le JWT backend pour session SMS
+      if (existingProfile.role === 'vendor') {
+        try {
+          const jwtResp = await fetch('https://validele.onrender.com/api/vendor/generate-jwt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vendor_id: existingProfile.id, phone: formData.phone })
+          });
+          const jwtData = await jwtResp.json();
+          if (jwtData.success && jwtData.token) {
+            accessToken = jwtData.token;
+          }
+        } catch (e) {
+          console.error('Erreur génération JWT vendeur:', e);
+        }
+      }
       if (accessToken) {
         localStorage.setItem('auth_token', accessToken);
       }
