@@ -184,9 +184,9 @@ app.get('/api/test', (req, res) => {
 });
 
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
-app.post('/api/vendor/delete-product', async (req, res) => {
+async function deleteProductHandler(req, res) {
   try {
-    console.log('[DEBUG] /api/vendor/delete-product rawBodySnippet:', String(req.rawBody || '').slice(0, 1000));
+    console.log('[DEBUG] /api/vendor/delete-product method:', req.method, 'rawBodySnippet:', String(req.rawBody || '').slice(0, 1000));
     const { vendor_id, product_id } = req.body || {};
     if (!vendor_id || !product_id) return res.status(400).json({ success: false, error: 'vendor_id et product_id requis' });
 
@@ -235,7 +235,9 @@ app.post('/api/vendor/delete-product', async (req, res) => {
     console.error('[API] /api/vendor/delete-product error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
-});
+}
+app.post('/api/vendor/delete-product', deleteProductHandler);
+app.delete('/api/vendor/delete-product', deleteProductHandler);
 
 // Endpoint sécurisé pour modification de produit par un vendeur (bypass RLS pour session SMS)
 app.post('/api/vendor/update-product', async (req, res) => {
