@@ -452,6 +452,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       }
       // Succès : stocker token et session
       let accessToken = body.token;
+      console.log('[DEBUG] /auth/login-pin result body:', body);
       // Si c'est un vendeur, générer le JWT backend pour session SMS
       if (existingProfile.role === 'vendor') {
         try {
@@ -460,8 +461,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ vendor_id: existingProfile.id, phone: formData.phone })
           });
-          const jwtData = await jwtResp.json();
-          if (jwtData.success && jwtData.token) {
+          const jwtData = await jwtResp.json().catch(() => null);
+          console.log('[DEBUG] /api/vendor/generate-jwt response:', jwtData);
+          if (jwtData && jwtData.success && jwtData.token) {
             accessToken = jwtData.token;
           }
         } catch (e) {
@@ -479,6 +481,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         loginTime: new Date().toISOString(),
         access_token: accessToken || undefined
       }));
+      console.log('[DEBUG] sms_auth_session stored:', JSON.parse(localStorage.getItem('sms_auth_session') || '{}'));
       toast({
         title: "Connexion réussie ! 🎉",
         description: `Content de vous revoir, ${existingProfile.full_name}`,

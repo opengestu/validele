@@ -328,6 +328,7 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
       exp: Math.floor(Date.now() / 1000) + 3600 // 1h
     };
     const token = jwt.sign(payload, JWT_SECRET);
+    console.log('[DEBUG] /api/vendor/generate-jwt created token for vendor_id:', vendor_id, 'tokenSnippet:', token.slice(0, 40));
     res.json({ success: true, token });
   } catch (err) {
     console.error('[API] /api/vendor/generate-jwt error:', err);
