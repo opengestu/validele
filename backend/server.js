@@ -99,6 +99,15 @@ app.use((err, req, res, next) => {
 // Endpoint sécurisé pour ajout produit par un vendeur (bypass RLS pour session SMS)
 app.post('/api/vendor/add-product', async (req, res) => {
   try {
+    // DEBUG: log raw request & headers (truncate rawBody to 1000 chars)
+    try {
+      const raw = String(req.rawBody || '');
+      console.log('[DEBUG] /api/vendor/add-product rawBodySnippet:', raw.slice(0, 1000));
+    } catch (ex) {
+      console.warn('[DEBUG] /api/vendor/add-product failed to read rawBody:', ex?.message || ex);
+    }
+    console.log('[DEBUG] /api/vendor/add-product headers.authorization:', req.headers.authorization?.slice(0, 200));
+
     const { vendor_id, name, price, description, warranty, code, is_available, stock_quantity } = req.body || {};
     if (!vendor_id || !name || !price || !description || !code) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
@@ -114,16 +123,19 @@ app.post('/api/vendor/add-product', async (req, res) => {
     // 1. Essayer de décoder comme JWT SMS
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
+      console.log('[DEBUG] JWT decoded:', typeof decoded === 'object' ? JSON.stringify(decoded).slice(0, 500) : String(decoded));
       if (decoded && decoded.sub && decoded.auth_mode === 'sms') {
         userId = decoded.sub;
         isSms = true;
       }
     } catch (e) {
+      console.warn('[DEBUG] JWT verify failed:', e?.message || e);
       // Pas un JWT SMS valide, on continue
     }
     // 2. Sinon, essayer comme token Supabase
     if (!userId) {
       const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser result:', { user: user ? { id: user.id, email: user.email } : null, authErr });
       if (authErr || !user) {
         return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
       }

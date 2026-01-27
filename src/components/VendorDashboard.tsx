@@ -54,6 +54,33 @@ type ProfileRow = {
 };
 const VendorDashboard = () => {
   const { user, signOut, userProfile: authUserProfile } = useAuth();
+  // Correction : lire user depuis sms_auth_session si présent
+  type SmsUser = {
+    id: string;
+    phone: string;
+    role: string;
+    full_name: string;
+    access_token: string;
+  } | null;
+
+  const smsSession = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+  let smsUser: SmsUser = null;
+  if (smsSession) {
+    try {
+      const parsed = JSON.parse(smsSession);
+      smsUser = {
+        id: parsed.profileId,
+        phone: parsed.phone,
+        role: parsed.role,
+        full_name: parsed.fullName,
+        access_token: parsed.access_token
+      };
+    } catch {
+      // ignore parse error
+    }
+  }
+  // Utilise smsUser si présent, sinon user
+  const effectiveUser = smsUser || user;
   const { toast } = useToast();
   const navigate = useNavigate();
   // States
@@ -469,17 +496,15 @@ const VendorDashboard = () => {
       let insertOk = false;
       let insertError: string | null = null;
       const code = await generateProductCode();
-      if (!user?.id) {
+      if (!effectiveUser?.id) {
         throw new Error('Utilisateur non identifié');
       }
-      // Vérifie si session SMS (auth locale)
-      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      // Utilise le backend sécurisé avec le token JWT si session SMS
+      const token = smsUser?.access_token || '';
       let productResp: { success?: boolean; error?: string } | null = null;
-      if (smsSessionStr) {
-        // Utilise le backend sécurisé avec le token JWT
-        const smsSession = JSON.parse(smsSessionStr);
-        const token = smsSession.access_token;
-        if (!token) throw new Error('Token d\'authentification manquant. Veuillez vous reconnecter.');
+      if (smsUser) {
+        // Log pour debug
+        console.log('Token envoyé:', token);
         const resp = await fetch(apiUrl('/api/vendor/add-product'), {
           method: 'POST',
           headers: {
@@ -487,7 +512,7 @@ const VendorDashboard = () => {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
-            vendor_id: user.id,
+            vendor_id: effectiveUser.id,
             name: newProduct.name,
             price: parseInt(newProduct.price),
             description: newProduct.description,
@@ -508,7 +533,7 @@ const VendorDashboard = () => {
         const { data: insertData, error } = await supabase
           .from('products')
           .insert({
-            vendor_id: user.id,
+            vendor_id: effectiveUser.id,
             name: newProduct.name,
             price: parseInt(newProduct.price),
             description: newProduct.description,
