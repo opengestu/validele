@@ -311,25 +311,49 @@ const VendorDashboard = () => {
       } catch (e) { /* ignore */ }
       toast({ title: "Erreur", description: "Impossible de charger les produits", variant: 'destructive' });
     }
-  }, [user, smsUser, toast]);
+  }, [user, smsUser, toast, backendAvailable]);
   const fetchOrders = useCallback(async () => {
-    if (!user) return;
-  
+    const caller = smsUser || user;
+    if (!caller) return;
+
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`
-          *,
-          products(name),
-          profiles!orders_buyer_id_fkey(full_name, phone),
-          delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
-        `)
-        .eq('vendor_id', user.id)
-        .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
-        .order('created_at', { ascending: false });
-      if (error) throw error;
+      let data: any[] = [];
+      if (smsUser) {
+        if (!backendAvailable) {
+          throw new Error('Backend not available for vendor orders (cached fallback)');
+        }
+        const token = smsUser?.access_token || '';
+        const resp = await fetch(apiUrl('/api/vendor/orders'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ vendor_id: caller.id })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          setBackendAvailable(false);
+          console.warn('[VendorDashboard] backend marked unavailable for orders', { status: resp.status, body: json });
+          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
+          throw new Error(json?.error || `Backend returned ${resp.status}`);
+        }
+        data = json.orders || [];
+      } else {
+        const { data: supData, error } = await supabase
+          .from('orders')
+          .select(`
+            *,
+            products(name),
+            profiles!orders_buyer_id_fkey(full_name, phone),
+            delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
+          `)
+          .eq('vendor_id', caller.id)
+          .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        data = supData || [];
+      }
+
       // Debug: show returned rows to help trace missing data
-      console.debug('[VendorDashboard] fetchOrders result', { userId: user?.id, rowsReturned: (data || []).length, raw: data });
+      console.debug('[VendorDashboard] fetchOrders result', { callerId: caller?.id, rowsReturned: (data || []).length, raw: data });
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
         ...o,
@@ -347,10 +371,11 @@ const VendorDashboard = () => {
       const filtered = mappedOrders.filter(order => order.status !== 'pending');
       console.debug('[VendorDashboard] mappedOrders', { mappedCount: mappedOrders.length, filteredCount: filtered.length });
       setOrders(filtered);
+      try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
     } catch (error) {
       // Try to load cached orders when offline
       try {
-        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
+        const cached = localStorage.getItem(`cached_orders_${caller?.id || user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
@@ -360,13 +385,14 @@ const VendorDashboard = () => {
       } catch (e) {
         // ignore
       }
+      console.error('[VendorDashboard] fetchOrders error', error);
       toast({
         title: "Erreur",
         description: "Impossible de charger les commandes",
         variant: "destructive",
       });
     }
-  }, [user, toast]);
+  }, [user, smsUser, backendAvailable, toast]);
   const fetchTransactions = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
@@ -422,7 +448,7 @@ const VendorDashboard = () => {
       }
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user, smsUser, toast]);
+  }, [user, smsUser, toast, backendAvailable]);
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
@@ -490,14 +516,20 @@ const VendorDashboard = () => {
     };
     const fetchData = async () => {
       setPageLoading(true);
-      await fetchOrCreateProfile();
-      await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
-      setPageLoading(false);
+      try {
+        await fetchOrCreateProfile();
+        await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
+      } catch (err) {
+        console.error('[VendorDashboard] fetchData failed', err);
+        toast({ title: 'Erreur', description: 'Impossible de charger toutes les données du tableau de bord', variant: 'destructive' });
+      } finally {
+        setPageLoading(false);
+      }
     };
-    if (user) {
+    if (user || smsUser) {
       fetchData();
     }
-  }, [user, fetchProfile, fetchProducts, fetchOrders, fetchTransactions]);
+  }, [user, smsUser, fetchProfile, fetchProducts, fetchOrders, fetchTransactions, toast]);
   // Live updates: écoute les changements sur les commandes du vendeur
   useEffect(() => {
     if (!user?.id) return;

@@ -367,17 +367,47 @@ app.post('/api/vendor/transactions', async (req, res) => {
     }
     if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
 
-    const { data, error } = await supabase
-      .from('payment_transactions')
-      .select(`
-        *,
-        orders!inner(vendor_id, order_code, buyer_id)
-      `)
-      .eq('orders.vendor_id', vendor_id)
-      .eq('transaction_type', 'payout')
-      .order('created_at', { ascending: false });
+    // Retry logic for transient Supabase/Cloudflare 500 errors
+    let data = null;
+    let error = null;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const resp = await supabase
+          .from('payment_transactions')
+          .select(`
+            *,
+            orders!inner(vendor_id, order_code, buyer_id)
+          `)
+          .eq('orders.vendor_id', vendor_id)
+          .eq('transaction_type', 'payout')
+          .order('created_at', { ascending: false });
+        data = resp.data;
+        error = resp.error;
+        if (!error) break;
+        // If we have an error object, log and retry after backoff
+        console.warn(`[API] list transactions attempt ${attempt} failed`, { message: String(error.message).slice(0,300) });
+      } catch (e) {
+        // Unexpected thrown error (network/html response etc.)
+        error = e;
+        const msg = typeof e === 'object' && e !== null && e.message ? String(e.message) : String(e);
+        console.warn(`[API] list transactions attempt ${attempt} threw`, { message: msg.slice(0,300) });
+      }
+      // Backoff before next attempt
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 500 * attempt));
+    }
 
-    if (error) { console.error('[API] Erreur list transactions:', error); return res.status(500).json({ success: false, error: error.message || 'Erreur list transactions' }); }
+    if (error) {
+      // Detect HTML 500 coming from Cloudflare/Supabase
+      const rawMsg = (error && error.message) ? String(error.message) : (typeof error === 'string' ? error : JSON.stringify(error));
+      if (rawMsg.includes('<!DOCTYPE html>') || rawMsg.includes('Internal server error')) {
+        console.error('[API] Erreur list transactions: Received HTML 500 from Supabase/Cloudflare', { snippet: rawMsg.slice(0,1000) });
+      } else {
+        console.error('[API] Erreur list transactions:', error);
+      }
+      return res.status(502).json({ success: false, error: 'Erreur service tiers (Supabase) lors de la récupération des transactions', detail: rawMsg.slice(0,500) });
+    }
+
     return res.json({ success: true, transactions: data || [] });
   } catch (err) { console.error('[API] /api/vendor/transactions error:', err); return res.status(500).json({ success: false, error: 'Erreur serveur' }); }
 });
