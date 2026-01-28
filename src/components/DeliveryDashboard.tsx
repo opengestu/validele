@@ -34,20 +34,31 @@ type DeliveryOrder = {
 };
 
 const DeliveryDashboard = () => {
+  const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+
+  // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
+  React.useEffect(() => {
+    if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authUserProfile, loading, navigate]);
+
+  // ...existing code...
   const [userProfile, setUserProfile] = useState<ProfileRow | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
   const [myDeliveries, setMyDeliveries] = useState<DeliveryOrder[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
-  const [loading, setLoading] = useState(true);
   const [takingOrderId, setTakingOrderId] = useState<string | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editProfile, setEditProfile] = useState<{ full_name: string; phone: string }>({
-    full_name: '',
-    phone: ''
-  });
+  const [editProfile, setEditProfile] = useState<{ full_name: string; phone: string }>(
+    {
+      full_name: '',
+      phone: ''
+    }
+  );
   const [savingProfile, setSavingProfile] = useState(false);
+  const [loadingState, setLoading] = useState(true); // Ajouté pour loading local
   const { toast } = useToast();
 
   // Call modal state

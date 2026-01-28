@@ -53,7 +53,18 @@ type ProfileRow = {
   wallet_type?: string | null;
 };
 const VendorDashboard = () => {
-  const { user, signOut, userProfile: authUserProfile } = useAuth();
+    const { toast } = useToast();
+  const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
+  const navigate = useNavigate();
+
+  // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
+  React.useEffect(() => {
+    if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authUserProfile, loading, navigate]);
+
+  // ...existing code...
   // Correction : lire user depuis sms_auth_session si présent
   type SmsUser = {
     id: string;
@@ -81,13 +92,12 @@ const VendorDashboard = () => {
   }
   // Utilise smsUser si présent, sinon user
   const effectiveUser = smsUser || user;
-  const { toast } = useToast();
-  const navigate = useNavigate();
+  // ...existing code...
   // States
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
-  const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState<boolean>(true);
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -124,7 +134,7 @@ const VendorDashboard = () => {
   // (Global spinner overlay and body class logic removed)
 
   // Harmonized Spinner for all main loading states
-  const isPageLoading = loading || adding || editing || deleting || savingProfile;
+  const isPageLoading = pageLoading || loading || adding || editing || deleting || savingProfile;
   // Map DB or cached wallet types to readable labels
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
@@ -440,10 +450,10 @@ const VendorDashboard = () => {
       }
     };
     const fetchData = async () => {
-      setLoading(true);
+      setPageLoading(true);
       await fetchOrCreateProfile();
       await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
-      setLoading(false);
+      setPageLoading(false);
     };
     if (user) {
       fetchData();

@@ -72,8 +72,18 @@ interface CreateOrderResponse {
 
 const BuyerDashboard = () => {
   const { toast } = useToast();
-  const { user, signOut, userProfile: authUserProfile } = useAuth();
+  const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
+
+  // Sécurité : si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
+  useEffect(() => {
+    if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authUserProfile, loading, navigate]);
+
+  // ...existing code...
+  // ...existing code...
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
