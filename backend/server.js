@@ -513,6 +513,18 @@ app.post('/api/otp/verify', async (req, res) => {
 
     const result = await verifyOTP(formattedPhone, code);
 
+    if (result.valid) {
+      res.json({ success: true, valid: true });
+    } else {
+      res.status(400).json({ success: false, valid: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('[OTP] Erreur vérification:', error);
+    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 // Génération de JWT pour vendeur SMS après login (à appeler côté frontend après login PIN ou OTP validé)
 app.post('/api/vendor/generate-jwt', async (req, res) => {
   try {
@@ -536,18 +548,6 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
   } catch (err) {
     console.error('[API] /api/vendor/generate-jwt error:', err);
     res.status(500).json({ success: false, error: 'Erreur génération JWT' });
-  }
-});
-
-    if (result.valid) {
-      res.json({ success: true, valid: true });
-    } else {
-      res.status(400).json({ success: false, valid: false, error: result.error });
-    }
-  } catch (error) {
-    console.error('[OTP] Erreur vérification:', error);
-    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
-    res.status(500).json({ success: false, error: message });
   }
 });
 
