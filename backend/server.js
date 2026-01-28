@@ -2710,6 +2710,64 @@ app.post('/api/orders', async (req, res) => {
 });
 
 // ==========================================
+// ENDPOINT GET BUYER ORDERS
+// ==========================================
+// Récupérer les commandes d'un acheteur (authentifié via Bearer token ou query param)
+app.get('/api/buyer/orders', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let buyerId = req.query.buyer_id;
+    let userId = null;
+
+    // 1) Try JWT (SMS sessions)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) {
+          userId = decoded.sub;
+        }
+      } catch (e) {
+        // not a JWT we issued, try Supabase
+        try {
+          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+          if (!authErr && user) userId = user.id;
+        } catch (e2) {
+          // ignore
+        }
+      }
+    }
+
+    // fallback to buyer_id query param (dev/test)
+    if (!userId && buyerId) userId = buyerId;
+
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token ou buyer_id query param)' });
+
+    console.log('[BUYER] fetching orders for buyer:', userId);
+
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select(`
+        id, order_code, total_amount, status, vendor_id, product_id, created_at,
+        product:products(id, name, price, description),
+        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type)
+      `)
+      .eq('buyer_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[BUYER] Erreur récupération commandes:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur serveur' });
+    }
+
+    return res.json({ success: true, orders });
+  } catch (err) {
+    console.error('[BUYER] /api/buyer/orders error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// ==========================================
 // ENDPOINT CREATE ORDER AND INVOICE
 // ==========================================
 

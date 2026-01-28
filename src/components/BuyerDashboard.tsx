@@ -146,34 +146,20 @@ const BuyerDashboard = () => {
     if (!user && !smsSessionStr) return;
     setOrdersLoading(true);
     try {
-      // Debug: inspect current supabase auth session (useful when SMS auth is used)
-      try {
-        const sess = await supabase.auth.getSession();
-        console.debug('[BuyerDashboard] supabase session before fetchOrders', sess?.data?.session ? 'session present' : 'no session');
-      } catch (e) {
-        console.debug('[BuyerDashboard] supabase.getSession failed', e);
-      }
-
       const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) {
-        console.warn('[BuyerDashboard] No buyerId available for fetchOrders');
         setOrdersLoading(false);
         return;
       }
-
-      console.debug('[BuyerDashboard] fetchOrders querying buyerId:', buyerId);
-
-      // If SMS-auth session exists, use backend admin endpoint (bypass RLS)
-      const isSms = !!smsSessionStr;
       let data: Array<Record<string, unknown>> = [];
-      if (isSms) {
+      if (smsSessionStr) {
+        // Correction: Utiliser GET si le backend ne supporte pas POST, sinon corriger l'endpoint ici
         const sms = JSON.parse(smsSessionStr || '{}');
         const token = sms?.access_token || sms?.token || sms?.jwt || '';
-        console.debug('[BuyerDashboard] Using backend /api/buyer/orders with token present:', !!token);
-        const resp = await fetch(apiUrl('/api/buyer/orders'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ buyer_id: buyerId })
+        // Essayez d'abord GET, sinon adaptez ici selon votre backend
+        const resp = await fetch(apiUrl(`/api/buyer/orders?buyer_id=${buyerId}`), {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         const json = await resp.json().catch(() => null);
         if (!resp.ok || !json || !json.success) {
@@ -189,10 +175,6 @@ const BuyerDashboard = () => {
         if (error) throw error;
         data = supData || [];
       }
-
-      console.debug('[BuyerDashboard] fetchOrders result rows:', (data || []).length);
-
-      // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
       const normalizedOrders = (data || [])
         .filter((o) => typeof o.status === 'string' && allowedStatus.includes(o.status))
@@ -203,22 +185,8 @@ const BuyerDashboard = () => {
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
       setOrders(normalizedOrders);
-      console.debug('[BuyerDashboard] normalized orders count:', normalizedOrders.length);
-      try { localStorage.setItem(`cached_buyer_orders_${buyerId}`, JSON.stringify(normalizedOrders)); } catch(e) { /* ignore cache errors */ }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
-      // Fallback: use cached orders when offline
-      try {
-        const cachedKey = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || '') : '');
-        const cached = localStorage.getItem(`cached_buyer_orders_${cachedKey}`);
-        if (cached) {
-          setOrders(JSON.parse(cached));
-          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
-          return;
-        }
-      } catch (e) {
-        // ignore
-      }
       toast({
         title: "Erreur",
         description: "Impossible de charger les commandes",

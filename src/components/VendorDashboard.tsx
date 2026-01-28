@@ -97,8 +97,7 @@ const VendorDashboard = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
-  // start not loading — show cached UI immediately; set true only when fetchData starts
-  const [pageLoading, setPageLoading] = useState<boolean>(false);
+  const [pageLoading, setPageLoading] = useState<boolean>(true);
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -131,237 +130,51 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
-  // If backend endpoints are unavailable (404/500), avoid hammering them repeatedly
-  const [backendAvailable, setBackendAvailable] = useState(true); // true by default
 
   // (Global spinner overlay and body class logic removed)
 
   // Harmonized Spinner for all main loading states
-  const isPageLoading = pageLoading || adding || editing || deleting || savingProfile;
-  // Debugging: show auth loading state without blocking UI
-  console.debug('[VendorDashboard] auth loading state (non-blocking):', { authLoading: loading, pageLoading });
+  const isPageLoading = pageLoading || loading || adding || editing || deleting || savingProfile;
   // Map DB or cached wallet types to readable labels
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   // Network status
-  const isOnline = useNetwork();
-  const fetchProfile = useCallback(async () => {
-    if (!user) return;
-
-    // If SMS session present, use authUserProfile from useAuth instead of calling Supabase (no token available)
-    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
-    if (smsSessionStr) {
-      
-      if (authUserProfile) {
-        setUserProfile({
-          full_name: authUserProfile.full_name ?? undefined,
-          phone: authUserProfile.phone ?? undefined,
-          wallet_type: (authUserProfile as any).wallet_type ?? (authUserProfile as any).walletType ?? undefined
-        });
-        setEditProfile({
-          full_name: authUserProfile.full_name ?? '',
-          phone: authUserProfile.phone ?? '',
-          wallet_type: (authUserProfile as any).wallet_type ?? (authUserProfile as any).walletType ?? ''
-        });
-      } else {
-        setUserProfile(null);
-        setEditProfile({ full_name: '', phone: '', wallet_type: '' });
-      }
-      return;
-    }
-
-    const walletColumnMissing = (err: { message?: string } | null) =>
-      Boolean(err?.message && (err.message.includes("column") && err.message.includes("wallet")));
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('full_name, phone, wallet_type')
-        .eq('id', user.id)
-        .maybeSingle<ProfileRow>();
-      
-      let profileData: ProfileRow | null = null;
-      if (!error && data) {
-        profileData = {
-          full_name: (data as any).full_name ?? null,
-          phone: (data as any).phone ?? null,
-          wallet_type: (data as any).wallet_type ?? null
-        };
-      }
-      if (error && !walletColumnMissing(error)) {
-        throw error;
-      }
-      if (profileData) {
-        const fullName = profileData.full_name ?? '';
-        const phone = profileData.phone ?? '';
-        setUserProfile({ full_name: fullName, phone, wallet_type: profileData.wallet_type ?? undefined });
-        setEditProfile(prev => ({
-          ...prev,
-          full_name: fullName || prev.full_name,
-          phone: phone || prev.phone,
-          wallet_type: profileData.wallet_type ?? prev.wallet_type ?? ''
-        }));
-        // Cache sans walletType
-        try {
-          localStorage.setItem('auth_cached_profile_v1', JSON.stringify({
-            id: user.id,
-            email: user.email || '',
-            full_name: fullName,
-            phone,
-            role: 'vendor'
-          }));
-        } catch (e) {
-          console.warn('VendorDashboard failed to cache profile', e);
-        }
-      } else {
-        
-        // Fallback: try finding the profile by phone or email if available
-        try {
-          let fallbackRes: any = null;
-          if (user?.email) {
-            
-            fallbackRes = await supabase
-              .from('profiles')
-              .select('full_name, phone, wallet_type')
-              .eq('email', user.email)
-              .maybeSingle();
-          }
-          if ((!fallbackRes || !fallbackRes.data) && user?.phone) {
-            
-            fallbackRes = await supabase
-              .from('profiles')
-              .select('full_name, phone, wallet_type')
-              .eq('phone', user.phone)
-              .maybeSingle();
-          }
-          
-          if (fallbackRes && !fallbackRes.error && fallbackRes.data) {
-            const d = fallbackRes.data as any;
-            const fullName = d.full_name ?? '';
-            const phone = d.phone ?? '';
-            setUserProfile({ full_name: fullName, phone, wallet_type: d.wallet_type ?? undefined });
-            setEditProfile({ full_name: fullName, phone, wallet_type: d.wallet_type ?? '' });
-            try {
-              localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: fullName, phone, role: 'vendor' }));
-            } catch (e) {
-              // ignore
-            }
-          }
-        } catch (e) {
-          console.warn('VendorDashboard fetchProfile fallback failed', e);
-        }
-      }
-    } catch (error) {
-      console.error('VendorDashboard fetchProfile error', error);
-    }
-  }, [user, authUserProfile]);
-  const fetchProducts = useCallback(async () => {
-    const caller = smsUser || user;
-    if (!caller) return;
-
-    try {
-      let data: any[] = [];
-      if (smsUser) {
-        if (!backendAvailable) {
-          throw new Error('Backend not available for vendor products (cached fallback)');
-        }
-        const token = smsUser?.access_token || '';
-        const resp = await fetch(apiUrl('/api/vendor/products'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ vendor_id: caller.id })
-        });
-        const json = await resp.json().catch(() => null);
-        if (!resp.ok || !json || !json.success) {
-          // Mark backend as unavailable for a short time to avoid repeated 404 spam
-          setBackendAvailable(false);
-          console.warn('[VendorDashboard] backend marked unavailable for products', { status: resp.status, body: json });
-          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
-          throw new Error(json?.error || `Backend returned ${resp.status}`);
-        }
-        data = json.products || [];
-      } else {
-        const { data: supData, error } = await supabase
-          .from('products')
-          .select('*')
-          .eq('vendor_id', caller.id)
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        data = supData || [];
-      }
-
-      const mappedData = (data || []).map(p => ({
-        ...p,
-        description: p.description ?? undefined,
-        category: p.category ?? undefined,
-        image_url: p.image_url ?? undefined,
-        stock_quantity: p.stock_quantity ?? undefined,
-        is_available: p.is_available ?? true
-      })) as Product[];
-      setProducts(mappedData);
-      try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
-    } catch (error: any) {
-      // If network-level fetch failed, mark backend as unavailable to avoid hammering
-      const msg = (error && error.message) ? String(error.message) : String(error);
-      if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
-        console.warn('[VendorDashboard] network error when loading products, marking backend unavailable', { message: msg.slice(0,200) });
-        setBackendAvailable(false);
-        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
-      }
-      try {
-        const cached = localStorage.getItem(`cached_products_${caller?.id || user?.id}`);
-        if (cached) {
-          const parsed = JSON.parse(cached) as Product[];
-          setProducts(parsed);
-          toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
-          return;
-        }
-      } catch (e) { /* ignore */ }
-      toast({ title: "Erreur", description: "Impossible de charger les produits", variant: 'destructive' });
-    }
-  }, [user, smsUser, toast, backendAvailable]);
+  // Détection de l'état en ligne/hors-ligne (corrige l'erreur isOnline)
+  const [isOnline, setIsOnline] = useState(
+    typeof window !== 'undefined' ? window.navigator.onLine : true
+  );
+  useEffect(() => {
+    function handleOnline() { setIsOnline(true); }
+    function handleOffline() { setIsOnline(false); }
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+  // Nouvelle version : toujours utiliser le backend pour les commandes (comme BuyerDashboard)
   const fetchOrders = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
-
     try {
-      let data: any[] = [];
-      if (smsUser) {
-        if (!backendAvailable) {
-          throw new Error('Backend not available for vendor orders (cached fallback)');
-        }
-        const token = smsUser?.access_token || '';
-        const resp = await fetch(apiUrl('/api/vendor/orders'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ vendor_id: caller.id })
-        });
-        const json = await resp.json().catch(() => null);
-        if (!resp.ok || !json || !json.success) {
-          setBackendAvailable(false);
-          console.warn('[VendorDashboard] backend marked unavailable for orders', { status: resp.status, body: json });
-          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
-          throw new Error(json?.error || `Backend returned ${resp.status}`);
-        }
-        data = json.orders || [];
-      } else {
-        const { data: supData, error } = await supabase
-          .from('orders')
-          .select(`
-            *,
-            products(name),
-            profiles!orders_buyer_id_fkey(full_name, phone),
-            delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
-          `)
-          .eq('vendor_id', caller.id)
-          .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        data = supData || [];
+      if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
+      const token = smsUser?.access_token || localStorage.getItem('sms_auth_session') ? smsUser?.access_token : '';
+      // Utilise toujours le backend, même pour les sessions classiques
+      const resp = await fetch(apiUrl('/api/vendor/orders'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ vendor_id: caller.id })
+      });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        setBackendAvailable(false);
+        console.warn('[VendorDashboard] backend marked unavailable for orders', { status: resp.status, body: json });
+        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
+        throw new Error(json?.error || `Backend returned ${resp.status}`);
       }
-
-      // Debug: show returned rows to help trace missing data
-      console.debug('[VendorDashboard] fetchOrders result', { callerId: caller?.id, rowsReturned: (data || []).length, raw: data });
+      const data = json.orders || [];
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
         ...o,
@@ -373,33 +186,28 @@ const VendorDashboard = () => {
         assigned_at: o.assigned_at ?? undefined,
         delivered_at: o.delivered_at ?? undefined,
         token: o.token ?? undefined,
-        // Keep buyer profile phone so callers can display the call button
         profiles: o.profiles ? { full_name: o.profiles.full_name || '', phone: o.profiles.phone ?? undefined } : undefined
       })) as Order[];
       const filtered = mappedOrders.filter(order => order.status !== 'pending');
-      console.debug('[VendorDashboard] mappedOrders', { mappedCount: mappedOrders.length, filteredCount: filtered.length });
       setOrders(filtered);
       try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
     } catch (error: any) {
-      // If network-level fetch failed, mark backend as unavailable to avoid hammering
       const msg = (error && error.message) ? String(error.message) : String(error);
       if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
         console.warn('[VendorDashboard] network error when loading orders, marking backend unavailable', { message: msg.slice(0,200) });
         setBackendAvailable(false);
         setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
       }
-      // Try to load cached orders when offline
+      // Fallback cache
       try {
-        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
+        const cached = localStorage.getItem(`cached_orders_${caller?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
           toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
           return;
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
       console.error('[VendorDashboard] fetchOrders error', error);
       toast({
         title: "Erreur",
@@ -407,58 +215,79 @@ const VendorDashboard = () => {
         variant: "destructive",
       });
     }
-  }, [user, smsUser, backendAvailable, toast]);
-  const fetchTransactions = useCallback(async () => {
-    const caller = smsUser || user;
-    if (!caller) return;
-
+  }, [user, smsUser, toast]);
+// ...existing code...
+  const fetchProducts = useCallback(async () => {
+    if (!user) return;
+  
     try {
-      let data: any[] = [];
-      if (smsUser) {
-        if (!backendAvailable) {
-          throw new Error('Backend not available for vendor transactions (cached fallback)');
-        }
-        const token = smsUser?.access_token || '';
-        const resp = await fetch(apiUrl('/api/vendor/transactions'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ vendor_id: caller.id })
-        });
-        const json = await resp.json().catch(() => null);
-        if (!resp.ok || !json || !json.success) {
-          // Mark backend as unavailable for a short time to avoid repeated 404 spam
-          setBackendAvailable(false);
-          console.warn('[VendorDashboard] backend marked unavailable for transactions', { status: resp.status, body: json });
-          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
-          throw new Error(json?.error || `Backend returned ${resp.status}`);
-        }
-        data = json.transactions || [];
-      } else {
-        const { data: supData, error } = await (supabase as any)
-          .from('payment_transactions')
-          .select(`
-            *,
-            orders!inner(vendor_id, order_code, buyer_id)
-          `)
-          .eq('orders.vendor_id', caller.id)
-          .eq('transaction_type', 'payout')
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        data = supData || [];
-      }
-
-      setTransactions(data || []);
-      try { localStorage.setItem(`cached_transactions_${caller.id}`, JSON.stringify(data || [])); } catch (e) { /* ignore */ }
-    } catch (error: any) {
-      // If network-level fetch failed, mark backend as unavailable to avoid hammering
-      const msg = (error && error.message) ? String(error.message) : String(error);
-      if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
-        console.warn('[VendorDashboard] network error when loading transactions, marking backend unavailable', { message: msg.slice(0,200) });
-        setBackendAvailable(false);
-        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
-      }
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('vendor_id', user.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      // Convertir null en undefined pour compatibilité avec le type Product
+      const mappedData = (data || []).map(p => ({
+        ...p,
+        description: p.description ?? undefined,
+        category: p.category ?? undefined,
+        image_url: p.image_url ?? undefined,
+        stock_quantity: p.stock_quantity ?? undefined,
+        is_available: p.is_available ?? true
+      })) as Product[];
+      setProducts(mappedData);
       try {
-        const cached = localStorage.getItem(`cached_transactions_${caller?.id || user?.id}`);
+        localStorage.setItem(`cached_products_${user.id}`, JSON.stringify(mappedData));
+      } catch (e) {
+        // ignore cache failures
+      }
+    } catch (error) {
+      // Try to use cached products if offline
+      try {
+        const cached = localStorage.getItem(`cached_products_${user?.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Product[];
+          setProducts(parsed);
+          toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
+      toast({
+        title: "Erreur",
+        description: "Impossible de charger les produits",
+        variant: 'destructive'
+      });
+    }
+  }, [user, toast]);
+  const fetchTransactions = useCallback(async () => {
+    if (!user) return;
+  
+    try {
+      // Récupérer les transactions de paiement (payouts) pour ce vendeur
+     
+      const { data, error } = await (supabase as any)
+        .from('payment_transactions')
+        .select(`
+          *,
+          orders!inner(vendor_id, order_code, buyer_id)
+        `)
+        .eq('orders.vendor_id', user.id)
+        .eq('transaction_type', 'payout')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setTransactions(data || []);
+      try {
+        localStorage.setItem(`cached_transactions_${user.id}`, JSON.stringify(data || []));
+      } catch (e) {
+        // ignore
+      }
+    } catch (error) {
+      // Try cached transactions
+      try {
+        const cached = localStorage.getItem(`cached_transactions_${user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as any[];
           setTransactions(parsed as any || []);
@@ -470,7 +299,7 @@ const VendorDashboard = () => {
       }
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user, smsUser, toast, backendAvailable]);
+  }, [user, toast]);
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
@@ -538,40 +367,14 @@ const VendorDashboard = () => {
     };
     const fetchData = async () => {
       setPageLoading(true);
-      // Timeout de 15 secondes maximum
-      const timeoutId = setTimeout(() => {
-        console.warn('[VendorDashboard] fetchData timeout - forcing stop');
-        setPageLoading(false);
-        toast({
-          title: 'Timeout',
-          description: 'Le chargement prend trop de temps. Vérifiez votre connexion ou réessayez plus tard.',
-          variant: 'destructive'
-        });
-      }, 15000);
-      try {
-        await fetchOrCreateProfile();
-        await Promise.all([
-          fetchProfile(),
-          fetchProducts(),
-          fetchOrders(),
-          fetchTransactions()
-        ]);
-      } catch (err) {
-        console.error('[VendorDashboard] fetchData failed', err);
-        toast({
-          title: 'Erreur',
-          description: 'Impossible de charger toutes les données du tableau de bord',
-          variant: 'destructive'
-        });
-      } finally {
-        clearTimeout(timeoutId);
-        setPageLoading(false);
-      }
+      await fetchOrCreateProfile();
+      await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
+      setPageLoading(false);
     };
-    if (user || smsUser) {
+    if (user) {
       fetchData();
     }
-  }, [user, smsUser, fetchProfile, fetchProducts, fetchOrders, fetchTransactions, toast]);
+  }, [user, fetchProducts, fetchOrders, fetchTransactions]);
   // Live updates: écoute les changements sur les commandes du vendeur
   useEffect(() => {
     if (!user?.id) return;
@@ -599,25 +402,6 @@ const VendorDashboard = () => {
       supabase.removeChannel(channel);
     };
   }, [user?.id, fetchOrders, fetchTransactions]);
-
-  // Watchdog: if pageLoading stays true for too long (e.g. upstream provider outage),
-  // force it false so the UI doesn't remain blocked forever. Also notify user and
-  // flip backendAvailable to trigger cache fallback for a short cooldown.
-  useEffect(() => {
-    if (!pageLoading) return;
-    const timeout = setTimeout(() => {
-      console.warn('[VendorDashboard] pageLoading watchdog fired — forcing pageLoading=false');
-      setPageLoading(false);
-      try {
-        toast({ title: 'Délai dépassé', description: 'Chargement trop long — affichage des données en cache si disponible', variant: 'destructive' });
-      } catch (e) {
-        // ignore toast errors
-      }
-      setBackendAvailable(false);
-      setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after watchdog cooldown'); }, 60 * 1000);
-    }, 12000);
-    return () => clearTimeout(timeout);
-  }, [pageLoading, toast]);
   // Suppression de l'effet ensureWalletType
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
@@ -955,13 +739,6 @@ const VendorDashboard = () => {
       {!isOnline && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
           <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
-        </div>
-      )}
-
-      {/* Backend availability banner (when backend endpoints are failing) */}
-      {!backendAvailable && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
-          <div className="bg-red-50 border-l-4 border-red-400 text-red-800 px-4 py-2 rounded">⚠️ Service temporairement indisponible — affichage en cache (réessaie dans 1 min)</div>
         </div>
       )}
       {/* Main Content */}
