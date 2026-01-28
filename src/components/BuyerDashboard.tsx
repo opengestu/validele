@@ -70,6 +70,12 @@ interface CreateOrderResponse {
   message?: string;
 }
 
+// Typed navigator helpers for Web Share API (files support may not exist in all TS libs)
+interface NavigatorShareWithFiles {
+  canShare?: (data: { files?: File[] }) => boolean;
+  share?: (data: ShareData & { files?: File[] }) => Promise<void>;
+}
+
 const BuyerDashboard = () => {
   const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
@@ -985,6 +991,86 @@ const BuyerDashboard = () => {
     }
   };
 
+  // Télécharger le QR code (fetch blob puis trigger download) ✅
+  const handleDownloadQr = async () => {
+    if (!qrModalValue) {
+      toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
+      return;
+    }
+    try {
+      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Erreur téléchargement');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const filename = orderId ? `qr-order-${orderId}.png` : 'qr-code.png';
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast({ title: 'Téléchargé', description: `QR enregistré (${filename})` });
+    } catch (e) {
+      console.error('Download QR error', e);
+      toast({ title: 'Erreur', description: 'Impossible de télécharger le QR', variant: 'destructive' });
+    }
+  };
+
+  // Partager le QR code (Web Share API / fallback vers clipboard ou téléchargement)
+  const handleShareQr = async () => {
+    if (!qrModalValue) {
+      toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
+      return;
+    }
+    try {
+      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Erreur préparation du QR');
+      const blob = await res.blob();
+      const file = new File([blob], orderId ? `qr-order-${orderId}.png` : 'qr-code.png', { type: blob.type });
+
+      // Prefer sharing the image file when supported
+      const nav = navigator as unknown as NavigatorShareWithFiles;
+      if (nav.canShare && nav.canShare({ files: [file] })) {
+        await nav.share?.({ files: [file], title: 'QR code', text: 'QR code de la commande' });
+        toast({ title: 'Partagé', description: 'QR code partagé' });
+        setQrModalOpen(false);
+        return;
+      }
+
+      // Fallback: use navigator.share with url or text if available
+      if (nav.share) {
+        await nav.share({ title: 'QR code', text: qrModalValue, url });
+        toast({ title: 'Partagé', description: 'QR code partagé' });
+        setQrModalOpen(false);
+        return;
+      }
+
+      // Fallback: copy the raw QR payload to clipboard if possible
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(qrModalValue);
+        toast({ title: 'Copié', description: 'Le code QR a été copié dans le presse-papiers' });
+        return;
+      }
+
+      // Final fallback: trigger a download silently
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast({ title: 'Téléchargé', description: `QR code téléchargé (${file.name})` });
+    } catch (e) {
+      console.error('Share QR error', e);
+      toast({ title: 'Erreur', description: 'Impossible de partager le QR', variant: 'destructive' });
+    }
+  };
+
   // Ajout de la fonction de traduction du statut
   const getStatusTextFr = (status: string) => {
     switch (status) {
@@ -1464,9 +1550,6 @@ const BuyerDashboard = () => {
                                     <div className="flex items-center gap-3">
                                       <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur(se):</span>
                                       <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
-                                      {order.profiles?.phone && (
-                                        <span className="text-xs text-gray-500 whitespace-nowrap">{order.profiles.phone}</span>
-                                      )}
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-sm">
@@ -1647,34 +1730,21 @@ const BuyerDashboard = () => {
           <div style={{ background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 4px 24px #0002', textAlign: 'center', minWidth: 220 }}>
             <h3 style={{ marginBottom: 16 }}>QR Code de la commande</h3>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`} alt="QR Code" />
-            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center', gap: 12 }}>
-              <button
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(qrModalValue || '');
-                    toast({ title: 'Copié', description: 'Le code QR a été copié dans le presse-papiers' });
-                  } catch (e) {
-                    console.error('Copy QR error', e);
-                    toast({ title: 'Erreur', description: 'Impossible de copier le code QR', variant: 'destructive' });
-                  }
-                }}
-                style={{ padding: '6px 12px', borderRadius: 6, background: '#e6f7ff', color: '#007acc', border: 'none', fontWeight: 600, cursor: 'pointer' }}
-              >
-                Copier le code
-              </button>
 
-              <a
-                href={`https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ padding: '6px 12px', borderRadius: 6, background: '#f3f3f3', color: '#333', textDecoration: 'none', fontWeight: 600 }}
+            {/* Boutons: Partager et Fermer (tailles réduites) */}
+            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
+              <button
+                onClick={handleShareQr}
+                style={{ padding: '4px 8px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
               >
-                Ouvrir l'image
-              </a>
-            </div>
-            {/* Bouton Ouvrir PayDunya supprimé */}
-            <div style={{ marginTop: 24 }}>
-              <button onClick={() => setQrModalOpen(false)} style={{ padding: '6px 18px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, cursor: 'pointer' }}>Fermer</button>
+                Partager
+              </button>
+              <button
+                onClick={() => setQrModalOpen(false)}
+                style={{ padding: '4px 8px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+              >
+                Fermer
+              </button>
             </div>
           </div>
         </div>

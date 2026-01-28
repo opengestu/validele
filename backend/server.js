@@ -313,6 +313,68 @@ app.post('/api/vendor/update-product', async (req, res) => {
   }
 });
 
+// Vendor orders endpoint — retourne les commandes d'un vendeur (sécurisé)
+app.post('/api/vendor/orders', async (req, res) => {
+  try {
+    const { vendor_id } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+
+    // Auth: accepte Bearer JWT (SMS) ou token Supabase
+    const authHeader = req.headers.authorization;
+    let userId = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      // Essayer JWT
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) userId = decoded.sub;
+      } catch (e) {
+        // ignore
+      }
+      // Fallback Supabase token
+      if (!userId) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) userId = user.id;
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    // Si on a un userId et qu'il ne correspond pas au vendor_id, refuser
+    if (userId && String(userId) !== String(vendor_id)) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendor_id mismatch' });
+    }
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        id,
+        order_code,
+        total_amount,
+        status,
+        buyer_id,
+        product_id,
+        created_at,
+        products(*),
+        buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+        delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
+        qr_code
+      `)
+      .eq('vendor_id', vendor_id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[API] /api/vendor/orders supabase error', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+    }
+
+    return res.json({ success: true, orders: data || [] });
+  } catch (err) {
+    console.error('[API] /api/vendor/orders error', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

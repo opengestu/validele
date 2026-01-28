@@ -52,6 +52,12 @@ type ProfileRow = {
   phone: string | null;
   wallet_type?: string | null;
 };
+
+// Typed navigator helpers for Web Share API (files support may not exist in all TS libs)
+interface NavigatorShareWithFiles {
+  canShare?: (data: { files?: File[] }) => boolean;
+  share?: (data: ShareData & { files?: File[] }) => Promise<void>;
+}
 const VendorDashboard = () => {
     const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
@@ -139,11 +145,64 @@ const VendorDashboard = () => {
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  // États pour le modal QR
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [qrModalValue, setQrModalValue] = useState('');
+  const [qrOrderId, setQrOrderId] = useState<string | null>(null);
+
   // Network status
   // Détection de l'état en ligne/hors-ligne (corrige l'erreur isOnline)
   const [isOnline, setIsOnline] = useState(
     typeof window !== 'undefined' ? window.navigator.onLine : true
   );
+
+  // Partager le QR code (Web Share API / fallback)
+  const handleShareQr = async () => {
+    if (!qrModalValue) {
+      toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
+      return;
+    }
+    try {
+      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Erreur préparation du QR');
+      const blob = await res.blob();
+      const file = new File([blob], qrOrderId ? `qr-order-${qrOrderId}.png` : 'qr-code.png', { type: blob.type });
+
+      const nav = navigator as unknown as NavigatorShareWithFiles;
+      if (nav.canShare && nav.canShare({ files: [file] })) {
+        await nav.share?.({ files: [file], title: 'QR code', text: 'QR code de la commande' });
+        toast({ title: 'Partagé', description: 'QR code partagé' });
+        setQrModalOpen(false);
+        return;
+      }
+      if (nav.share) {
+        await nav.share({ title: 'QR code', text: qrModalValue, url });
+        toast({ title: 'Partagé', description: 'QR code partagé' });
+        setQrModalOpen(false);
+        return;
+      }
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(qrModalValue);
+        toast({ title: 'Copié', description: 'Le code QR a été copié dans le presse-papiers' });
+        return;
+      }
+
+      // Final fallback: download
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast({ title: 'Téléchargé', description: `QR code téléchargé (${file.name})` });
+    } catch (e) {
+      console.error('Share QR error', e);
+      toast({ title: 'Erreur', description: 'Impossible de partager le QR', variant: 'destructive' });
+    }
+  };
   useEffect(() => {
     function handleOnline() { setIsOnline(true); }
     function handleOffline() { setIsOnline(false); }
@@ -965,6 +1024,19 @@ const VendorDashboard = () => {
                           {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                         </span>
                       </div>
+
+                      <div className="flex items-center gap-2 mt-1">
+                        {order.qr_code ? (
+                          <button
+                            className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
+                            onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrOrderId(order.id); setQrModalOpen(true); }}
+                          >
+                            Voir QR code
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400">QR code indisponible</span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1347,6 +1419,18 @@ const VendorDashboard = () => {
                             {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                           </span>
                         </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {order.qr_code ? (
+                            <button
+                              className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
+                              onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrOrderId(order.id); setQrModalOpen(true); }}
+                            >
+                              Voir QR code
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400">QR code indisponible</span>
+                          )}
+                        </div>
                       </CardContent>
                     </Card>
                   ))}
@@ -1637,6 +1721,31 @@ const VendorDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* QR Modal */}
+      {qrModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 4px 24px #0002', textAlign: 'center', minWidth: 220 }}>
+            <h3 style={{ marginBottom: 16 }}>QR Code de la commande</h3>
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`} alt="QR Code" />
+
+            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
+              <button
+                onClick={handleShareQr}
+                style={{ padding: '4px 8px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+              >
+                Partager
+              </button>
+              <button
+                onClick={() => setQrModalOpen(false)}
+                style={{ padding: '4px 8px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Call Confirmation Dialog */}
       <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
         <DialogContent>
