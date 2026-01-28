@@ -58,14 +58,7 @@ const VendorDashboard = () => {
   const navigate = useNavigate();
 
   // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
-  React.useEffect(() => {
-    if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
-      navigate('/auth', { replace: true });
-    }
-  }, [user, authUserProfile, loading, navigate]);
-
-  // ...existing code...
-  // Correction : lire user depuis sms_auth_session si présent
+  // Read SMS session (if present) to support SMS-auth users
   type SmsUser = {
     id: string;
     phone: string;
@@ -73,7 +66,6 @@ const VendorDashboard = () => {
     full_name: string;
     access_token: string;
   } | null;
-
   const smsSession = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
   let smsUser: SmsUser = null;
   if (smsSession) {
@@ -90,6 +82,15 @@ const VendorDashboard = () => {
       // ignore parse error
     }
   }
+
+  React.useEffect(() => {
+    // Allow access if either Supabase user/profile or an SMS session exists
+    if (!loading && !user && !smsUser) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authUserProfile, loading, navigate, smsUser]);
+
+  // ...existing code...
   // Utilise smsUser si présent, sinon user
   const effectiveUser = smsUser || user;
   // ...existing code...
@@ -251,13 +252,14 @@ const VendorDashboard = () => {
     }
   }, [user, authUserProfile]);
   const fetchProducts = useCallback(async () => {
-    if (!user) return;
-  
+    const uid = smsUser?.id || user?.id;
+    if (!uid) return;
+
     try {
       const { data, error } = await supabase
         .from('products')
         .select('*')
-        .eq('vendor_id', user.id)
+        .eq('vendor_id', uid)
         .order('created_at', { ascending: false });
       if (error) throw error;
       // Convertir null en undefined pour compatibilité avec le type Product
@@ -271,14 +273,14 @@ const VendorDashboard = () => {
       })) as Product[];
       setProducts(mappedData);
       try {
-        localStorage.setItem(`cached_products_${user.id}`, JSON.stringify(mappedData));
+        localStorage.setItem(`cached_products_${uid}`, JSON.stringify(mappedData));
       } catch (e) {
         // ignore cache failures
       }
     } catch (error) {
       // Try to use cached products if offline
       try {
-        const cached = localStorage.getItem(`cached_products_${user?.id}`);
+        const cached = localStorage.getItem(`cached_products_${uid}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Product[];
           setProducts(parsed);
@@ -294,9 +296,10 @@ const VendorDashboard = () => {
         variant: 'destructive'
       });
     }
-  }, [user, toast]);
+  }, [user, smsUser, toast]);
   const fetchOrders = useCallback(async () => {
-    if (!user) return;
+    const uid = smsUser?.id || user?.id;
+    if (!uid) return;
   
     try {
       const { data, error } = await supabase
@@ -307,12 +310,12 @@ const VendorDashboard = () => {
           profiles!orders_buyer_id_fkey(full_name, phone),
           delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
         `)
-        .eq('vendor_id', user.id)
+        .eq('vendor_id', uid)
         .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
         .order('created_at', { ascending: false });
       if (error) throw error;
       // Debug: show returned rows to help trace missing data
-      console.debug('[VendorDashboard] fetchOrders result', { userId: user?.id, rowsReturned: (data || []).length, raw: data });
+      console.debug('[VendorDashboard] fetchOrders result', { userId: uid, rowsReturned: (data || []).length, raw: data });
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
         ...o,
@@ -333,7 +336,7 @@ const VendorDashboard = () => {
     } catch (error) {
       // Try to load cached orders when offline
       try {
-        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
+        const cached = localStorage.getItem(`cached_orders_${uid}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
@@ -349,9 +352,10 @@ const VendorDashboard = () => {
         variant: "destructive",
       });
     }
-  }, [user, toast]);
+  }, [user, smsUser, toast]);
   const fetchTransactions = useCallback(async () => {
-    if (!user) return;
+    const uid = smsUser?.id || user?.id;
+    if (!uid) return;
   
     try {
       // Récupérer les transactions de paiement (payouts) pour ce vendeur
@@ -362,20 +366,20 @@ const VendorDashboard = () => {
           *,
           orders!inner(vendor_id, order_code, buyer_id)
         `)
-        .eq('orders.vendor_id', user.id)
+        .eq('orders.vendor_id', uid)
         .eq('transaction_type', 'payout')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setTransactions(data || []);
       try {
-        localStorage.setItem(`cached_transactions_${user.id}`, JSON.stringify(data || []));
+        localStorage.setItem(`cached_transactions_${uid}`, JSON.stringify(data || []));
       } catch (e) {
         // ignore
       }
     } catch (error) {
       // Try cached transactions
       try {
-        const cached = localStorage.getItem(`cached_transactions_${user?.id}`);
+        const cached = localStorage.getItem(`cached_transactions_${uid}`);
         if (cached) {
           const parsed = JSON.parse(cached) as any[];
           setTransactions(parsed as any || []);
@@ -387,7 +391,7 @@ const VendorDashboard = () => {
       }
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  }, [user, toast]);
+  }, [user, smsUser, toast]);
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
