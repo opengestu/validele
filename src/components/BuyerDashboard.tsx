@@ -75,7 +75,7 @@ const BuyerDashboard = () => {
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
 
-  // Sécurité : si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
+  // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
   useEffect(() => {
     if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
       navigate('/auth', { replace: true });
@@ -145,6 +145,14 @@ const BuyerDashboard = () => {
     if (!user) return;
     setOrdersLoading(true);
     try {
+      // Debug: inspect current supabase auth session (useful when SMS auth is used)
+      try {
+        const sess = await supabase.auth.getSession();
+        console.debug('[BuyerDashboard] supabase session before fetchOrders', sess);
+      } catch (e) {
+        console.debug('[BuyerDashboard] supabase.getSession failed', e);
+      }
+
       const { data, error } = await supabase
         .from('orders')
         .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
@@ -163,6 +171,7 @@ const BuyerDashboard = () => {
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
       setOrders(normalizedOrders);
+      console.debug('[BuyerDashboard] fetchOrders', { userId: user?.id, returned: (data || []).length, normalizedCount: normalizedOrders.length });
       try { localStorage.setItem(`cached_buyer_orders_${user.id}`, JSON.stringify(normalizedOrders)); } catch(e) { /* ignore cache errors */ }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);

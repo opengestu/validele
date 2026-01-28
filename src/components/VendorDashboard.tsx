@@ -311,6 +311,8 @@ const VendorDashboard = () => {
         .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
         .order('created_at', { ascending: false });
       if (error) throw error;
+      // Debug: show returned rows to help trace missing data
+      console.debug('[VendorDashboard] fetchOrders result', { userId: user?.id, rowsReturned: (data || []).length, raw: data });
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
         ...o,
@@ -325,7 +327,9 @@ const VendorDashboard = () => {
         // Keep buyer profile phone so callers can display the call button
         profiles: o.profiles ? { full_name: o.profiles.full_name || '', phone: o.profiles.phone ?? undefined } : undefined
       })) as Order[];
-      setOrders(mappedOrders.filter(order => order.status !== 'pending'));
+      const filtered = mappedOrders.filter(order => order.status !== 'pending');
+      console.debug('[VendorDashboard] mappedOrders', { mappedCount: mappedOrders.length, filteredCount: filtered.length });
+      setOrders(filtered);
     } catch (error) {
       // Try to load cached orders when offline
       try {

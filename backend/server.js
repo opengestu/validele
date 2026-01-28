@@ -60,6 +60,26 @@ app.use(express.json({
 }));
 app.use(cookieParser());
 
+// Helper: normalize a provider/raw response into a JSON object for DB jsonb columns
+function normalizeJsonField(val) {
+  try {
+    if (val === undefined || val === null) return null;
+    if (typeof val === 'object') return val;
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed === '') return null;
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try { return JSON.parse(trimmed); } catch (e) { return { message: trimmed }; }
+      }
+      return { message: trimmed };
+    }
+    // numbers/booleans -> wrap
+    return { value: val };
+  } catch (e) {
+    return { message: String(val) };
+  }
+}
+
 // Mount auth routes (added for phone existence check and PIN login)
 try {
   const authRoutes = require('./routes/auth');
@@ -658,7 +678,7 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
           amount,
           phone,
           status: result.state || 'PENDING1',
-          raw_response: result.raw
+          raw_response: normalizeJsonField(result.raw)
         });
 
       if (dbError) {
@@ -727,7 +747,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
           amount,
           phone,
           status: result.state || 'PENDING1',
-          raw_response: result.raw
+          raw_response: normalizeJsonField(result.raw)
         });
 
       if (dbError) {
@@ -812,7 +832,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           .from('payment_transactions')
           .update({
             status: state,
-            provider_response: response || null,
+            provider_response: normalizeJsonField(response || null),
             provider_error: error || null,
             provider_transaction_id: provider_id || null,
             updated_at: new Date().toISOString()
@@ -974,7 +994,7 @@ app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
           phone,
           status: result.state || 'PENDING1',
           transaction_type: 'payout',
-          raw_response: result.raw
+          raw_response: normalizeJsonField(result.raw)
         });
 
       if (dbError) {
@@ -1542,7 +1562,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         phone,
         status: result.state || 'PENDING1',
         transaction_type: 'payout',
-        raw_response: result.raw
+        raw_response: normalizeJsonField(result.raw)
       });
       if (txErr) console.error('[ADMIN] Erreur save payout tx:', txErr);
 
@@ -1686,7 +1706,7 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
         phone,
         status: payoutRes.state || 'PENDING1',
         transaction_type: 'payout',
-        raw_response: payoutRes.raw
+        raw_response: normalizeJsonField(payoutRes.raw)
       });
       if (txErr) console.error('[ADMIN] verify-and-payout - failed saving payout tx:', txErr);
 
@@ -1904,7 +1924,7 @@ async function processPayoutBatch(batchId) {
       if (ineligible.length > 0) {
         const ids = ineligible.map(i => i.item.id);
         try {
-          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: ineligible.map(i => i.reason) }) }).in('id', ids);
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { error: 'order_not_eligible', details: ineligible.map(i => i.reason) } }).in('id', ids);
         } catch (e) {
           console.error('[ADMIN] failed marking ineligible payout items:', e);
         }
@@ -1921,7 +1941,7 @@ async function processPayoutBatch(batchId) {
       const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
-        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { error: failReason } }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: failReason });
         continue;
       }
@@ -1931,14 +1951,14 @@ async function processPayoutBatch(batchId) {
 
         if (payoutRes && payoutRes.transaction_id) {
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw, provider_response: payoutRes.raw });
+          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
           // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
-          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
           if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
           results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
-          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: normalizeJsonField(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
         }
       } catch (err) {
@@ -1982,7 +2002,7 @@ app.post('/api/admin/payout-batches/:id/cancel', requireAdmin, async (req, res) 
     // revert item states and orders
     const { data: items } = await supabase.from('payout_batch_items').select('*').eq('batch_id', batchId);
     if (items && items.length > 0) {
-      await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ reason: 'Batch cancelled' }) }).eq('batch_id', batchId);
+      await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { reason: 'Batch cancelled' } }).eq('batch_id', batchId);
       const orderIds = items.map(i => i.order_id).filter(Boolean);
       if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'requested' }).in('id', orderIds);
     }
@@ -2007,7 +2027,7 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
       if (!txs || txs.length === 0) return res.status(404).json({ success: false, error: 'transaction not found' });
       const tx = txs[0];
 
-      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
+      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: normalizeJsonField(provider_response || tx.provider_response || null), provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
 
       // If this tx references an order, mark order paid
       if (tx.order_id) {
@@ -2035,7 +2055,7 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
       const { data: txsBatch } = await supabase.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
       if (txsBatch && txsBatch.length > 0) {
         const txb = txsBatch[0];
-        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
+        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: normalizeJsonField(provider_response || txb.provider_response || null), provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
       }
 
       const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
@@ -2204,7 +2224,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
           phone: buyerPhone,
           status: result.state || 'PENDING1',
           transaction_type: 'refund',
-          raw_response: result.raw
+          raw_response: normalizeJsonField(result.raw)
         });
 
       if (txError) {

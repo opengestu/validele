@@ -18,6 +18,8 @@ type Order = {
   payout_status?: string | null;
   payout_requested_at?: string | null;
   payout_requested_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 type Transaction = {
@@ -102,7 +104,6 @@ const AdminDashboard: React.FC = () => {
   const adminId = params?.adminId;
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [timers, setTimers] = useState<Timer[]>([]);
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
   const [batchItems, setBatchItems] = useState<PayoutBatchItem[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PayoutBatch | null>(null);
@@ -110,7 +111,7 @@ const AdminDashboard: React.FC = () => {
   const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'timers'|'payouts'|'payouts_history'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'>('orders');
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
   // If we have a userProfile, ensure it matches the admin id or the adminId param.
@@ -159,6 +160,29 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Transaction statuses mapping and helper for badge classes
+  const TX_STATUS_LABELS_FR: Record<string, string> = {
+    pending: 'En attente',
+    queued: 'En file',
+    processing: 'En cours',
+    paid: 'Payée',
+    failed: 'Échouée',
+    cancelled: 'Annulée'
+  };
+  const txStatusClass = (s?: string) => {
+    const st = String(s || '').toLowerCase();
+    if (st === 'pending' || st === 'queued') return 'bg-yellow-100 text-yellow-800';
+    if (st === 'processing') return 'bg-yellow-200 text-yellow-900';
+    if (st === 'paid' || st === 'confirmed') return 'bg-green-100 text-green-800';
+    if (st === 'failed' || st === 'error') return 'bg-red-100 text-red-800';
+    return 'bg-slate-100 text-slate-700';
+  };
+
+  // Transaction details modal state
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionFull | null>(null);
+  const [txDetailsOpen, setTxDetailsOpen] = useState(false);
+  const [retryingTxId, setRetryingTxId] = useState<string | null>(null);
+
   // New: admin login (email/password + optional 2FA) UI state
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
@@ -193,25 +217,36 @@ const AdminDashboard: React.FC = () => {
         return;
       }
 
-      const timRes = await fetch(apiUrl('/api/admin/timers'), { headers, credentials: 'include' });
       const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers, credentials: 'include' });
 
       const oJson = await oRes.json();
       const tJson = await tRes.json();
-      const timJson = await timRes.json();
       const batchesJson = await batchesRes.json();
 
       if (oRes.ok) {
         setOrders(oJson.orders || []);
         try { localStorage.setItem('admin_orders', JSON.stringify(oJson.orders || [])); } catch(e) { /* ignore cache errors */ }
       }
-      if (tRes.ok) {
+      if (tRes.ok && oRes.ok) {
+        // Merge server transactions with orders as synthetic transaction rows for orders missing transactions
+        const serverTxs = tJson.transactions || [];
+        const ordersList = oJson.orders || [];
+        const txByOrder = new Set((serverTxs as Transaction[]).map((tx) => tx.order_id));
+        const ordersAsTxs = ordersList.filter((o: Order) => !txByOrder.has(o.id)).map((o: Order) => ({
+          id: `order-${o.id}`,
+          order_id: o.id,
+          amount: o.total_amount,
+          status: o.payout_status || o.status || 'pending',
+          transaction_type: 'payout',
+          order: { id: o.id, order_code: o.order_code },
+          created_at: ((o as { updated_at?: string }).updated_at) || o.created_at
+        }));
+        const merged = [...(serverTxs as Transaction[]), ...ordersAsTxs];
+        setTransactions(merged);
+        try { localStorage.setItem('admin_transactions', JSON.stringify(merged)); } catch(e) { /* ignore cache errors */ }
+      } else if (tRes.ok) {
         setTransactions(tJson.transactions || []);
         try { localStorage.setItem('admin_transactions', JSON.stringify(tJson.transactions || [])); } catch(e) { /* ignore cache errors */ }
-      }
-      if (timRes.ok) {
-        setTimers(timJson.timers || []);
-        try { localStorage.setItem('admin_timers', JSON.stringify(timJson.timers || [])); } catch(e) { /* ignore cache errors */ }
       }
 
       if (batchesRes.ok) {
@@ -223,11 +258,9 @@ const AdminDashboard: React.FC = () => {
       try {
         const cachedOrders = localStorage.getItem('admin_orders');
         const cachedTrans = localStorage.getItem('admin_transactions');
-        const cachedTimers = localStorage.getItem('admin_timers');
         let used = false;
         if (cachedOrders) { setOrders(JSON.parse(cachedOrders)); used = true; }
         if (cachedTrans) { setTransactions(JSON.parse(cachedTrans)); used = true; }
-        if (cachedTimers) { setTimers(JSON.parse(cachedTimers)); used = true; }
         if (used) {
           toast({ title: 'Hors-ligne', description: 'Affichage des données admin en cache' });
           return;
@@ -258,21 +291,6 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const cancelTimer = async (timerId: string) => {
-    try {
-      const res = await fetch(apiUrl('/api/admin/cancel-timer'), {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-        body: JSON.stringify({ timerId })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Erreur annulation');
-      toast({ title: 'Succès', description: 'Timer annulé' });
-      fetchData();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err || 'Erreur annulation');
-      toast({ title: 'Erreur', description: message, variant: 'destructive' });
-    }
-  };
 
   const notifyUser = async (userId: string | undefined, title: string, body: string) => {
     if (!userId) return toast({ title: 'Erreur', description: 'Utilisateur introuvable', variant: 'destructive' });
@@ -287,6 +305,31 @@ const AdminDashboard: React.FC = () => {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err || 'Erreur notify');
       toast({ title: 'Erreur', description: message, variant: 'destructive' });
+    }
+  };
+
+  // Open transaction details modal
+  const openTxDetails = (tx: TransactionFull) => {
+    setSelectedTransaction(tx);
+    setTxDetailsOpen(true);
+  };
+
+  // Retry a transaction (ask server to reprocess / requeue)
+  const retryTransaction = async (txId: string) => {
+    setRetryingTxId(txId);
+    try {
+      const res = await fetch(apiUrl(`/api/admin/transactions/${txId}/retry`), {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Erreur relance transaction');
+      toast({ title: 'Succès', description: 'Relance de la transaction demandée' });
+      fetchData();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err || 'Erreur relance');
+      toast({ title: 'Erreur', description: message, variant: 'destructive' });
+    } finally {
+      setRetryingTxId(null);
     }
   };
 
@@ -423,7 +466,6 @@ const AdminDashboard: React.FC = () => {
         <div className="flex gap-4 mb-4">
           <button className={`px-3 py-2 rounded ${activeTab === 'orders' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('orders')}>Commandes</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'timers' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('timers')}>Timers</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
         </div>
@@ -476,6 +518,12 @@ const AdminDashboard: React.FC = () => {
                         </TableCell>
                       </TableRow>
                     ))}
+
+                  {orders.filter(o => String(o.status).toLowerCase() === 'delivered').length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-gray-500">Aucune commande livrée</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -484,10 +532,11 @@ const AdminDashboard: React.FC = () => {
 
         {activeTab === 'transactions' && (
           <Card>
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between">
               <CardTitle>Transactions (payouts)</CardTitle>
             </CardHeader>
             <CardContent>
+
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -496,66 +545,52 @@ const AdminDashboard: React.FC = () => {
                     <TableHead>Montant</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Provider Tx</TableHead>
+                    <TableHead>Créé</TableHead>
                     <TableHead>Statut</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {transactions.map((t: TransactionFull) => (
+                  {transactions.slice().sort((a,b) => {
+                    const priority = (s?: string) => s === 'pending' ? 0 : s === 'queued' ? 1 : s === 'processing' ? 2 : s === 'failed' ? 3 : s === 'paid' ? 4 : 5;
+                    const pa = priority(a.status);
+                    const pb = priority(b.status);
+                    if (pa !== pb) return pa - pb;
+                    return (new Date(b.created_at || 0).getTime()) - (new Date(a.created_at || 0).getTime());
+                  }).map((t: TransactionFull) => (
                     <TableRow key={t.id}>
                       <TableCell>{t.transaction_id || t.id}</TableCell>
                       <TableCell>{t.order?.order_code || t.order_id || (t.batch_id ? `batch:${t.batch_id}` : '-')}</TableCell>
                       <TableCell>{t.amount?.toLocaleString()} FCFA</TableCell>
                       <TableCell>{t.transaction_type}</TableCell>
                       <TableCell>{t.provider_transaction_id || getProviderId(t.raw_response) || '-'}</TableCell>
-                      <TableCell>{t.status}</TableCell>
+                      <TableCell>{t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-sm ${txStatusClass(t.status)}`}>
+                          {TX_STATUS_LABELS_FR[t.status || 'pending'] || (t.status || '-')}
+                        </span>
+                      </TableCell>
+                      <TableCell className="flex gap-2">
+                        <Button size="sm" onClick={() => openTxDetails(t)}>Voir</Button>
+                        {(String(t.status).toLowerCase() === 'pending' || String(t.status).toLowerCase() === 'failed') && !String(t.id).startsWith('order-') && (
+                          <Button size="sm" variant="destructive" onClick={async () => { if (!confirm('Relancer cette transaction ?')) return; await retryTransaction(t.id); }} disabled={retryingTxId === t.id}>{retryingTxId === t.id ? 'Relance...' : 'Relancer'}</Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
+
+                  {transactions.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-gray-500">Aucune transaction enregistrée</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
         )}
 
-        {activeTab === 'timers' && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Timers administrateur</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Order</TableHead>
-                    <TableHead>Started</TableHead>
-                    <TableHead>Remaining</TableHead>
-                    <TableHead>Message</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {timers.map((t: Timer) => {
-                    const end = new Date(t.started_at).getTime() + (t.duration_seconds * 1000);
-                    const now = Date.now();
-                    const remaining = Math.max(0, Math.floor((end - now) / 1000));
-                    return (
-                      <TableRow key={t.id}>
-                        <TableCell>{t.id}</TableCell>
-                        <TableCell>{t.order?.order_code || '-'}</TableCell>
-                        <TableCell>{new Date(t.started_at).toLocaleString()}</TableCell>
-                        <TableCell>{Math.floor(remaining / 60)}m {remaining % 60}s</TableCell>
-                        <TableCell>{t.message || '-'}</TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="destructive" onClick={() => cancelTimer(t.id)}>Annuler</Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+
 
         {activeTab === 'payouts' && (
           <Card>
@@ -585,6 +620,7 @@ const AdminDashboard: React.FC = () => {
                     } finally { setProcessing(false); }
                   }}>Créer Batch</Button>
                   <Button variant="secondary" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl('/api/admin/payout-batches/process-scheduled'), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: `Processed ${json.processed || 0} batches` }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Exécuter programmés</Button>
+
                 </div>
               </div>
 
@@ -615,6 +651,12 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                     </TableRow>
                   ))}
+
+                  {batches.filter(b => !['completed','failed','cancelled'].includes(b.status || '')).length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-gray-500">Aucun payout en attente</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -709,6 +751,41 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice }:{ batch: Pay
                 ))}
               </TableBody>
             </Table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Transaction details modal (show provider/raw responses)
+function TransactionDetailsModal({ tx, onClose }: { tx: TransactionFull | null; onClose: () => void }){
+  if (!tx) return null;
+  const pretty = (obj?: Record<string, unknown> | null) => {
+    try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-xl shadow-lg max-w-3xl w-full overflow-auto" style={{ maxHeight: '80vh' }}>
+        <div className="p-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Transaction {tx.transaction_id || tx.id}</h3>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={onClose}>Fermer</Button>
+          </div>
+        </div>
+        <div className="p-4">
+          <p><strong>Order/Batch:</strong> {tx.order?.order_code || tx.order_id || (tx.batch_id ? `batch:${tx.batch_id}` : '-')}</p>
+          <p><strong>Type:</strong> {tx.transaction_type}</p>
+          <p><strong>Montant:</strong> {tx.amount?.toLocaleString()} FCFA</p>
+          <p><strong>Statut:</strong> {tx.status}</p>
+          <p className="mt-3"><strong>Provider transaction id:</strong> {tx.provider_transaction_id || '-'}</p>
+          <div className="mt-2">
+            <h4 className="font-semibold">Provider response</h4>
+            <pre className="bg-slate-50 p-3 rounded text-sm overflow-auto">{pretty(tx.provider_response)}</pre>
+          </div>
+          <div className="mt-2">
+            <h4 className="font-semibold">Raw response</h4>
+            <pre className="bg-slate-50 p-3 rounded text-sm overflow-auto">{pretty(tx.raw_response)}</pre>
           </div>
         </div>
       </div>
