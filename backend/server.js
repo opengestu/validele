@@ -2750,7 +2750,9 @@ app.get('/api/buyer/orders', async (req, res) => {
       .select(`
         id, order_code, total_amount, status, vendor_id, product_id, created_at,
         product:products(id, name, price, description),
-        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type)
+        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+        delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
+        qr_code
       `)
       .eq('buyer_id', userId)
       .order('created_at', { ascending: false });

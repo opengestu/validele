@@ -166,6 +166,18 @@ const BuyerDashboard = () => {
           throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
         }
         data = json.orders || [];
+
+        // Normalisation: backend retourne `vendor` et `delivery` (ou vendor/delivery), adapter au format attendu côté UI
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data = (data || []).map((o: any) => ({
+          ...o,
+          // Adapter les clés venant du backend à celles attendues par l'UI
+          profiles: o.profiles || o.vendor || null,
+          delivery_person: o.delivery_person || o.delivery || null,
+          products: o.products || o.product || null,
+          // qr_code peut venir sous différentes formes (qr_code / token)
+          qr_code: o.qr_code || o.token || null,
+        }));
       } else {
         const { data: supData, error } = await supabase
           .from('orders')
@@ -1452,6 +1464,9 @@ const BuyerDashboard = () => {
                                     <div className="flex items-center gap-3">
                                       <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur(se):</span>
                                       <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
+                                      {order.profiles?.phone && (
+                                        <span className="text-xs text-gray-500 whitespace-nowrap">{order.profiles.phone}</span>
+                                      )}
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-sm">
@@ -1490,6 +1505,9 @@ const BuyerDashboard = () => {
                                       <div className="flex items-center gap-3">
                                         <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
                                         <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person.full_name}</span>
+                                        {order.delivery_person.phone && (
+                                          <span className="text-xs text-gray-500 whitespace-nowrap">{order.delivery_person.phone}</span>
+                                        )}
                                       </div>
                                       {order.delivery_person.phone && (
                                         <div className="flex items-center gap-3 text-sm">
@@ -1629,6 +1647,31 @@ const BuyerDashboard = () => {
           <div style={{ background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 4px 24px #0002', textAlign: 'center', minWidth: 220 }}>
             <h3 style={{ marginBottom: 16 }}>QR Code de la commande</h3>
             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`} alt="QR Code" />
+            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center', gap: 12 }}>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(qrModalValue || '');
+                    toast({ title: 'Copié', description: 'Le code QR a été copié dans le presse-papiers' });
+                  } catch (e) {
+                    console.error('Copy QR error', e);
+                    toast({ title: 'Erreur', description: 'Impossible de copier le code QR', variant: 'destructive' });
+                  }
+                }}
+                style={{ padding: '6px 12px', borderRadius: 6, background: '#e6f7ff', color: '#007acc', border: 'none', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Copier le code
+              </button>
+
+              <a
+                href={`https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ padding: '6px 12px', borderRadius: 6, background: '#f3f3f3', color: '#333', textDecoration: 'none', fontWeight: 600 }}
+              >
+                Ouvrir l'image
+              </a>
+            </div>
             {/* Bouton Ouvrir PayDunya supprimé */}
             <div style={{ marginTop: 24 }}>
               <button onClick={() => setQrModalOpen(false)} style={{ padding: '6px 18px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, cursor: 'pointer' }}>Fermer</button>
