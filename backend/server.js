@@ -1,5 +1,5 @@
 
-// ...existing code....
+// ...existing code...
 
 // (À placer après const app = express;)
 // backend/server.js
@@ -59,26 +59,6 @@ app.use(express.json({
   }
 }));
 app.use(cookieParser());
-
-// Helper: normalize a provider/raw response into a JSON object for DB jsonb columns
-function normalizeJsonField(val) {
-  try {
-    if (val === undefined || val === null) return null;
-    if (typeof val === 'object') return val;
-    if (typeof val === 'string') {
-      const trimmed = val.trim();
-      if (trimmed === '') return null;
-      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-        try { return JSON.parse(trimmed); } catch (e) { return { message: trimmed }; }
-      }
-      return { message: trimmed };
-    }
-    // numbers/booleans -> wrap
-    return { value: val };
-  } catch (e) {
-    return { message: String(val) };
-  }
-}
 
 // Mount auth routes (added for phone existence check and PIN login)
 try {
@@ -198,76 +178,6 @@ app.post('/api/vendor/add-product', async (req, res) => {
   }
 });
 
-// Endpoint pour lister les commandes d'un vendeur (vendor dashboard)
-app.get('/api/vendor/orders', async (req, res) => {
-  try {
-    const { vendor_id, status = 'paid', limit = 200 } = req.query;
-    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
-
-    // Auth
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
-    const token = authHeader.split(' ')[1];
-    let userId = null;
-    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) {}
-    if (!userId) {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
-      userId = user.id;
-    }
-    if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
-
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`id, order_code, total_amount, status, vendor_id, buyer_id, created_at, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone)`)
-      .eq('vendor_id', vendor_id)
-      .eq('status', status)
-      .order('created_at', { ascending: false })
-      .limit(Number(limit));
-
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    return res.json({ success: true, orders: data });
-  } catch (err) {
-    console.error('[API] /api/vendor/orders error:', err);
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-// Endpoint pour lister les commandes d'un acheteur (buyer dashboard)
-app.get('/api/buyer/orders', async (req, res) => {
-  try {
-    const { buyer_id, status = 'paid', limit = 200 } = req.query;
-    if (!buyer_id) return res.status(400).json({ success: false, error: 'buyer_id requis' });
-
-    // Auth
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
-    const token = authHeader.split(' ')[1];
-    let userId = null;
-    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) {}
-    if (!userId) {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : acheteur non autorisé' });
-      userId = user.id;
-    }
-    if (String(userId) !== String(buyer_id)) return res.status(403).json({ success: false, error: 'Accès refusé : acheteur non autorisé (id mismatch)' });
-
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`id, order_code, total_amount, status, vendor_id, buyer_id, created_at, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone)`)
-      .eq('buyer_id', buyer_id)
-      .eq('status', status)
-      .order('created_at', { ascending: false })
-      .limit(Number(limit));
-
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    return res.json({ success: true, orders: data });
-  } catch (err) {
-    console.error('[API] /api/buyer/orders error:', err);
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
 // Endpoint de test
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
@@ -379,6 +289,123 @@ app.post('/api/vendor/update-product', async (req, res) => {
     return res.json({ success: true, product: data[0] });
   } catch (err) {
     console.error('[API] /api/vendor/update-product error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// Endpoint sécurisé pour lister les produits d'un vendeur (bypass RLS pour session SMS)
+app.post('/api/vendor/products', async (req, res) => {
+  try {
+    const { vendor_id } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) { /* ignore */ }
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+
+    const { data, error } = await supabase.from('products').select('*').eq('vendor_id', vendor_id).order('created_at', { ascending: false });
+    if (error) { console.error('[API] Erreur list products:', error); return res.status(500).json({ success: false, error: error.message || 'Erreur list products' }); }
+    return res.json({ success: true, products: data || [] });
+  } catch (err) { console.error('[API] /api/vendor/products error:', err); return res.status(500).json({ success: false, error: 'Erreur serveur' }); }
+});
+
+// Endpoint sécurisé pour lister les commandes d'un vendeur (bypass RLS pour session SMS)
+app.post('/api/vendor/orders', async (req, res) => {
+  try {
+    const { vendor_id } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) { /* ignore */ }
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        products(name),
+        profiles!orders_buyer_id_fkey(full_name, phone),
+        delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
+      `)
+      .eq('vendor_id', vendor_id)
+      .in('status', ['paid', 'assigned', 'in_delivery', 'delivered'])
+      .order('created_at', { ascending: false });
+
+    if (error) { console.error('[API] Erreur list orders:', error); return res.status(500).json({ success: false, error: error.message || 'Erreur list orders' }); }
+    return res.json({ success: true, orders: data || [] });
+  } catch (err) { console.error('[API] /api/vendor/orders error:', err); return res.status(500).json({ success: false, error: 'Erreur serveur' }); }
+});
+
+// Endpoint sécurisé pour lister les transactions d'un vendeur (bypass RLS pour session SMS)
+app.post('/api/vendor/transactions', async (req, res) => {
+  try {
+    const { vendor_id } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) { /* ignore */ }
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select(`
+        *,
+        orders!inner(vendor_id, order_code, buyer_id)
+      `)
+      .eq('orders.vendor_id', vendor_id)
+      .eq('transaction_type', 'payout')
+      .order('created_at', { ascending: false });
+
+    if (error) { console.error('[API] Erreur list transactions:', error); return res.status(500).json({ success: false, error: error.message || 'Erreur list transactions' }); }
+    return res.json({ success: true, transactions: data || [] });
+  } catch (err) { console.error('[API] /api/vendor/transactions error:', err); return res.status(500).json({ success: false, error: 'Erreur serveur' }); }
+});
+
+// Endpoint similaire pour buyer (fetch orders)
+app.post('/api/buyer/orders', async (req, res) => {
+  try {
+    const { buyer_id } = req.body || {};
+    if (!buyer_id) return res.status(400).json({ success: false, error: 'buyer_id requis' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) { /* ignore */ }
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(buyer_id)) return res.status(403).json({ success: false, error: 'Accès refusé (id mismatch)' });
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
+      .eq('buyer_id', buyer_id)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    return res.json({ success: true, orders: data || [] });
+  } catch (err) {
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
@@ -513,18 +540,6 @@ app.post('/api/otp/verify', async (req, res) => {
 
     const result = await verifyOTP(formattedPhone, code);
 
-    if (result.valid) {
-      res.json({ success: true, valid: true });
-    } else {
-      res.status(400).json({ success: false, valid: false, error: result.error });
-    }
-  } catch (error) {
-    console.error('[OTP] Erreur vérification:', error);
-    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
 // Génération de JWT pour vendeur SMS après login (à appeler côté frontend après login PIN ou OTP validé)
 app.post('/api/vendor/generate-jwt', async (req, res) => {
   try {
@@ -551,27 +566,15 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
   }
 });
 
-// Génération de JWT pour acheteur SMS (pour tests rapides)
-app.post('/api/buyer/generate-jwt', async (req, res) => {
-  try {
-    const { buyer_id, phone } = req.body;
-    if (!buyer_id || !phone) return res.status(400).json({ success: false, error: 'buyer_id et phone requis' });
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
-    const payload = {
-      sub: buyer_id,
-      phone: phone,
-      auth_mode: 'sms',
-      role: 'buyer',
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 3600 // 1h
-    };
-    const token = jwt.sign(payload, JWT_SECRET);
-    console.log('[DEBUG] /api/buyer/generate-jwt created token for buyer_id:', buyer_id, 'tokenSnippet:', token.slice(0, 40));
-    res.json({ success: true, token });
-  } catch (err) {
-    console.error('[API] /api/buyer/generate-jwt error:', err);
-    res.status(500).json({ success: false, error: 'Erreur génération JWT' });
+    if (result.valid) {
+      res.json({ success: true, valid: true });
+    } else {
+      res.status(400).json({ success: false, valid: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('[OTP] Erreur vérification:', error);
+    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
+    res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -772,7 +775,7 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
           amount,
           phone,
           status: result.state || 'PENDING1',
-          raw_response: normalizeJsonField(result.raw)
+          raw_response: result.raw
         });
 
       if (dbError) {
@@ -841,7 +844,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
           amount,
           phone,
           status: result.state || 'PENDING1',
-          raw_response: normalizeJsonField(result.raw)
+          raw_response: result.raw
         });
 
       if (dbError) {
@@ -926,7 +929,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           .from('payment_transactions')
           .update({
             status: state,
-            provider_response: normalizeJsonField(response || null),
+            provider_response: response || null,
             provider_error: error || null,
             provider_transaction_id: provider_id || null,
             updated_at: new Date().toISOString()
@@ -1088,7 +1091,7 @@ app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
           phone,
           status: result.state || 'PENDING1',
           transaction_type: 'payout',
-          raw_response: normalizeJsonField(result.raw)
+          raw_response: result.raw
         });
 
       if (dbError) {
@@ -1656,7 +1659,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         phone,
         status: result.state || 'PENDING1',
         transaction_type: 'payout',
-        raw_response: normalizeJsonField(result.raw)
+        raw_response: result.raw
       });
       if (txErr) console.error('[ADMIN] Erreur save payout tx:', txErr);
 
@@ -1800,7 +1803,7 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
         phone,
         status: payoutRes.state || 'PENDING1',
         transaction_type: 'payout',
-        raw_response: normalizeJsonField(payoutRes.raw)
+        raw_response: payoutRes.raw
       });
       if (txErr) console.error('[ADMIN] verify-and-payout - failed saving payout tx:', txErr);
 
@@ -2018,7 +2021,7 @@ async function processPayoutBatch(batchId) {
       if (ineligible.length > 0) {
         const ids = ineligible.map(i => i.item.id);
         try {
-          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { error: 'order_not_eligible', details: ineligible.map(i => i.reason) } }).in('id', ids);
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: ineligible.map(i => i.reason) }) }).in('id', ids);
         } catch (e) {
           console.error('[ADMIN] failed marking ineligible payout items:', e);
         }
@@ -2035,7 +2038,7 @@ async function processPayoutBatch(batchId) {
       const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
-        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { error: failReason } }).in('id', eligibleItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: failReason });
         continue;
       }
@@ -2045,14 +2048,14 @@ async function processPayoutBatch(batchId) {
 
         if (payoutRes && payoutRes.transaction_id) {
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
+          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: payoutRes.raw, provider_response: payoutRes.raw });
           // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
-          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: payoutRes.raw }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
           if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
           results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
-          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: normalizeJsonField(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
         }
       } catch (err) {
@@ -2096,7 +2099,7 @@ app.post('/api/admin/payout-batches/:id/cancel', requireAdmin, async (req, res) 
     // revert item states and orders
     const { data: items } = await supabase.from('payout_batch_items').select('*').eq('batch_id', batchId);
     if (items && items.length > 0) {
-      await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: { reason: 'Batch cancelled' } }).eq('batch_id', batchId);
+      await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ reason: 'Batch cancelled' }) }).eq('batch_id', batchId);
       const orderIds = items.map(i => i.order_id).filter(Boolean);
       if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'requested' }).in('id', orderIds);
     }
@@ -2121,7 +2124,7 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
       if (!txs || txs.length === 0) return res.status(404).json({ success: false, error: 'transaction not found' });
       const tx = txs[0];
 
-      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: normalizeJsonField(provider_response || tx.provider_response || null), provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
+      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
 
       // If this tx references an order, mark order paid
       if (tx.order_id) {
@@ -2149,7 +2152,7 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
       const { data: txsBatch } = await supabase.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
       if (txsBatch && txsBatch.length > 0) {
         const txb = txsBatch[0];
-        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: normalizeJsonField(provider_response || txb.provider_response || null), provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
+        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
       }
 
       const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
@@ -2318,7 +2321,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
           phone: buyerPhone,
           status: result.state || 'PENDING1',
           transaction_type: 'refund',
-          raw_response: normalizeJsonField(result.raw)
+          raw_response: result.raw
         });
 
       if (txError) {

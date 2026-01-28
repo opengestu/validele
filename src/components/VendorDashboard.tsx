@@ -58,7 +58,14 @@ const VendorDashboard = () => {
   const navigate = useNavigate();
 
   // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
-  // Read SMS session (if present) to support SMS-auth users
+  React.useEffect(() => {
+    if (!loading && (!user || !authUserProfile || !authUserProfile.full_name)) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authUserProfile, loading, navigate]);
+
+  // ...existing code...
+  // Correction : lire user depuis sms_auth_session si présent
   type SmsUser = {
     id: string;
     phone: string;
@@ -66,6 +73,7 @@ const VendorDashboard = () => {
     full_name: string;
     access_token: string;
   } | null;
+
   const smsSession = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
   let smsUser: SmsUser = null;
   if (smsSession) {
@@ -82,15 +90,6 @@ const VendorDashboard = () => {
       // ignore parse error
     }
   }
-
-  React.useEffect(() => {
-    // Allow access if either Supabase user/profile or an SMS session exists
-    if (!loading && !user && !smsUser) {
-      navigate('/auth', { replace: true });
-    }
-  }, [user, authUserProfile, loading, navigate, smsUser]);
-
-  // ...existing code...
   // Utilise smsUser si présent, sinon user
   const effectiveUser = smsUser || user;
   // ...existing code...
@@ -131,11 +130,15 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  // If backend endpoints are unavailable (404/500), avoid hammering them repeatedly
+  const [backendAvailable, setBackendAvailable] = useState(true); // true by default
 
   // (Global spinner overlay and body class logic removed)
 
   // Harmonized Spinner for all main loading states
-  const isPageLoading = pageLoading || loading || adding || editing || deleting || savingProfile;
+  const isPageLoading = pageLoading || adding || editing || deleting || savingProfile;
+  // Debugging: show auth loading state without blocking UI
+  console.debug('[VendorDashboard] auth loading state (non-blocking):', { authLoading: loading, pageLoading });
   // Map DB or cached wallet types to readable labels
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
@@ -252,17 +255,40 @@ const VendorDashboard = () => {
     }
   }, [user, authUserProfile]);
   const fetchProducts = useCallback(async () => {
-    const uid = smsUser?.id || user?.id;
-    if (!uid) return;
+    const caller = smsUser || user;
+    if (!caller) return;
 
     try {
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('vendor_id', uid)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      // Convertir null en undefined pour compatibilité avec le type Product
+      let data: any[] = [];
+      if (smsUser) {
+        if (!backendAvailable) {
+          throw new Error('Backend not available for vendor products (cached fallback)');
+        }
+        const token = smsUser?.access_token || '';
+        const resp = await fetch(apiUrl('/api/vendor/products'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ vendor_id: caller.id })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          // Mark backend as unavailable for a short time to avoid repeated 404 spam
+          setBackendAvailable(false);
+          console.warn('[VendorDashboard] backend marked unavailable for products', { status: resp.status, body: json });
+          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
+          throw new Error(json?.error || `Backend returned ${resp.status}`);
+        }
+        data = json.products || [];
+      } else {
+        const { data: supData, error } = await supabase
+          .from('products')
+          .select('*')
+          .eq('vendor_id', caller.id)
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        data = supData || [];
+      }
+
       const mappedData = (data || []).map(p => ({
         ...p,
         description: p.description ?? undefined,
@@ -272,34 +298,22 @@ const VendorDashboard = () => {
         is_available: p.is_available ?? true
       })) as Product[];
       setProducts(mappedData);
-      try {
-        localStorage.setItem(`cached_products_${uid}`, JSON.stringify(mappedData));
-      } catch (e) {
-        // ignore cache failures
-      }
+      try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
     } catch (error) {
-      // Try to use cached products if offline
       try {
-        const cached = localStorage.getItem(`cached_products_${uid}`);
+        const cached = localStorage.getItem(`cached_products_${caller?.id || user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Product[];
           setProducts(parsed);
           toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
           return;
         }
-      } catch (e) {
-        // ignore
-      }
-      toast({
-        title: "Erreur",
-        description: "Impossible de charger les produits",
-        variant: 'destructive'
-      });
+      } catch (e) { /* ignore */ }
+      toast({ title: "Erreur", description: "Impossible de charger les produits", variant: 'destructive' });
     }
   }, [user, smsUser, toast]);
   const fetchOrders = useCallback(async () => {
-    const uid = smsUser?.id || user?.id;
-    if (!uid) return;
+    if (!user) return;
   
     try {
       const { data, error } = await supabase
@@ -310,12 +324,12 @@ const VendorDashboard = () => {
           profiles!orders_buyer_id_fkey(full_name, phone),
           delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)
         `)
-        .eq('vendor_id', uid)
+        .eq('vendor_id', user.id)
         .in('status', ['paid', 'assigned', 'in_delivery', 'delivered']) // Seulement les commandes payées et suivantes
         .order('created_at', { ascending: false });
       if (error) throw error;
       // Debug: show returned rows to help trace missing data
-      console.debug('[VendorDashboard] fetchOrders result', { userId: uid, rowsReturned: (data || []).length, raw: data });
+      console.debug('[VendorDashboard] fetchOrders result', { userId: user?.id, rowsReturned: (data || []).length, raw: data });
       // Convertir null en undefined pour compatibilité avec le type Order
       const mappedOrders = (data || []).map(o => ({
         ...o,
@@ -336,7 +350,7 @@ const VendorDashboard = () => {
     } catch (error) {
       // Try to load cached orders when offline
       try {
-        const cached = localStorage.getItem(`cached_orders_${uid}`);
+        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
@@ -352,34 +366,51 @@ const VendorDashboard = () => {
         variant: "destructive",
       });
     }
-  }, [user, smsUser, toast]);
+  }, [user, toast]);
   const fetchTransactions = useCallback(async () => {
-    const uid = smsUser?.id || user?.id;
-    if (!uid) return;
-  
+    const caller = smsUser || user;
+    if (!caller) return;
+
     try {
-      // Récupérer les transactions de paiement (payouts) pour ce vendeur
-     
-      const { data, error } = await (supabase as any)
-        .from('payment_transactions')
-        .select(`
-          *,
-          orders!inner(vendor_id, order_code, buyer_id)
-        `)
-        .eq('orders.vendor_id', uid)
-        .eq('transaction_type', 'payout')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setTransactions(data || []);
-      try {
-        localStorage.setItem(`cached_transactions_${uid}`, JSON.stringify(data || []));
-      } catch (e) {
-        // ignore
+      let data: any[] = [];
+      if (smsUser) {
+        if (!backendAvailable) {
+          throw new Error('Backend not available for vendor transactions (cached fallback)');
+        }
+        const token = smsUser?.access_token || '';
+        const resp = await fetch(apiUrl('/api/vendor/transactions'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ vendor_id: caller.id })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          // Mark backend as unavailable for a short time to avoid repeated 404 spam
+          setBackendAvailable(false);
+          console.warn('[VendorDashboard] backend marked unavailable for transactions', { status: resp.status, body: json });
+          setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after cooldown'); }, 60 * 1000);
+          throw new Error(json?.error || `Backend returned ${resp.status}`);
+        }
+        data = json.transactions || [];
+      } else {
+        const { data: supData, error } = await (supabase as any)
+          .from('payment_transactions')
+          .select(`
+            *,
+            orders!inner(vendor_id, order_code, buyer_id)
+          `)
+          .eq('orders.vendor_id', caller.id)
+          .eq('transaction_type', 'payout')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        data = supData || [];
       }
+
+      setTransactions(data || []);
+      try { localStorage.setItem(`cached_transactions_${caller.id}`, JSON.stringify(data || [])); } catch (e) { /* ignore */ }
     } catch (error) {
-      // Try cached transactions
       try {
-        const cached = localStorage.getItem(`cached_transactions_${uid}`);
+        const cached = localStorage.getItem(`cached_transactions_${caller?.id || user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as any[];
           setTransactions(parsed as any || []);

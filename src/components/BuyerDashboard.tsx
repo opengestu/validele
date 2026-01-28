@@ -142,24 +142,56 @@ const BuyerDashboard = () => {
 
   // Fonction pour charger les commandes de l'acheteur (doit être dans le composant pour accéder à user, setOrders...)
   const fetchOrders = useCallback(async () => {
-    if (!user) return;
+    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (!user && !smsSessionStr) return;
     setOrdersLoading(true);
     try {
       // Debug: inspect current supabase auth session (useful when SMS auth is used)
       try {
         const sess = await supabase.auth.getSession();
-        console.debug('[BuyerDashboard] supabase session before fetchOrders', sess);
+        console.debug('[BuyerDashboard] supabase session before fetchOrders', sess?.data?.session ? 'session present' : 'no session');
       } catch (e) {
         console.debug('[BuyerDashboard] supabase.getSession failed', e);
       }
 
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
-        .eq('buyer_id', user.id)
-        .order('created_at', { ascending: false });
+      const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
+      if (!buyerId) {
+        console.warn('[BuyerDashboard] No buyerId available for fetchOrders');
+        setOrdersLoading(false);
+        return;
+      }
 
-      if (error) throw error;
+      console.debug('[BuyerDashboard] fetchOrders querying buyerId:', buyerId);
+
+      // If SMS-auth session exists, use backend admin endpoint (bypass RLS)
+      const isSms = !!smsSessionStr;
+      let data: Array<Record<string, unknown>> = [];
+      if (isSms) {
+        const sms = JSON.parse(smsSessionStr || '{}');
+        const token = sms?.access_token || sms?.token || sms?.jwt || '';
+        console.debug('[BuyerDashboard] Using backend /api/buyer/orders with token present:', !!token);
+        const resp = await fetch(apiUrl('/api/buyer/orders'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ buyer_id: buyerId })
+        });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+        }
+        data = json.orders || [];
+      } else {
+        const { data: supData, error } = await supabase
+          .from('orders')
+          .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
+          .eq('buyer_id', buyerId)
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        data = supData || [];
+      }
+
+      console.debug('[BuyerDashboard] fetchOrders result rows:', (data || []).length);
+
       // Filtrer côté client pour n'afficher que les commandes payées, en livraison, livrées, remboursées ou annulées
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
       const normalizedOrders = (data || [])
@@ -171,13 +203,14 @@ const BuyerDashboard = () => {
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
       setOrders(normalizedOrders);
-      console.debug('[BuyerDashboard] fetchOrders', { userId: user?.id, returned: (data || []).length, normalizedCount: normalizedOrders.length });
-      try { localStorage.setItem(`cached_buyer_orders_${user.id}`, JSON.stringify(normalizedOrders)); } catch(e) { /* ignore cache errors */ }
+      console.debug('[BuyerDashboard] normalized orders count:', normalizedOrders.length);
+      try { localStorage.setItem(`cached_buyer_orders_${buyerId}`, JSON.stringify(normalizedOrders)); } catch(e) { /* ignore cache errors */ }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
       // Fallback: use cached orders when offline
       try {
-        const cached = localStorage.getItem(`cached_buyer_orders_${user?.id}`);
+        const cachedKey = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || '') : '');
+        const cached = localStorage.getItem(`cached_buyer_orders_${cachedKey}`);
         if (cached) {
           setOrders(JSON.parse(cached));
           toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
@@ -198,14 +231,18 @@ const BuyerDashboard = () => {
 
 
   const fetchTransactions = useCallback(async () => {
-    if (!user) return;
+    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (!user && !smsSessionStr) return;
 
     try {
       // Étape 1: récupérer les commandes de l'acheteur pour éviter un JOIN FK manquant
+      const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
+      if (!buyerId) return;
+
       const { data: orderRows, error: ordersError } = await supabase
         .from('orders')
         .select('id')
-        .eq('buyer_id', user.id);
+        .eq('buyer_id', buyerId);
 
       if (ordersError) throw ordersError;
 
@@ -226,7 +263,7 @@ const BuyerDashboard = () => {
       if (error) throw error;
       const txs = (data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
       setTransactions(txs);
-      try { localStorage.setItem(`cached_buyer_transactions_${user.id}`, JSON.stringify(txs)); } catch(e) { /* ignore */ }
+      try { localStorage.setItem(`cached_buyer_transactions_${buyerId}`, JSON.stringify(txs)); } catch(e) { /* ignore */ }
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
       try {
@@ -243,9 +280,12 @@ const BuyerDashboard = () => {
   }, [user, toast]);
 
   useEffect(() => {
+    // Wait for auth initialization to complete before fetching orders/txs.
+    // This avoids empty results when the session is still being restored.
+    if (loading) return;
     fetchOrders();
     fetchTransactions();
-  }, [fetchOrders, fetchTransactions]);
+  }, [fetchOrders, fetchTransactions, loading]);
 
   // Offline banner is rendered within the layout UI below
 
@@ -1131,6 +1171,21 @@ const BuyerDashboard = () => {
         <div className="mx-auto max-w-5xl px-4">
           <div className="bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 p-3 text-center mb-4">
             Vous êtes hors‑ligne — l'affichage provient du cache local. Certaines actions peuvent être limitées.
+          </div>
+        </div>
+      )}
+
+      {/* Debug panel (visible when ?debug=1) */}
+      {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1' && (
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 mb-4">
+          <div className="rounded border p-3 bg-white text-sm text-gray-700">
+            <strong>Debug:</strong>
+            <div>user.id: {user?.id || 'null'}</div>
+            <div>authProfile.id: {authUserProfile?.id || 'null'}</div>
+            <div>sms_auth_session: {localStorage.getItem('sms_auth_session') ? 'yes' : 'no'}</div>
+            <div>orders: {orders.length}</div>
+            <div>ordersLoading: {String(ordersLoading)}</div>
+            <div>transactions: {transactions.length}</div>
           </div>
         </div>
       )}
