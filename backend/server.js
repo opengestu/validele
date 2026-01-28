@@ -551,6 +551,30 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
   }
 });
 
+// Génération de JWT pour acheteur SMS (pour tests rapides)
+app.post('/api/buyer/generate-jwt', async (req, res) => {
+  try {
+    const { buyer_id, phone } = req.body;
+    if (!buyer_id || !phone) return res.status(400).json({ success: false, error: 'buyer_id et phone requis' });
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+    const payload = {
+      sub: buyer_id,
+      phone: phone,
+      auth_mode: 'sms',
+      role: 'buyer',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600 // 1h
+    };
+    const token = jwt.sign(payload, JWT_SECRET);
+    console.log('[DEBUG] /api/buyer/generate-jwt created token for buyer_id:', buyer_id, 'tokenSnippet:', token.slice(0, 40));
+    res.json({ success: true, token });
+  } catch (err) {
+    console.error('[API] /api/buyer/generate-jwt error:', err);
+    res.status(500).json({ success: false, error: 'Erreur génération JWT' });
+  }
+});
+
 // ==========================================
 // ENDPOINTS SMS AUTH (création profil)
 // ==========================================
