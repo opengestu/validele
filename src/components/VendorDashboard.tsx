@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Mapping des statuts en français
 const STATUS_LABELS_FR: Record<string, string> = {
@@ -52,12 +53,6 @@ type ProfileRow = {
   phone: string | null;
   wallet_type?: string | null;
 };
-
-// Typed navigator helpers for Web Share API (files support may not exist in all TS libs)
-interface NavigatorShareWithFiles {
-  canShare?: (data: { files?: File[] }) => boolean;
-  share?: (data: ShareData & { files?: File[] }) => Promise<void>;
-}
 const VendorDashboard = () => {
     const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
@@ -145,64 +140,14 @@ const VendorDashboard = () => {
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
-  // États pour le modal QR
-  const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [qrModalValue, setQrModalValue] = useState('');
-  const [qrOrderId, setQrOrderId] = useState<string | null>(null);
-
   // Network status
   // Détection de l'état en ligne/hors-ligne (corrige l'erreur isOnline)
   const [isOnline, setIsOnline] = useState(
     typeof window !== 'undefined' ? window.navigator.onLine : true
   );
+  // Backend availability flag — used to disable backend requests on network errors
+  const [backendAvailable, setBackendAvailable] = useState<boolean>(true);
 
-  // Partager le QR code (Web Share API / fallback)
-  const handleShareQr = async () => {
-    if (!qrModalValue) {
-      toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
-      return;
-    }
-    try {
-      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Erreur préparation du QR');
-      const blob = await res.blob();
-      const file = new File([blob], qrOrderId ? `qr-order-${qrOrderId}.png` : 'qr-code.png', { type: blob.type });
-
-      const nav = navigator as unknown as NavigatorShareWithFiles;
-      if (nav.canShare && nav.canShare({ files: [file] })) {
-        await nav.share?.({ files: [file], title: 'QR code', text: 'QR code de la commande' });
-        toast({ title: 'Partagé', description: 'QR code partagé' });
-        setQrModalOpen(false);
-        return;
-      }
-      if (nav.share) {
-        await nav.share({ title: 'QR code', text: qrModalValue, url });
-        toast({ title: 'Partagé', description: 'QR code partagé' });
-        setQrModalOpen(false);
-        return;
-      }
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(qrModalValue);
-        toast({ title: 'Copié', description: 'Le code QR a été copié dans le presse-papiers' });
-        return;
-      }
-
-      // Final fallback: download
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
-      toast({ title: 'Téléchargé', description: `QR code téléchargé (${file.name})` });
-    } catch (e) {
-      console.error('Share QR error', e);
-      toast({ title: 'Erreur', description: 'Impossible de partager le QR', variant: 'destructive' });
-    }
-  };
   useEffect(() => {
     function handleOnline() { setIsOnline(true); }
     function handleOffline() { setIsOnline(false); }
@@ -217,6 +162,7 @@ const VendorDashboard = () => {
   const fetchOrders = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
+    console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable });
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
       const token = smsUser?.access_token || localStorage.getItem('sms_auth_session') ? smsUser?.access_token : '';
@@ -245,10 +191,15 @@ const VendorDashboard = () => {
         assigned_at: o.assigned_at ?? undefined,
         delivered_at: o.delivered_at ?? undefined,
         token: o.token ?? undefined,
-        profiles: o.profiles ? { full_name: o.profiles.full_name || '', phone: o.profiles.phone ?? undefined } : undefined
+        // Propager le numéro de l'acheteur s'il est exposé comme buyer_phone
+        profiles: (o.profiles || o.buyer_phone || o.buyer_full_name || (o.buyer && o.buyer.phone)) ? {
+          full_name: (o.profiles && o.profiles.full_name) ? o.profiles.full_name : (o.buyer_full_name ?? (o.buyer ? (o.buyer.full_name || '') : '')),
+          phone: (o.profiles && o.profiles.phone) ? o.profiles.phone : (o.buyer_phone ?? (o.buyer ? o.buyer.phone : undefined))
+        } : undefined
       })) as Order[];
       const filtered = mappedOrders.filter(order => order.status !== 'pending');
       setOrders(filtered);
+      console.log('[VendorDashboard] fetchOrders success', filtered.length);
       try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
     } catch (error: any) {
       const msg = (error && error.message) ? String(error.message) : String(error);
@@ -274,10 +225,12 @@ const VendorDashboard = () => {
         variant: "destructive",
       });
     }
+   
   }, [user, smsUser, toast]);
 // ...existing code...
   const fetchProducts = useCallback(async () => {
     if (!user) return;
+    console.log('[VendorDashboard] fetchProducts start for vendor', user.id);
   
     try {
       const { data, error } = await supabase
@@ -296,12 +249,14 @@ const VendorDashboard = () => {
         is_available: p.is_available ?? true
       })) as Product[];
       setProducts(mappedData);
+      console.log('[VendorDashboard] fetchProducts success', mappedData.length);
       try {
         localStorage.setItem(`cached_products_${user.id}`, JSON.stringify(mappedData));
       } catch (e) {
         // ignore cache failures
       }
     } catch (error) {
+      console.error('[VendorDashboard] fetchProducts error', error);
       // Try to use cached products if offline
       try {
         const cached = localStorage.getItem(`cached_products_${user?.id}`);
@@ -323,6 +278,7 @@ const VendorDashboard = () => {
   }, [user, toast]);
   const fetchTransactions = useCallback(async () => {
     if (!user) return;
+    console.log('[VendorDashboard] fetchTransactions start for vendor', user.id);
   
     try {
       // Récupérer les transactions de paiement (payouts) pour ce vendeur
@@ -338,12 +294,14 @@ const VendorDashboard = () => {
         .order('created_at', { ascending: false });
       if (error) throw error;
       setTransactions(data || []);
+      console.log('[VendorDashboard] fetchTransactions success', (data || []).length);
       try {
         localStorage.setItem(`cached_transactions_${user.id}`, JSON.stringify(data || []));
       } catch (e) {
         // ignore
       }
     } catch (error) {
+      console.error('[VendorDashboard] fetchTransactions error', error);
       // Try cached transactions
       try {
         const cached = localStorage.getItem(`cached_transactions_${user?.id}`);
@@ -356,38 +314,86 @@ const VendorDashboard = () => {
       } catch (e) {
         // ignore
       }
-      console.error('Erreur lors du chargement des transactions:', error);
     }
   }, [user, toast]);
+
+  // Fetch profile (keeps parity with BuyerDashboard)
+  const fetchProfile = useCallback(async () => {
+    if (!user?.id) {
+      setUserProfile(null);
+      setEditProfile({ full_name: '', phone: '', wallet_type: '' });
+      return;
+    }
+
+    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (smsSessionStr) {
+      if (authUserProfile) {
+        setUserProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '', wallet_type: authUserProfile.wallet_type ?? '' });
+        setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '', wallet_type: authUserProfile.wallet_type ?? '' });
+      } else {
+        setUserProfile(null);
+        setEditProfile({ full_name: '', phone: '', wallet_type: '' });
+      }
+      return;
+    }
+
+    try {
+      try {
+        await supabase.auth.getSession().catch(() => {});
+        await supabase.auth.getUser().catch(() => {});
+      } catch {
+        // ignore
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('full_name, phone, wallet_type')
+        .eq('id', user.id)
+        .single();
+
+      if (!error && data) {
+        setUserProfile({ full_name: data.full_name ?? '', phone: data.phone ?? '', wallet_type: data.wallet_type ?? '' });
+        setEditProfile({ full_name: data.full_name ?? '', phone: data.phone ?? '', wallet_type: data.wallet_type ?? '' });
+        console.log('[VendorDashboard] fetchProfile success');
+      } else {
+        console.error('[VendorDashboard] fetchProfile error', error);
+        // Try to create the profile if missing
+        const { error: insertError } = await supabase
+          .from('profiles')
+          .insert({ id: user.id, full_name: '', phone: user.phone || '', role: 'vendor' });
+        if (!insertError) {
+          setUserProfile({ full_name: '', phone: user.phone || '', wallet_type: '' });
+        }
+        setEditProfile({ full_name: '', phone: user.phone || '', wallet_type: '' });
+      }
+    } catch (err) {
+      console.error('[VendorDashboard] unexpected error fetchProfile', err);
+      setUserProfile(null);
+      setEditProfile({ full_name: '', phone: '', wallet_type: '' });
+    }
+  }, [user, authUserProfile]);
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
-    const fetchOrCreateProfile = async () => {
-      // If Auth provider already has a complete profile from Supabase,
-      // prefer that authoritative profile for UI display/editing.
-      // Always fetch from Supabase, never use cached profile for display
-      // This ensures the UI always shows backend data
-      if (user?.id) {
-        // Fetch latest profile from Supabase and populate local edit state
-        try {
-          await supabase.auth.getSession().catch(() => {});
-          await supabase.auth.getUser().catch(() => {});
-        } catch (e) {
-          // Ignore transient session read errors
-        }
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('full_name, phone, wallet_type')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (!error && data) {
-          // Defensive: check that data is a profile row, not an error object
-          if (
-            typeof data === 'object' &&
-            data !== null &&
-            'full_name' in data &&
-            'phone' in data &&
-            'wallet_type' in data
-          ) {
+    if (!user) return;
+    
+    let isMounted = true;
+    
+    const fetchData = async () => {
+      if (!isMounted) return;
+      
+      console.log('[VendorDashboard] fetchData start (init)');
+      setPageLoading(true);
+      
+      try {
+        // fetchOrCreateProfile directement ici (sans dépendance)
+        if (user?.id) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('full_name, phone, wallet_type')
+            .eq('id', user.id)
+            .maybeSingle();
+          
+          if (!error && data) {
             setUserProfile({
               full_name: (data as any).full_name ?? '',
               phone: (data as any).phone ?? '',
@@ -398,42 +404,58 @@ const VendorDashboard = () => {
               phone: (data as any).phone ?? '',
               wallet_type: (data as any).wallet_type ?? ''
             });
-          } else {
-            // If data is not a valid profile row, log for debug
-            console.error('[DEBUG] Unexpected data shape from Supabase', data);
           }
-        } else if (error) {
-          console.error('[DEBUG] fetchOrCreateProfile error', error);
-          // Attempt to create if not found
-          if (error.code === 'PGRST116') { // Row not found
-            const { error: insertError } = await supabase
-              .from('profiles')
-              .insert({
-                id: user.id,
-                full_name: '',
-                phone: user.phone || '',
-                role: 'vendor'
-              });
-            if (insertError) {
-              console.error('[DEBUG] Profile creation error', insertError);
-            } else {
-              // Re-fetch after creation
-              fetchProfile();
-            }
-          }
+        }
+        
+        // Appels directs (ne pas utiliser les fonctions fetch comme dépendances)
+        const productsPromise = fetchProducts();
+        const ordersPromise = fetchOrders();
+        const transactionsPromise = fetchTransactions();
+        const profilePromise = fetchProfile();
+        
+        await Promise.allSettled([
+          productsPromise,
+          ordersPromise,
+          transactionsPromise,
+          profilePromise
+        ]);
+        
+      } catch (err) {
+        console.error('[VendorDashboard] fetchData error', err);
+        if (isMounted) {
+          toast({ 
+            title: 'Erreur', 
+            description: 'Impossible de charger certaines données', 
+            variant: 'destructive' 
+          });
+        }
+      } finally {
+        if (isMounted) {
+          console.log('[VendorDashboard] fetchData finished');
+          setPageLoading(false);
         }
       }
     };
-    const fetchData = async () => {
-      setPageLoading(true);
-      await fetchOrCreateProfile();
-      await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
-      setPageLoading(false);
+    
+    fetchData();
+    
+    return () => {
+      isMounted = false;
     };
-    if (user) {
-      fetchData();
-    }
-  }, [user, fetchProducts, fetchOrders, fetchTransactions]);
+  }, [user]); // SEULEMENT 'user' comme dépendance
+
+  // Debug: log loading flags to help identify which stays true (not nested)
+  React.useEffect(() => {
+    console.log('DEBUG - isPageLoading breakdown:', {
+      pageLoading,
+      loading,
+      adding,
+      editing,
+      deleting,
+      savingProfile,
+      total: isPageLoading
+    });
+  }, [pageLoading, loading, adding, editing, deleting, savingProfile, isPageLoading]);
   // Live updates: écoute les changements sur les commandes du vendeur
   useEffect(() => {
     if (!user?.id) return;
@@ -751,6 +773,41 @@ const VendorDashboard = () => {
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 1200);
   };
+
+  // Appeler le client : si le numéro n'est pas présent dans order.profiles,
+  // essayer de le récupérer depuis la table `profiles` via buyer_id
+  const handleCallClient = async (order: Order) => {
+    try {
+      // Vérifier plusieurs emplacements possibles du numéro
+      const phoneFromOrder = order.profiles?.phone || (order as any).buyer_phone || (order as any).phone || (order as any).buyer?.phone || null;
+      if (phoneFromOrder) {
+        if (typeof window !== 'undefined') window.location.href = `tel:${phoneFromOrder}`;
+        return;
+      }
+      // Fallback : lire le profil de l'acheteur depuis Supabase
+      const buyerId = (order as any).buyer_id || (order as any).buyer || null;
+      if (!buyerId) {
+        toast({ title: 'Aucun numéro', description: 'Numéro de téléphone introuvable', variant: 'destructive' });
+        return;
+      }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', buyerId)
+        .maybeSingle();
+      if (!error && data && data.phone) {
+        if (typeof window !== 'undefined') window.location.href = `tel:${data.phone}`;
+        return;
+      }
+      toast({ title: 'Aucun numéro', description: 'Numéro de téléphone introuvable', variant: 'destructive' });
+    } catch (err) {
+      console.error('[VendorDashboard] handleCallClient error', err);
+      toast({ title: 'Erreur', description: 'Impossible de récupérer le numéro', variant: 'destructive' });
+    }
+  };
+
+  // Ouvre WhatsApp pour le client (même logique fallback que pour l'appel)
+
   // Calculate stats
   const totalProducts = products.length;
   const activeProducts = products.filter(p => p.is_available).length;
@@ -963,57 +1020,23 @@ const VendorDashboard = () => {
                       </div>
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Client :</strong>
-                        <span
-                          className="ml-auto font-semibold text-gray-900"
-                          style={{ fontSize: "14px" }} // Taille réduite
-                        >
-                          {order.profiles?.full_name || 'Client'}
-                        </span>
+                        <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>{order.profiles?.full_name || 'Client'}</span>
                       </div>
-                      <div className="flex items-center mb-1">
-                        <span className="text-sm text-gray-800 font-semibold">Contact :</span>
-                        {order.profiles?.phone && (
-                          <span className="ml-auto">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const ph = order.profiles?.phone as string;
-                                const nm = order.profiles?.full_name;
-                                setCallTarget({ phone: ph, name: nm });
-                                setCallModalOpen(true);
-                              }}
-                              className="flex items-center px-2 py-0.5 rounded-lg"
-                              style={{
-                                background: "#E3F0FF",
-                                color: "#1976D2",
-                                fontSize: "12px",
-                                fontWeight: 500,
-                                minWidth: 0,
-                                border: "none",
-                                boxShadow: "none",
-                                height: 24,
-                                lineHeight: "16px"
-                              }}
-                            >
-                              <span
-                                style={{
-                                  background: "#25D366",
-                                  borderRadius: "50%",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  width: 16,
-                                  height: 16,
-                                  marginRight: 5,
-                                }}
-                              >
-                                <PhoneIcon className="h-3 w-3 text-white" />
-                              </span>
-                              <span style={{ marginLeft: 0 }}>Appeler ce client</span>
-                            </button>
-                          </span>
-                        )}
+                      <div className="flex items-center text-sm text-gray-800 mb-1">
+                        <strong>Contacts :</strong>
+                        <div className="ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleCallClient(order)}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                            aria-label="Appeler ce client"
+                          >
+                            <PhoneIcon className="h-4 w-4" />
+                            <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
+                          </button>
+                        </div>
                       </div>
+
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
                         <span className="ml-auto text-gray-700">Adresse à définir</span>
@@ -1023,19 +1046,6 @@ const VendorDashboard = () => {
                         <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
                           {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                         </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-1">
-                        {order.qr_code ? (
-                          <button
-                            className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
-                            onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrOrderId(order.id); setQrModalOpen(true); }}
-                          >
-                            Voir QR code
-                          </button>
-                        ) : (
-                          <span className="text-xs text-gray-400">QR code indisponible</span>
-                        )}
                       </div>
                     </div>
                   );
@@ -1354,59 +1364,31 @@ const VendorDashboard = () => {
                         </div>
                         {/* Ligne 4 : Client */}
                         <div className="flex items-center text-sm text-gray-800 mb-1">
+                          <strong>Contacts :</strong>
+                        <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>
+                          {order.profiles?.full_name || 'Client'}
+                        </span>
+                      </div>
+
+                        <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Client :</strong>
-                          <span
-                            className="ml-auto font-semibold text-gray-900"
-                            style={{ fontSize: "14px" }} // Taille réduite
-                          >
-                            {order.profiles?.full_name || 'Client'}
-                          </span>
+                          <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>{order.profiles?.full_name || 'Client'}</span>
                         </div>
-                        {/* Ligne 5 : Contact avec bouton bleu clair */}
-                        <div className="flex items-center mb-1">
-                          <span className="text-sm text-gray-800 font-semibold">Contact :</span>
-                          {order.profiles?.phone && (
-                            <span className="ml-auto">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const ph = order.profiles?.phone as string;
-                                  const nm = order.profiles?.full_name;
-                                  setCallTarget({ phone: ph, name: nm });
-                                  setCallModalOpen(true);
-                                }}
-                                className="flex items-center px-2 py-0.5 rounded-lg"
-                                style={{
-                                  background: "#E3F0FF",
-                                  color: "#1976D2",
-                                  fontSize: "12px",
-                                  fontWeight: 500,
-                                  minWidth: 0,
-                                  border: "none",
-                                  boxShadow: "none",
-                                  height: 24,
-                                  lineHeight: "16px"
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    background: "#25D366",
-                                    borderRadius: "50%",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    width: 16,
-                                    height: 16,
-                                    marginRight: 5,
-                                  }}
-                                >
-                                  <PhoneIcon className="h-3 w-3 text-white" />
-                                </span>
-                                <span style={{ marginLeft: 0 }}>Appeler ce client</span>
-                              </button>
-                            </span>
-                          )}
+                        <div className="flex items-center text-sm text-gray-800 mb-1">
+                          <strong>Contacts :</strong>
+                          <div className="ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleCallClient(order)}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                              aria-label="Appeler ce client"
+                            >
+                              <PhoneIcon className="h-4 w-4" />
+                              <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
+                            </button>
+                          </div>
                         </div>
+
                         {/* Ligne 6 : Adresse */}
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Adresse :</strong>
@@ -1418,18 +1400,6 @@ const VendorDashboard = () => {
                           <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
                             {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                           </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          {order.qr_code ? (
-                            <button
-                              className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
-                              onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrOrderId(order.id); setQrModalOpen(true); }}
-                            >
-                              Voir QR code
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-400">QR code indisponible</span>
-                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -1721,31 +1691,6 @@ const VendorDashboard = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* QR Modal */}
-      {qrModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 4px 24px #0002', textAlign: 'center', minWidth: 220 }}>
-            <h3 style={{ marginBottom: 16 }}>QR Code de la commande</h3>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`} alt="QR Code" />
-
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
-              <button
-                onClick={handleShareQr}
-                style={{ padding: '4px 8px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
-              >
-                Partager
-              </button>
-              <button
-                onClick={() => setQrModalOpen(false)}
-                style={{ padding: '4px 8px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Call Confirmation Dialog */}
       <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
         <DialogContent>

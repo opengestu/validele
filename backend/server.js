@@ -2596,6 +2596,61 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 });
 
 // Mark an order as delivered and set payout request automatically
+// Mark an order as in_delivery (livreur démarre la livraison)
+app.post('/api/orders/mark-in-delivery', async (req, res) => {
+  try {
+    const { orderId, deliveryPersonId } = req.body || {};
+    if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
+
+    // Fetch current order with buyer and delivery person info
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, status, buyer_id, order_code, delivery_person_id, buyer:profiles!orders_buyer_id_fkey(phone), delivery_person:profiles!orders_delivery_person_id_fkey(phone)')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (orderErr || !order) return res.status(404).json({ success: false, error: 'order_not_found' });
+
+    // Update only if status is assigned
+    if (order.status !== 'assigned') {
+      return res.status(400).json({ success: false, error: 'order_not_assigned' });
+    }
+
+    const updates = { status: 'in_delivery', in_delivery_at: new Date().toISOString() };
+    if (deliveryPersonId) updates.delivery_person_id = deliveryPersonId;
+
+    const { error: updateErr } = await supabase.from('orders').update(updates).eq('id', orderId);
+    if (updateErr) console.error('[MARK-IN-DELIVERY] Erreur update order:', updateErr);
+
+    // Envoi d'un SMS à l'acheteur avec le numéro du livreur et le nom du produit
+    try {
+      const buyerPhone = order.buyer?.phone;
+      const deliveryPhone = order.delivery_person?.phone;
+      let productName = '';
+      // Récupérer le nom du produit
+      if (order.id) {
+        const { data: orderDetails } = await supabase
+          .from('orders')
+          .select('product:products(name)')
+          .eq('id', order.id)
+          .maybeSingle();
+        if (orderDetails && orderDetails.product && orderDetails.product.name) {
+          productName = orderDetails.product.name;
+        }
+      }
+      if (buyerPhone && deliveryPhone) {
+        const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
+        await notificationService.sendSMS(buyerPhone, smsText);
+      }
+    } catch (smsErr) {
+      console.error('[MARK-IN-DELIVERY] SMS error:', smsErr);
+    }
+
+    res.json({ success: true, orderId, updated: updates });
+  } catch (err) {
+    console.error('[MARK-IN-DELIVERY] Error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
 app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
     const { orderId, deliveredBy } = req.body || {};

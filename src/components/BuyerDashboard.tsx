@@ -1727,21 +1727,25 @@ const BuyerDashboard = () => {
       {/* Modal QR Code */}
       {qrModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 4px 24px #0002', textAlign: 'center', minWidth: 220 }}>
-            <h3 style={{ marginBottom: 16 }}>QR Code de la commande</h3>
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`} alt="QR Code" />
+          <div style={{ background: 'white', borderRadius: 12, padding: 24, boxShadow: '0 4px 24px #0002', minWidth: 240, maxWidth: '90vw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 12 }}>
+            <h3 style={{ marginBottom: 8 }}>QR Code de la commande</h3>
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`}
+              alt="QR Code"
+              style={{ width: 180, height: 180, objectFit: 'contain', display: 'block', margin: '0 auto', borderRadius: 8 }}
+            />
 
             {/* Boutons: Partager et Fermer (tailles réduites) */}
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
               <button
                 onClick={handleShareQr}
-                style={{ padding: '4px 8px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+                style={{ padding: '8px 12px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
               >
                 Partager
               </button>
               <button
                 onClick={() => setQrModalOpen(false)}
-                style={{ padding: '4px 8px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+                style={{ padding: '8px 12px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
               >
                 Fermer
               </button>
