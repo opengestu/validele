@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
-import OverlaySpinner from '@/components/ui/overlay-spinner';
+
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 
@@ -72,7 +72,7 @@ export const PaymentWebView: React.FC<PaymentWebViewProps> = ({
       <DialogContent className="max-w-full h-screen w-screen p-0 m-0">
         <div className="relative w-full h-full flex flex-col">
           {/* Header avec bouton de fermeture */}
-          <div className="absolute top-0 left-0 right-0 z-10 bg-gradient-to-r from-green-500 to-green-600 p-4 flex justify-between items-center shadow-md">
+          <div className="absolute top-0 left-0 right-0 z-10 bg-green-600 p-4 flex justify-between items-center shadow-md">
             <h3 className="text-white font-semibold text-lg">Paiement sécurisé</h3>
             <Button
               variant="ghost"
@@ -86,7 +86,9 @@ export const PaymentWebView: React.FC<PaymentWebViewProps> = ({
 
           {/* Spinner de chargement */}
           {loading && (
-            <OverlaySpinner message="Chargement du paiement..." visible />
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <Spinner size="xl" className="text-white" />
+            </div>
           )}
 
           {/* iFrame pour afficher la page de paiement */}

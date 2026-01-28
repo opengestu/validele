@@ -115,20 +115,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     onStepChange?.(step);
   }, [step, onStepChange]);
 
-  // Bloquer le scroll quand on charge (overlay global)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (loading) {
-      document.body.style.overflow = 'hidden';
-      document.body.classList.add('has-global-spinner');
-      document.body.classList.add('auth-spinner-enabled');
-    } else {
-      document.body.style.overflow = '';
-      document.body.classList.remove('has-global-spinner');
-      document.body.classList.remove('auth-spinner-enabled');
-    }
-    return () => { document.body.style.overflow = ''; document.body.classList.remove('has-global-spinner'); document.body.classList.remove('auth-spinner-enabled'); };
-  }, [loading]);
+
   // Format du numéro de téléphone sénégalais
   const formatPhoneNumber = (phone: string): string => {
     let cleaned = phone.replace(/\s/g, '').replace(/-/g, '');
@@ -965,7 +952,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     className="w-full h-12 rounded-2xl bg-[#24BD5C] text-white flex items-center justify-center font-semibold disabled:opacity-60 active:scale-95 transition-transform"
                     style={{ position: 'relative', zIndex: 2 }}
                   >
-                    {loading ? <Spinner size="sm" className="text-white local-spinner" /> : 'Continuer'}
+                    {'Continuer'}
                   </button>
                 </div>
               )}
@@ -978,14 +965,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
   return (
     <>
+      {/* Spinner overlay after PIN entry and during loading */}
       {loading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pointer-events-auto">
-          <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
-            <Spinner size="lg" className="text-white" />
-            <div className="text-white text-sm">Chargement...</div>
-          </div>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/60">
+          <Spinner size="xl" hideWhenGlobal={false} />
         </div>
       )}
+      {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
+
       <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 py-2 ${className ?? ''}`}>
       <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg border border-muted/20 space-y-3 max-h-[90vh] overflow-y-auto mt-0 pb-64 sm:pb-4">
 
@@ -1201,17 +1188,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               className="w-full h-10 text-base rounded-xl"
               disabled={loading || !formData.fullName}
             >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <Spinner size="sm" className="text-white local-spinner" />
-                  <span>Enregistrement...</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span>Terminer</span>
-                  <Check className="w-4 h-4 ml-1" />
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <span>Terminer</span>
+                <Check className="w-4 h-4 ml-1" />
+              </div>
             </Button>
           </div>
         )}

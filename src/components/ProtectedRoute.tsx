@@ -3,7 +3,7 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
-import OverlaySpinner from '@/components/ui/overlay-spinner';
+
 
 interface ProtectedRouteProps {
   children: React.ReactNode;

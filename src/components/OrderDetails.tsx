@@ -7,7 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
-import OverlaySpinner from '@/components/ui/overlay-spinner';
+
 import OrderQRCode from './OrderQRCode';
 
 const OrderDetails = () => {
@@ -84,8 +84,8 @@ const OrderDetails = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <OverlaySpinner message="Chargement..." visible />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Spinner size="xl" className="text-gray-400" />
       </div>
     );
   }

@@ -1,4 +1,5 @@
 import React from "react";
+import { Spinner } from "@/components/ui/spinner";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, CreditCard, QrCode, ShieldCheck } from "lucide-react";
 
@@ -43,6 +44,7 @@ export default function HomePage() {
   const [api, setApi] = React.useState<CarouselApi>();
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const lastIndex = SLIDES.length - 1;
+  const [continueLoading, setContinueLoading] = React.useState(false);
 
   React.useEffect(() => {
     // Si connecté, ne jamais renvoyer vers /auth depuis la home
@@ -74,27 +76,27 @@ export default function HomePage() {
   }, [api]);
 
   const handleContinue = () => {
+    setContinueLoading(true);
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
-    navigate("/auth", { replace: true });
+    // Small delay to ensure spinner is visible before navigation
+    setTimeout(() => {
+      navigate("/auth", { replace: true });
+    }, 100);
   };
 
   return (
-    <div className="relative min-h-[100svh] overflow-hidden bg-gradient-to-b from-background via-background to-muted/30 text-foreground">
+    <div className="relative min-h-[100svh] overflow-hidden bg-white text-foreground">
+      {/* Spinner overlay for all main loading states and 'Continuer' click */}
+      {(authLoading || continueLoading) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+          <Spinner size="xl" className="" hideWhenGlobal={false} />
+        </div>
+      )}
       {/* Fond animé selon la slide active */}
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-0 transition-colors duration-700",
-          currentIndex === 0 && "bg-gradient-to-b from-primary/10 via-background to-background",
-          currentIndex === 1 &&
-            "bg-gradient-to-b from-secondary/10 via-background to-background",
-          currentIndex === 2 &&
-            "bg-gradient-to-b from-primary/5 via-background to-secondary/10"
-        )}
-      />
+      {/* Fond animé supprimé pour fond uni */}
 
       {/* Décor léger (ne change pas le parcours) */}
-      <div className="pointer-events-none absolute -top-24 -left-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl motion-reduce:animate-none animate-pulse" />
-      <div className="pointer-events-none absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-secondary/10 blur-3xl motion-reduce:animate-none animate-pulse" />
+      {/* Décor léger supprimé pour fond uni */}
 
       <Carousel
         setApi={setApi}
@@ -170,7 +172,9 @@ export default function HomePage() {
                       <Button
                         onClick={handleContinue}
                         className="gap-2 transition-transform motion-reduce:transition-none hover:translate-y-[-1px] active:translate-y-0"
+                        disabled={continueLoading}
                       >
+                        {continueLoading ? <Spinner size="sm" className="mr-2" hideWhenGlobal={false} /> : null}
                         Continuer
                         <ArrowRight className="h-4 w-4" />
                       </Button>

@@ -552,19 +552,21 @@ const DeliveryDashboard = () => {
     );
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+
+  // Harmonized Spinner for all main loading states
+  const isPageLoading = loading || savingProfile || !!takingOrderId;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
+    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
+      {/* Harmonized Spinner for all main loading states */}
+      {isPageLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+          <Spinner size="xl" className="" hideWhenGlobal={false} />
+        </div>
+      )}
 
       {/* Header Moderne - Style similaire à VendorDashboard */}
-      <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl

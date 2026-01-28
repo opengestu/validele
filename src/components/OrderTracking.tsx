@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
-import OverlaySpinner from '@/components/ui/overlay-spinner';
+
 
 const OrderTracking = () => {
   const { orderId } = useParams();
@@ -125,10 +125,7 @@ const OrderTracking = () => {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <OverlaySpinner message="Chargement..." visible />
-          <p>Chargement...</p>
-        </div>
+        <Spinner size="xl" className="text-gray-400" />
       </div>
     );
   }

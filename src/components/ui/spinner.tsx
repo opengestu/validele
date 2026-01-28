@@ -22,30 +22,41 @@ export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: Spinn
   // Add a helper class so global CSS can hide local spinners when an overlay is active
   const helperClass = hideWhenGlobal ? 'local-spinner' : 'global-spinner-exempt';
 
+  // Spinner fluide noir et blanc, style "eau"
   return (
-    <div className={cn("relative", sizeClasses[size], helperClass, className)}>
+    <div className={cn("relative flex items-center justify-center", sizeClasses[size], helperClass, className)}>
+      <style>
+        {`
+          @keyframes water-spin {
+            100% { transform: rotate(360deg); }
+          }
+        `}
+      </style>
       <svg
-        className="animate-spin"
+        style={{
+          animation: 'water-spin 0.9s cubic-bezier(0.4,0.2,0.2,1) infinite',
+          transformOrigin: '50% 50%'
+        }}
         viewBox="0 0 50 50"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          <linearGradient id="spinnerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#1a1a1a" />
-            <stop offset="50%" stopColor="#6b7280" />
-            <stop offset="100%" stopColor="#d1d5db" />
+          <linearGradient id="waterSpinnerGradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#111" />
+            <stop offset="100%" stopColor="#fff" />
           </linearGradient>
         </defs>
         <circle
           cx="25"
           cy="25"
           r="20"
-          stroke="url(#spinnerGradient)"
-          strokeWidth="5"
+          stroke="url(#waterSpinnerGradient)"
+          strokeWidth="6"
           strokeLinecap="round"
           fill="none"
-          strokeDasharray="90 150"
+          strokeDasharray="80 120"
+          strokeDashoffset="0"
         />
       </svg>
     </div>

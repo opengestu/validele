@@ -2,6 +2,33 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <style>
+      /* Splash screen global avec fond blanc et spinner fluide noir/blanc */
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        transition: opacity 0.4s ease-out;
+      }
+      #app-splash.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .splash-spinner {
+        width: 48px;
+        height: 48px;
+        animation: water-spin 0.9s cubic-bezier(0.4,0.2,0.2,1) infinite;
+      }
+      @keyframes water-spin {
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Validèl - Transactions Sécurisées</title>
     <meta name="description" content="Plateforme sécurisée de validation de livraisons par QR Code avec paiement sous séquestre" />
@@ -26,50 +53,14 @@
     <meta name="twitter:site" content="@lovable_dev" />
     <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
     
-    <style>
-      /* Splash screen initial avec animation fluide */
-      #app-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #22c55e 0%, #3b82f6 100%);
-        transition: opacity 0.4s ease-out;
-      }
-      #app-splash.fade-out {
-        opacity: 0;
-        pointer-events: none;
-      }
-      .splash-spinner {
-        width: 48px;
-        height: 48px;
-        animation: spin 1s linear infinite;
-      }
-      .splash-spinner circle {
-        stroke: white;
-        stroke-width: 4;
-        fill: none;
-        stroke-dasharray: 80, 200;
-        stroke-dashoffset: 0;
-        stroke-linecap: round;
-      }
-      @keyframes spin {
-        100% { transform: rotate(360deg); }
-      }
-    </style>
+    <!-- Splash screen supprimé -->
   </head>
 
   <body>
-    <!-- Splash screen animé -->
-    <div id="app-splash">
-      <svg class="splash-spinner" viewBox="0 0 50 50">
-        <circle cx="25" cy="25" r="20"></circle>
-      </svg>
-    </div>
+    <!-- Splash screen supprimé -->
     
+    <!-- Splash screen removed: no overlay, only app root will show -->
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

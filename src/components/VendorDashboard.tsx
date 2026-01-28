@@ -120,6 +120,11 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // (Global spinner overlay and body class logic removed)
+
+  // Harmonized Spinner for all main loading states
+  const isPageLoading = loading || adding || editing || deleting || savingProfile;
   // Map DB or cached wallet types to readable labels
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
@@ -786,17 +791,17 @@ const VendorDashboard = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  // (Global overlay spinner removed)
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
+    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
+      {/* Harmonized Spinner for all main loading states */}
+      {isPageLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+          <Spinner size="xl" className="" hideWhenGlobal={false} />
+        </div>
+      )}
       {/* Header Moderne - Style similaire à BuyerDashboard */}
-      <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
@@ -834,13 +839,15 @@ const VendorDashboard = () => {
         <TabsContent value="products" className="space-y-6">
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
-            <Button
-              onClick={() => setAddModalOpen(true)}
-              className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Ajouter
-            </Button>
+            {products.length > 0 && (
+              <Button
+                onClick={() => setAddModalOpen(true)}
+                className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Ajouter
+              </Button>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             {products.map((product) => (
@@ -890,13 +897,10 @@ const VendorDashboard = () => {
                     </div>
                   </div>
                   <div className="flex space-x-2">
-                    <Button variant="outline" size="sm" className="flex-1">
-                      <Eye className="h-4 w-4 mr-1" />
-                      Voir
-                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
+                      className="flex-1"
                       onClick={() => {
                         setEditProduct({
                           ...product,
@@ -905,7 +909,8 @@ const VendorDashboard = () => {
                         setEditModalOpen(true);
                       }}
                     >
-                      <Edit className="h-4 w-4" />
+                      <Edit className="h-4 w-4 mr-1" />
+                      Modifier
                     </Button>
                     <Button
                       variant="outline"
@@ -915,7 +920,8 @@ const VendorDashboard = () => {
                         setDeleteDialogOpen(true);
                       }}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Supprimer
                     </Button>
                   </div>
                 </CardContent>
@@ -923,17 +929,18 @@ const VendorDashboard = () => {
             ))}
           </div>
           {products.length === 0 && (
-            <div className="text-center py-12">
-              <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Aucun produit</h3>
-              <p className="text-gray-500 mb-4">Commencez par ajouter votre premier produit</p>
-              <Button
-                onClick={() => setAddModalOpen(true)}
-                className="bg-green-500 hover:bg-green-600"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Ajouter un produit
-              </Button>
+            <div className="text-center py-8 text-gray-500">
+              <Package className="h-10 w-10 mx-auto mb-2 text-gray-400" />
+              <p className="text-sm">Aucun produit pour le moment.</p>
+              <div className="mt-3">
+                <Button
+                  onClick={() => setAddModalOpen(true)}
+                  className="bg-green-500 hover:bg-green-600 text-sm px-3 py-1"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Ajouter un produit
+                </Button>
+              </div>
             </div>
           )}
         </TabsContent>
@@ -1121,7 +1128,7 @@ const VendorDashboard = () => {
                       <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                      <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
                       <p className="text-lg">
                         {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
                       </p>
@@ -1170,15 +1177,15 @@ const VendorDashboard = () => {
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium">Wallet utilisé</label>
+                      <label className="text-sm font-medium">Compte de paiement</label>
                       <select
                         name="wallet_type"
                         value={editProfile.wallet_type}
                         onChange={e => setEditProfile(p => ({ ...p, wallet_type: e.target.value }))}
                         className="w-full border border-gray-300 rounded-md px-3 py-2 mt-1"
-                        title="Type de wallet pour recevoir les paiements"
+                        title="Type de compte de paiement pour recevoir les paiements"
                       >
-                        <option value="">Choisir un wallet...</option>
+                        <option value="">Choisir un compte...</option>
                         <option value="wave-senegal">Wave</option>
                         <option value="orange-money">Orange Money</option>
                       </select>
@@ -1243,13 +1250,15 @@ const VendorDashboard = () => {
               <div className="space-y-6">
                 <div className="flex justify-between items-center gap-2">
                   <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
-                  <Button
-                    onClick={() => setAddModalOpen(true)}
-                className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Ajouter
-                  </Button>
+                  {products.length > 0 && (
+                    <Button
+                      onClick={() => setAddModalOpen(true)}
+                      className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Ajouter
+                    </Button>
+                  )}
                 </div>
                 <div className="grid gap-4">
                   {products.map((product) => (
@@ -1257,11 +1266,11 @@ const VendorDashboard = () => {
                       key={product.id}
                       className="border border-gray-200 relative"
                       style={{
-                        width: "100vw",
+                        width: "100%",
                         maxWidth: "calc(100vw - 32px)",
                         boxSizing: "border-box",
-                        marginRight: 0,
-                        marginLeft: 0,
+                        marginRight: 'auto',
+                        marginLeft: 'auto',
                       }}
                     >
                       <CardContent className="p-4">
@@ -1270,7 +1279,7 @@ const VendorDashboard = () => {
                             <h3
                               className="font-medium truncate"
                               style={{
-                                fontSize: "13px", // Diminue la taille du nom du produit
+                                fontSize: "13px",
                                 lineHeight: "1.2",
                                 maxWidth: "90%",
                               }}
@@ -1279,8 +1288,7 @@ const VendorDashboard = () => {
                               {product.name}
                             </h3>
                             <p className="text-sm text-gray-600 mt-1 break-words whitespace-normal">{product.description}</p>
-                          
-                            {/* Code Produit - Format texte simple avec bouton copier */}
+
                             <div
                               className="flex items-center mb-2"
                               style={{
@@ -1297,39 +1305,37 @@ const VendorDashboard = () => {
                               <span className="font-mono" style={{ fontSize: "18px", fontWeight: 700 }}>
                                 Code : {product.code || `PROD-${product.id}`}
                               </span>
-                              {/* Bouton Copier supprimé */}
                             </div>
                             <div className="mt-2">
                               <span className="text-sm font-medium text-green-600 whitespace-nowrap">{product.price} CFA</span>
                             </div>
                           </div>
-                          <div className="flex space-x-2 ml-4">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setEditProduct(product);
-                                setEditModalOpen(true);
-                              }}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setDeleteProductId(product.id);
-                                setDeleteDialogOpen(true);
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
+                        </div>
+                        {/* Boutons en bas côte-à-côte sur mobile */}
+                        <div className="mt-4 flex gap-2">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-green-500 hover:bg-green-600 text-sm">
+                            Modifier
+                          </Button>
+                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-sm">
+                            Supprimer
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>
                   ))}
                 </div>
+                {products.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                    <p className="text-sm">Commencez par ajouter un produit.</p>
+                    <div className="mt-3">
+                      <Button onClick={() => setAddModalOpen(true)} className="bg-green-500 hover:bg-green-600 text-sm px-3 py-1">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Ajouter un produit
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </TabsContent>
             <TabsContent value="orders" className="mt-0">
@@ -1419,6 +1425,12 @@ const VendorDashboard = () => {
                     </Card>
                   ))}
                 </div>
+                {orders.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <ShoppingCart className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                    <p className="text-sm">Vos commandes seront affichées ici.</p>
+                  </div>
+                )}
               </div>
             </TabsContent>
             <TabsContent value="analytics" className="mt-0">
@@ -1444,7 +1456,7 @@ const VendorDashboard = () => {
                           <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
                         </div>
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                          <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
                           <p className="text-lg">
                             {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
                           </p>

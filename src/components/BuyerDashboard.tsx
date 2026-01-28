@@ -1071,15 +1071,15 @@ const BuyerDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Overlay plein écran pendant le paiement */}
-      {processingPayment && (
+      {/* Overlay plein écran pendant le paiement, le remboursement, ou chargement initial */}
+      {(processingPayment || softPayLoading || otpLoading || refundLoading || ordersLoading || !backendReady) && (
         <div className="fixed inset-0 z-[100] bg-white bg-opacity-95 flex items-center justify-center">
           <Spinner size="xl" />
         </div>
       )}
 
       {/* Header Client moderne - dégradé orange Validèl */}
-      <header className="bg-gradient-to-r from-green-500 to-green-600 rounded-b-2xl shadow-lg mb-6 relative">
+      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6 relative">
         <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-col items-center md:items-start">
             <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
@@ -1196,7 +1196,7 @@ const BuyerDashboard = () => {
                     style={{ minWidth: 0 }}
                     disabled={searchLoading}
                   >
-                    {searchLoading ? '...' : 'Rechercher'}
+                    {searchLoading ? <Spinner size="sm" /> : 'Rechercher'}
                   </Button>
                 </form>
               </CardContent>
