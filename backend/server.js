@@ -198,6 +198,76 @@ app.post('/api/vendor/add-product', async (req, res) => {
   }
 });
 
+// Endpoint pour lister les commandes d'un vendeur (vendor dashboard)
+app.get('/api/vendor/orders', async (req, res) => {
+  try {
+    const { vendor_id, status = 'paid', limit = 200 } = req.query;
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+
+    // Auth
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) {}
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(vendor_id)) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`id, order_code, total_amount, status, vendor_id, buyer_id, created_at, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone)`)
+      .eq('vendor_id', vendor_id)
+      .eq('status', status)
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
+
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    return res.json({ success: true, orders: data });
+  } catch (err) {
+    console.error('[API] /api/vendor/orders error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// Endpoint pour lister les commandes d'un acheteur (buyer dashboard)
+app.get('/api/buyer/orders', async (req, res) => {
+  try {
+    const { buyer_id, status = 'paid', limit = 200 } = req.query;
+    if (!buyer_id) return res.status(400).json({ success: false, error: 'buyer_id requis' });
+
+    // Auth
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+    try { const decoded = jwt.verify(token, JWT_SECRET); if (decoded && decoded.sub) userId = decoded.sub; } catch (e) {}
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : acheteur non autorisé' });
+      userId = user.id;
+    }
+    if (String(userId) !== String(buyer_id)) return res.status(403).json({ success: false, error: 'Accès refusé : acheteur non autorisé (id mismatch)' });
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`id, order_code, total_amount, status, vendor_id, buyer_id, created_at, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone)`)
+      .eq('buyer_id', buyer_id)
+      .eq('status', status)
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
+
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    return res.json({ success: true, orders: data });
+  } catch (err) {
+    console.error('[API] /api/buyer/orders error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // Endpoint de test
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
