@@ -97,7 +97,8 @@ const VendorDashboard = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
-  const [pageLoading, setPageLoading] = useState<boolean>(true);
+  // start not loading — show cached UI immediately; set true only when fetchData starts
+  const [pageLoading, setPageLoading] = useState<boolean>(false);
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -299,7 +300,14 @@ const VendorDashboard = () => {
       })) as Product[];
       setProducts(mappedData);
       try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
-    } catch (error) {
+    } catch (error: any) {
+      // If network-level fetch failed, mark backend as unavailable to avoid hammering
+      const msg = (error && error.message) ? String(error.message) : String(error);
+      if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
+        console.warn('[VendorDashboard] network error when loading products, marking backend unavailable', { message: msg.slice(0,200) });
+        setBackendAvailable(false);
+        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
+      }
       try {
         const cached = localStorage.getItem(`cached_products_${caller?.id || user?.id}`);
         if (cached) {
@@ -372,10 +380,17 @@ const VendorDashboard = () => {
       console.debug('[VendorDashboard] mappedOrders', { mappedCount: mappedOrders.length, filteredCount: filtered.length });
       setOrders(filtered);
       try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
-    } catch (error) {
+    } catch (error: any) {
+      // If network-level fetch failed, mark backend as unavailable to avoid hammering
+      const msg = (error && error.message) ? String(error.message) : String(error);
+      if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
+        console.warn('[VendorDashboard] network error when loading orders, marking backend unavailable', { message: msg.slice(0,200) });
+        setBackendAvailable(false);
+        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
+      }
       // Try to load cached orders when offline
       try {
-        const cached = localStorage.getItem(`cached_orders_${caller?.id || user?.id}`);
+        const cached = localStorage.getItem(`cached_orders_${user?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
@@ -434,7 +449,14 @@ const VendorDashboard = () => {
 
       setTransactions(data || []);
       try { localStorage.setItem(`cached_transactions_${caller.id}`, JSON.stringify(data || [])); } catch (e) { /* ignore */ }
-    } catch (error) {
+    } catch (error: any) {
+      // If network-level fetch failed, mark backend as unavailable to avoid hammering
+      const msg = (error && error.message) ? String(error.message) : String(error);
+      if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
+        console.warn('[VendorDashboard] network error when loading transactions, marking backend unavailable', { message: msg.slice(0,200) });
+        setBackendAvailable(false);
+        setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after network cooldown'); }, 60 * 1000);
+      }
       try {
         const cached = localStorage.getItem(`cached_transactions_${caller?.id || user?.id}`);
         if (cached) {
@@ -516,13 +538,33 @@ const VendorDashboard = () => {
     };
     const fetchData = async () => {
       setPageLoading(true);
+      // Timeout de 15 secondes maximum
+      const timeoutId = setTimeout(() => {
+        console.warn('[VendorDashboard] fetchData timeout - forcing stop');
+        setPageLoading(false);
+        toast({
+          title: 'Timeout',
+          description: 'Le chargement prend trop de temps. Vérifiez votre connexion ou réessayez plus tard.',
+          variant: 'destructive'
+        });
+      }, 15000);
       try {
         await fetchOrCreateProfile();
-        await Promise.all([fetchProfile(), fetchProducts(), fetchOrders(), fetchTransactions()]);
+        await Promise.all([
+          fetchProfile(),
+          fetchProducts(),
+          fetchOrders(),
+          fetchTransactions()
+        ]);
       } catch (err) {
         console.error('[VendorDashboard] fetchData failed', err);
-        toast({ title: 'Erreur', description: 'Impossible de charger toutes les données du tableau de bord', variant: 'destructive' });
+        toast({
+          title: 'Erreur',
+          description: 'Impossible de charger toutes les données du tableau de bord',
+          variant: 'destructive'
+        });
       } finally {
+        clearTimeout(timeoutId);
         setPageLoading(false);
       }
     };
@@ -557,6 +599,25 @@ const VendorDashboard = () => {
       supabase.removeChannel(channel);
     };
   }, [user?.id, fetchOrders, fetchTransactions]);
+
+  // Watchdog: if pageLoading stays true for too long (e.g. upstream provider outage),
+  // force it false so the UI doesn't remain blocked forever. Also notify user and
+  // flip backendAvailable to trigger cache fallback for a short cooldown.
+  useEffect(() => {
+    if (!pageLoading) return;
+    const timeout = setTimeout(() => {
+      console.warn('[VendorDashboard] pageLoading watchdog fired — forcing pageLoading=false');
+      setPageLoading(false);
+      try {
+        toast({ title: 'Délai dépassé', description: 'Chargement trop long — affichage des données en cache si disponible', variant: 'destructive' });
+      } catch (e) {
+        // ignore toast errors
+      }
+      setBackendAvailable(false);
+      setTimeout(() => { setBackendAvailable(true); console.info('[VendorDashboard] backend re-enabled after watchdog cooldown'); }, 60 * 1000);
+    }, 12000);
+    return () => clearTimeout(timeout);
+  }, [pageLoading, toast]);
   // Suppression de l'effet ensureWalletType
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
@@ -894,6 +955,13 @@ const VendorDashboard = () => {
       {!isOnline && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
           <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
+        </div>
+      )}
+
+      {/* Backend availability banner (when backend endpoints are failing) */}
+      {!backendAvailable && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+          <div className="bg-red-50 border-l-4 border-red-400 text-red-800 px-4 py-2 rounded">⚠️ Service temporairement indisponible — affichage en cache (réessaie dans 1 min)</div>
         </div>
       )}
       {/* Main Content */}

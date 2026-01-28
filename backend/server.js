@@ -416,7 +416,30 @@ app.post('/api/vendor/transactions', async (req, res) => {
 app.post('/api/buyer/orders', async (req, res) => {
   try {
     const { buyer_id } = req.body || {};
-    if (!buyer_id) return res.status(400).json({ success: false, error: 'buyer_id requis' });
+        // Vérifier que l'utilisateur correspond au vendor_id
+        if (String(userId) !== String(vendor_id)) {
+          console.log('[DEBUG] Mismatch userId vs vendor_id:', { userId, vendor_id });
+          return res.status(403).json({ success: false, error: 'Accès refusé (id mismatch)' });
+        }
+        // Requête Supabase avec timeout
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          const { data, error } = await supabase
+            .from('products')
+            .select('*')
+            .eq('vendor_id', vendor_id)
+            .order('created_at', { ascending: false });
+          clearTimeout(timeout);
+          if (error) {
+            console.error('[API] Erreur list products:', error);
+            return res.status(500).json({ success: false, error: 'Erreur base de données' });
+          }
+          return res.json({ success: true, products: data || [] });
+        } catch (dbErr) {
+          console.error('[API] Erreur timeout DB:', dbErr);
+          return res.status(500).json({ success: false, error: 'Timeout base de données' });
+        }
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'Authentification requise' });
     const token = authHeader.split(' ')[1];
