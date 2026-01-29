@@ -1596,21 +1596,23 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) throw error;
 
-    // Debug logs to help understand why some orders may not be returned to admin UI
-    try {
-      const count = Array.isArray(data) ? data.length : 0;
-      console.log('[ADMIN] /api/admin/orders fetched count:', count);
-      if (process.env.DEBUG === 'true') {
+    // Debug logs only when DEBUG environment variable is explicitly enabled
+    if (process.env.DEBUG === 'true') {
+      try {
+        const count = Array.isArray(data) ? data.length : 0;
+        console.log('[ADMIN] /api/admin/orders fetched count:', count);
         console.log('[ADMIN] /api/admin/orders sample rows:', JSON.stringify((data || []).slice(0, 10)));
+      } catch (e) {
+        console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
       }
-    } catch (e) {
-      console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
+
+      // Include debug info in the response when DEBUG environment flag is enabled
+      const debugPayload = { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) };
+      return res.json(Object.assign({ success: true, orders: data }, { debug: debugPayload }));
     }
 
-    // Include debug info in the response when DEBUG env var is enabled or when the client requests ?debug=1
-    const debugRequested = (process.env.DEBUG === 'true') || String(req.query?.debug || '') === '1';
-    const debugPayload = debugRequested ? { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } : undefined;
-    return res.json(Object.assign({ success: true, orders: data }, debugPayload ? { debug: debugPayload } : {}));
+    // Normal response (no debug information)
+    return res.json({ success: true, orders: data });
   } catch (error) {
     console.error('[ADMIN] Erreur list orders:', error);
     res.status(500).json({ success: false, error: String(error) });
@@ -1620,7 +1622,7 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
 // Lister les transactions (admin)
 app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
   try {
-    console.log('[ADMIN] list transactions requested by:', req.adminUser?.id || 'unknown');
+    if (process.env.DEBUG === 'true') console.log('[ADMIN] list transactions requested by:', req.adminUser?.id || 'unknown');
     const { data, error } = await supabase
       .from('payment_transactions')
       .select('*, order:orders(id, order_code), provider, status, transaction_type, provider_transaction_id, raw_response, provider_response, batch_id')

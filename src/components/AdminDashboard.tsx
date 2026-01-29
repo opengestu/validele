@@ -113,10 +113,7 @@ const AdminDashboard: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'>('orders');
 
-  // Dev diagnostics: counts and sample ids to verify server response
-  const [ordersCount, setOrdersCount] = useState<number | null>(null);
-  const [ordersStatusCounts, setOrdersStatusCounts] = useState<Record<string, number> | null>(null);
-  const [ordersSampleIds, setOrdersSampleIds] = useState<string[] | null>(null);
+
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
   // If we have a userProfile, ensure it matches the admin id or the adminId param.
@@ -209,8 +206,7 @@ const AdminDashboard: React.FC = () => {
     setLoading(true);
     try {
       const headers = getAuthHeader();
-      const ordersUrl = apiUrl(`/api/admin/orders${import.meta.env.DEV ? '?debug=1' : ''}`);
-      const oRes = await fetch(ordersUrl, { headers, credentials: 'include' });
+      const oRes = await fetch(apiUrl('/api/admin/orders'), { headers, credentials: 'include' });
       if (oRes.status === 401) {
         setShowAdminLogin(true);
         setLoading(false);
@@ -233,41 +229,6 @@ const AdminDashboard: React.FC = () => {
         const fetchedOrders = oJson.orders || [];
         setOrders(fetchedOrders);
         try { localStorage.setItem('admin_orders', JSON.stringify(fetchedOrders)); } catch(e) { /* ignore cache errors */ }
-
-        // Prefer server-provided debug payload when present (server returns debug when ?debug=1)
-        type ServerDebug = { count?: number; sample?: Array<{ id: string; status?: string }> };
-        const serverDebug = (oJson && typeof oJson === 'object' && 'debug' in oJson) ? (oJson as { debug?: ServerDebug }).debug ?? null : null;
-        if (serverDebug) {
-          setOrdersCount(typeof serverDebug.count === 'number' ? serverDebug.count : fetchedOrders.length);
-          try {
-            const counts = serverDebug.sample && Array.isArray(serverDebug.sample) ? serverDebug.sample.reduce((acc: Record<string, number>, r: { status?: string }) => { const s = String(r.status || 'unknown').toLowerCase(); acc[s] = (acc[s]||0)+1; return acc; }, {} as Record<string, number>) : null;
-            setOrdersStatusCounts(counts);
-            setOrdersSampleIds(serverDebug.sample ? serverDebug.sample.map((s: { id: string }) => s.id) : fetchedOrders.slice(0,5).map((o: Order) => o.id));
-          } catch (err: unknown) {
-            setOrdersStatusCounts(null);
-            setOrdersSampleIds(null);
-          }
-        } else {
-          // Dev diagnostics: compute counts & sample IDs
-          try {
-            setOrdersCount(fetchedOrders.length);
-            const counts: Record<string, number> = {};
-            for (const o of fetchedOrders) {
-              const st = String((o as Order).status || 'unknown').toLowerCase();
-              counts[st] = (counts[st] || 0) + 1;
-            }
-            setOrdersStatusCounts(counts);
-            setOrdersSampleIds(fetchedOrders.slice(0,5).map((o: Order) => o.id));
-          } catch (e) {
-            setOrdersCount(null);
-            setOrdersStatusCounts(null);
-            setOrdersSampleIds(null);
-          }
-        }
-
-        // Dev: log fetchedOrders to console immediately for tracing
-        console.debug('[AdminDashboard] fetchedOrders:', fetchedOrders, 'serverDebug:', serverDebug);
-        // END dev diagnostics
       }
       if (tRes.ok && oRes.ok) {
         // Merge server transactions with orders as synthetic transaction rows for orders missing transactions
@@ -499,24 +460,7 @@ const AdminDashboard: React.FC = () => {
     <div className="max-w-6xl mx-auto py-6">
       <h1 className="text-2xl font-bold mb-4">Dashboard Admin</h1>
 
-      {/* Dev diagnostics banner - only visible in development */}
-      {import.meta.env.DEV && (
-        <div className="mb-4 p-3 bg-white border rounded text-sm text-slate-700 shadow-sm">
-          <div className="font-semibold">Dev: admin data diagnostics</div>
-          <div className="mt-1">Orders fetched: <strong>{ordersCount == null ? 'n/a' : String(ordersCount)}</strong></div>
-          <div className="mt-1">Status counts: {ordersStatusCounts ? Object.entries(ordersStatusCounts).map(([k,v]) => `${k}:${v}`).join(', ') : 'n/a'}</div>
-          <div className="mt-1">Sample IDs: {ordersSampleIds ? ordersSampleIds.join(', ') : 'none'}</div>
-          <div className="mt-2 flex gap-2">
-            <button className="px-2 py-1 bg-blue-500 text-white rounded text-xs" onClick={() => { console.log('Admin orders raw:', orders); alert('Check console for raw orders'); }}>Show raw (console)</button>
-            <button className="px-2 py-1 bg-gray-100 text-black rounded text-xs" onClick={() => fetchData()}>Refetch</button>
-          </div>
 
-          {/* Dev-only: render raw JSON of orders to visually inspect if client received the delivered order */}
-          <div className="mt-3 bg-slate-50 p-2 rounded text-xs text-slate-700 overflow-auto max-h-40">
-            <pre className="whitespace-pre-wrap break-words">{JSON.stringify(orders, null, 2)}</pre>
-          </div>
-        </div>
-      )}
       {!isOnline && (
         <div className="max-w-6xl mx-auto mb-4">
           <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
