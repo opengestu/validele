@@ -2794,6 +2794,27 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       if (!refErr && refreshed) updatedOrder = refreshed;
       if (refErr) console.warn('[MARK-IN-DELIVERY] Warning fetching updated order:', refErr);
 
+      // If delivery_person_id is still missing but we have deliveryPersonId, try to set it explicitly
+      if (deliveryPersonId && updatedOrder && !updatedOrder.delivery_person_id) {
+        try {
+          console.log('[MARK-IN-DELIVERY] delivery_person_id missing after update, attempting explicit set to:', deliveryPersonId);
+          const { error: setErr } = await supabase.from('orders').update({ delivery_person_id: deliveryPersonId }).eq('id', orderId);
+          if (setErr) {
+            console.error('[MARK-IN-DELIVERY] Error setting delivery_person_id explicitly:', setErr);
+          } else {
+            const { data: refreshed2, error: refErr2 } = await supabase
+              .from('orders')
+              .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+              .eq('id', orderId)
+              .maybeSingle();
+            if (!refErr2 && refreshed2) updatedOrder = refreshed2;
+            if (refErr2) console.warn('[MARK-IN-DELIVERY] Warning fetching updated order after set delivery_person_id:', refErr2);
+          }
+        } catch (e) {
+          console.warn('[MARK-IN-DELIVERY] Exception attempting to set delivery_person_id explicitly:', e);
+        }
+      }
+
       // If delivery_person_id is still missing, log explicitly for debugging
       if (!updatedOrder || !updatedOrder.delivery_person_id) {
         console.warn('[MARK-IN-DELIVERY] Warning: delivery_person_id is not set on order after mark-in-delivery', { orderId, deliveryPersonId, updatedOrder });
