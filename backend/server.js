@@ -423,21 +423,41 @@ app.post('/api/orders/search', async (req, res) => {
 // Retourne les commandes pour un livreur (bypass RLS) — POST /api/delivery/my-orders
 app.post('/api/delivery/my-orders', async (req, res) => {
   try {
+    // Detailed debug logs: headers, raw body and parsed JSON
+    try {
+      console.log('[API/delivery/my-orders] headers.authorization:', String(req.headers.authorization || '').slice(0, 200));
+      console.log('[API/delivery/my-orders] content-type:', req.headers['content-type']);
+      const rawSnippet = String(req.rawBody || '').slice(0, 2000);
+      console.log('[API/delivery/my-orders] rawBodySnippet:', rawSnippet.length > 0 ? rawSnippet : '<empty>');
+    } catch (e) {
+      console.warn('[API/delivery/my-orders] failed to log request debug info:', e?.message || e);
+    }
+
     const { deliveryPersonId } = req.body || {};
     if (!deliveryPersonId) return res.status(400).json({ success: false, error: 'deliveryPersonId requis' });
 
     console.log('[API/delivery/my-orders] Request for deliveryPersonId:', deliveryPersonId);
 
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
-      .eq('delivery_person_id', deliveryPersonId)
-      .in('status', ['assigned', 'in_delivery', 'delivered'])
-      .order('created_at', { ascending: false });
+    // Run the query and capture any detailed errors
+    let data = null;
+    try {
+      const q = supabase
+        .from('orders')
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+        .eq('delivery_person_id', deliveryPersonId)
+        .in('status', ['assigned', 'in_delivery', 'delivered'])
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('[API/delivery/my-orders] Error querying orders:', error);
-      return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
+      const result = await q;
+      data = result.data;
+      const queryError = result.error;
+      if (queryError) {
+        console.error('[API/delivery/my-orders] Supabase query returned error:', queryError);
+        return res.status(500).json({ success: false, error: 'Erreur DB', details: queryError.message, meta: queryError });
+      }
+    } catch (queryEx) {
+      console.error('[API/delivery/my-orders] Exception during Supabase query:', queryEx);
+      return res.status(500).json({ success: false, error: 'Erreur DB (exception)', details: String(queryEx) });
     }
 
     return res.json({ success: true, orders: data || [] });

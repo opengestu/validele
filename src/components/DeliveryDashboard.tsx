@@ -283,8 +283,31 @@ const DeliveryDashboard = () => {
 
   const fetchDeliveries = async () => {
     if (!user?.id) return;
-    
+
     try {
+      // If user is using SMS-auth (no supabase session token), prefer backend fetch to bypass RLS
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        try {
+          console.log('[DeliveryDashboard] SMS session detected, calling backend /api/delivery/my-orders (SMS flow)');
+          const resp = await fetch('/api/delivery/my-orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deliveryPersonId: user.id })
+          });
+          const j = await resp.json();
+          console.log('[DeliveryDashboard] /api/delivery/my-orders (SMS) response:', resp.status, j);
+          if (resp.ok && j && Array.isArray(j.orders)) {
+            setDeliveries([]);
+            setMyDeliveries(j.orders as DeliveryOrder[]);
+            return;
+          }
+        } catch (e) {
+          console.warn('[DeliveryDashboard] backend /api/delivery/my-orders (SMS) failed:', e);
+          // continue to try client-side fetch as fallback
+        }
+      }
+
       // Livraisons disponibles (payées mais pas encore assignées)
       const { data: availableDeliveries, error: error1 } = await supabase
         .from('orders')
@@ -326,16 +349,42 @@ const DeliveryDashboard = () => {
       if ((!finalMyDeliveries || finalMyDeliveries.length === 0) && user?.id) {
         try {
           console.log('[DeliveryDashboard] myActiveDeliveries empty, calling backend /api/delivery/my-orders fallback');
+          // include auth token if available to help backend log and debug
+          const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+          try {
+            const session = await supabase.auth.getSession();
+            const token = session?.data?.session?.access_token || session?.session?.access_token || null;
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+          } catch (e) { /* ignore */ }
+
           const resp = await fetch('/api/delivery/my-orders', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ deliveryPersonId: user.id })
           });
-          const j = await resp.json();
-          console.log('[DeliveryDashboard] /api/delivery/my-orders response:', resp.status, j);
-          if (resp.ok && j && Array.isArray(j.orders)) {
-            finalMyDeliveries = j.orders as DeliveryOrder[];
-          }
+
+          // Defensive parse: handle 500/empty responses gracefully and log body for debugging
+                    let j: unknown = null;
+                    let respText: string | null = null;
+                    try {
+                      const ct = resp.headers.get('content-type') || '';
+                      if (ct.includes('application/json')) {
+                        j = await resp.json();
+                      } else {
+                        respText = await resp.text();
+                      }
+                    } catch (e) {
+                      console.warn('[DeliveryDashboard] /api/delivery/my-orders fallback parse error:', e);
+                      try { respText = await resp.text(); } catch (e2) { respText = null; }
+                    }
+          
+                    console.log('[DeliveryDashboard] /api/delivery/my-orders response:', resp.status, j ?? respText);
+                    // Type-guard the parsed JSON before accessing `.orders`
+                    if (resp.ok && j && typeof j === 'object' && 'orders' in j && Array.isArray((j as { orders?: unknown }).orders)) {
+                      finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
+                    } else if (!resp.ok) {
+                      console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders non-ok status', resp.status, respText || j);
+                    }
         } catch (e) {
           console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders failed:', e);
         }
