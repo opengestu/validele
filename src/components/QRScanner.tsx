@@ -324,6 +324,7 @@ const QRScanner = () => {
       console.log('Recherche de la commande avec le code (nettoyé):', cleaned);
       const pattern = `%${cleaned}%`;
 
+      // 1. Recherche Supabase classique
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -367,13 +368,39 @@ const QRScanner = () => {
           title: "Commande trouvée",
           description: `Commande ${data.order_code} trouvée. Cliquez sur "Commencer à livrer" pour démarrer.`,
         });
-      } else {
-        console.log('Aucune commande trouvée avec le code:', orderCode.toUpperCase());
-        setCurrentOrder(null);
-        setLastMatchInfo(null);
+        return;
+      }
+
+      // 2. Fallback : requête backend (si jamais RLS ou policies bloquent côté client)
+      try {
+        const resp = await fetch(apiUrl('/api/orders/search'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: cleaned })
+        });
+        const json = await resp.json();
+        console.log('[Fallback backend] Résultat:', json);
+        if (json && json.success && json.order) {
+          setCurrentOrder(json.order as Order);
+          setLastMatchInfo({ type: 'order_code', code: json.order.order_code || '' });
+          setOrderModalOpen(true);
+          toast({
+            title: "Commande trouvée (backend)",
+            description: `Commande ${json.order.order_code} trouvée via backend. Cliquez sur "Commencer à livrer" pour démarrer.`,
+          });
+          return;
+        }
+        // Si backend répond mais pas de commande
         toast({
           title: "Commande non trouvée",
-          description: "Aucune commande payée trouvée avec ce code. Vérifiez que la commande est bien payée.",
+          description: `Aucune commande trouvée avec ce code (client + backend). Vérifiez le statut et le code.`,
+          variant: "destructive",
+        });
+      } catch (e) {
+        console.error('[Fallback backend] Erreur:', e);
+        toast({
+          title: "Erreur réseau",
+          description: "Impossible de contacter le backend pour la recherche de commande.",
           variant: "destructive",
         });
       }

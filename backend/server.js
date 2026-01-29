@@ -1,3 +1,45 @@
+// Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)
+app.post('/api/orders/search', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({ success: false, error: 'Code de commande requis' });
+    }
+    // Nettoyage du code (majuscules, suppression espaces et caractères spéciaux)
+    const cleaned = code.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const pattern = `%${cleaned}%`;
+    console.log('[API/orders/search] Recherche code nettoyé:', cleaned);
+
+    // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
+      .in('status', ['paid', 'in_delivery'])
+      .maybeSingle();
+
+    if (error) {
+      console.error('[API/orders/search] Erreur requête:', error);
+      return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
+    }
+
+    if (data) {
+      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
+      return res.json({ success: true, order: data });
+    } else {
+      console.warn('[API/orders/search] Aucune commande trouvée pour code:', cleaned);
+      return res.status(404).json({
+        success: false,
+        error: 'Commande non trouvée',
+        code: cleaned,
+        message: 'Aucune commande payée ou en cours trouvée avec ce code. Vérifiez le code et le statut.'
+      });
+    }
+  } catch (err) {
+    console.error('[API/orders/search] Exception:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
+  }
+});
 
 // ...existing code...
 
@@ -2596,61 +2638,118 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 });
 
 // Mark an order as delivered and set payout request automatically
-// Mark an order as in_delivery (livreur démarre la livraison)
+// Nouvelle version conforme et robuste de la route /api/orders/mark-in-delivery
 app.post('/api/orders/mark-in-delivery', async (req, res) => {
   try {
-    const { orderId, deliveryPersonId } = req.body || {};
-    if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
+    // Accepter les deux formats : orderId et orderId
+    const orderId = req.body.orderId || req.body.orderId;
+    const deliveryPersonId = req.body.deliveryPersonId || req.body.deliveryPersonId;
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: 'orderId required' });
+    }
 
-    // Fetch current order with buyer and delivery person info
+    // Fetch current order with buyer, delivery person, and product info
     const { data: order, error: orderErr } = await supabase
       .from('orders')
-      .select('id, status, buyer_id, order_code, delivery_person_id, buyer:profiles!orders_buyer_id_fkey(phone), delivery_person:profiles!orders_delivery_person_id_fkey(phone)')
+      .select(`
+        id, status, buyer_id, order_code, delivery_person_id,
+        buyer:profiles!orders_buyer_id_fkey(phone),
+        delivery_person:profiles!orders_delivery_person_id_fkey(phone),
+        product:products(name)
+      `)
       .eq('id', orderId)
       .maybeSingle();
-    if (orderErr || !order) return res.status(404).json({ success: false, error: 'order_not_found' });
+    if (orderErr || !order) {
+      return res.status(404).json({ success: false, error: 'order_not_found' });
+    }
 
     // Update only if status is assigned
     if (order.status !== 'assigned') {
-      return res.status(400).json({ success: false, error: 'order_not_assigned' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'order_not_assigned',
+        currentStatus: order.status 
+      });
     }
 
-    const updates = { status: 'in_delivery', in_delivery_at: new Date().toISOString() };
-    if (deliveryPersonId) updates.delivery_person_id = deliveryPersonId;
+    const updates = { 
+      status: 'in_delivery', 
+      in_delivery_at: new Date().toISOString() 
+    };
+    // Use deliveryPersonId from request or keep existing
+    if (deliveryPersonId) {
+      updates.delivery_person_id = deliveryPersonId;
+    }
 
-    const { error: updateErr } = await supabase.from('orders').update(updates).eq('id', orderId);
-    if (updateErr) console.error('[MARK-IN-DELIVERY] Erreur update order:', updateErr);
+    const { error: updateErr } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', orderId);
+    if (updateErr) {
+      console.error('[MARK-IN-DELIVERY] Erreur update order:', updateErr);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'update_failed',
+        details: updateErr.message 
+      });
+    }
 
     // Envoi d'un SMS à l'acheteur avec le numéro du livreur et le nom du produit
     try {
       const buyerPhone = order.buyer?.phone;
-      const deliveryPhone = order.delivery_person?.phone;
-      let productName = '';
-      // Récupérer le nom du produit
-      if (order.id) {
-        const { data: orderDetails } = await supabase
-          .from('orders')
-          .select('product:products(name)')
-          .eq('id', order.id)
-          .maybeSingle();
-        if (orderDetails && orderDetails.product && orderDetails.product.name) {
-          productName = orderDetails.product.name;
-        }
+      // Si le numéro du livreur n'est pas dans la commande, on va le chercher
+      let deliveryPhone = order.delivery_person?.phone;
+      if (!deliveryPhone && deliveryPersonId) {
+        deliveryPhone = await getDeliveryPersonPhone(deliveryPersonId);
       }
+      const productName = order.product?.name || 'votre commande';
       if (buyerPhone && deliveryPhone) {
         const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
         await notificationService.sendSMS(buyerPhone, smsText);
+        // Envoi aussi d'une notification push (optionnel)
+        if (order.buyer_id) {
+          await notificationService.sendPushNotificationToUser(
+            order.buyer_id, 
+            '🚚 Livraison en cours', 
+            `Votre commande est en cours de livraison. Livreur: ${deliveryPhone}`
+          );
+        }
       }
     } catch (smsErr) {
-      console.error('[MARK-IN-DELIVERY] SMS error:', smsErr);
+      console.error('[MARK-IN-DELIVERY] SMS/Push error:', smsErr);
+      // Ne pas échouer la requête principale à cause de l'erreur de notification
     }
 
-    res.json({ success: true, orderId, updated: updates });
+    res.json({ 
+      success: true, 
+      orderId, 
+      updated: updates,
+      message: 'Livraison démarrée avec succès' 
+    });
   } catch (err) {
     console.error('[MARK-IN-DELIVERY] Error:', err);
-    res.status(500).json({ success: false, error: String(err) });
+    res.status(500).json({ 
+      success: false, 
+      error: 'internal_server_error',
+      message: String(err) 
+    });
   }
 });
+
+// Helper function to get delivery person phone
+async function getDeliveryPersonPhone(deliveryPersonId) {
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('phone')
+      .eq('id', deliveryPersonId)
+      .single();
+    return data?.phone;
+  } catch (e) {
+    console.error('Error getting delivery person phone:', e);
+    return null;
+  }
+}
 app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
     const { orderId, deliveredBy } = req.body || {};

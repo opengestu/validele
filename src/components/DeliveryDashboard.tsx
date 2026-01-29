@@ -481,6 +481,26 @@ const DeliveryDashboard = () => {
     }
   };
 
+  // Démarrer la livraison (passer en 'in_delivery' + SMS)
+  const handleStartDelivery = async (delivery: DeliveryOrder) => {
+    if (!user?.id) return;
+    try {
+      const resp = await fetch('/api/orders/mark-in-delivery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: delivery.id, deliveryPersonId: user.id })
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.success) {
+        throw new Error(json?.error || 'Erreur lors du démarrage de la livraison');
+      }
+      toast({ title: 'Livraison démarrée', description: 'Le client a été notifié par SMS.' });
+      fetchDeliveries();
+    } catch (error) {
+      toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Impossible de démarrer la livraison'), variant: 'destructive' });
+    }
+  };
+
   const renderDeliveryCard = (delivery: DeliveryOrder, variant: 'current' | 'completed') => {
     // Trouver les transactions associées à cette livraison
     const payoutTransaction = transactions.find(t => t.order_id === delivery.id && t.transaction_type === 'payout');
@@ -543,6 +563,15 @@ const DeliveryDashboard = () => {
           </div>
           {variant === 'current' && (
             <div className="mt-4 space-y-2">
+              {delivery.status === 'assigned' && (
+                <Button
+                  className="w-full bg-orange-500 hover:bg-orange-600 text-white"
+                  onClick={() => handleStartDelivery(delivery)}
+                >
+                  <Truck className="h-4 w-4 mr-2" />
+                  Démarrer la livraison
+                </Button>
+              )}
               <Button
                 className="w-full bg-green-500 hover:bg-green-600 text-white"
                 onClick={() => navigate(`/scanner?orderId=${delivery.id}`)}
