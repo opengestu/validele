@@ -107,6 +107,28 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
     let isMounted = true;
     const isStarting = { current: false } as { current: boolean };
 
+    // Suppress specific unhandled promise rejections coming from media play interruptions
+    const _qrUnhandledRejection = (ev: PromiseRejectionEvent) => {
+      try {
+        const reason = (ev && (ev as PromiseRejectionEvent).reason) ?? ev;
+        let msg = '';
+        try {
+          if (typeof reason === 'object' && reason !== null && 'message' in reason && typeof (reason as { message?: unknown }).message === 'string') {
+            msg = String((reason as { message?: unknown }).message);
+          } else {
+            msg = String(reason);
+          }
+        } catch (e) {
+          msg = String(reason);
+        }
+        if (msg && (msg.includes('play() request was interrupted') || (typeof reason === 'object' && reason !== null && 'name' in reason && String((reason as { name?: unknown }).name) === 'AbortError'))) {
+          ev.preventDefault();
+          console.debug('[QR] suppressed unhandled rejection:', msg);
+        }
+      } catch (err) { /* ignore */ }
+    };
+    window.addEventListener('unhandledrejection', _qrUnhandledRejection);
+
     const doStart = async () => {
       if (!active || isStarting.current) return;
       isStarting.current = true;
@@ -297,6 +319,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
     }
 
     return () => {
+      window.removeEventListener('unhandledrejection', _qrUnhandledRejection);
       isMounted = false;
       doStop();
     };
@@ -386,7 +409,8 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
         ref={containerRef}
         style={{ width: '100%', maxWidth: isMobile ? '100%' : 600, aspectRatio: '1', margin: '12px auto' }}
       >
-        <div className="qr-overlay"><div className="scan-frame" /></div>
+        {/* Use the computedQrbox to size the visual scan-frame so the visible overlay matches the scanner's configured qrbox */}
+        <div className="qr-overlay"><div className="scan-frame" style={{ width: computedQrbox, height: computedQrbox, borderRadius: 28 }} /></div>
       </div>
     </>
   );
@@ -568,6 +592,16 @@ const QRScanner = () => {
   // When navigating from DeliveryDashboard with ?autoStart=1 we want to automatically start delivery and show scanner
   const [autoOpenScanner, setAutoOpenScanner] = useState(false);
 
+  // Open the scanner with a short delay so the DOM can settle (prevents media play() AbortError)
+  const openScannerSafely = () => {
+    setOrderModalOpen(false);
+    // delay briefly to allow modal to close and DOM to settle
+    setTimeout(() => {
+      setShowScanSection(true);
+      setScanSessionId(s => s + 1);
+    }, 160);
+  };
+
   // Mapper d'erreurs PayDunya vers messages plus clairs
   const mapPaydunyaError = (raw: unknown): string => {
     const msg = typeof raw === 'string' ? raw : JSON.stringify(raw || '');
@@ -635,8 +669,8 @@ const QRScanner = () => {
         }
         console.log('Livraison démarrée avec succès (backend)', json);
 
-        setOrderModalOpen(false);
-        setShowScanSection(true);
+        // Close modal and open scanner safely to avoid race with camera start
+        openScannerSafely();
 
         toast({
           title: "Livraison en cours",
@@ -737,9 +771,7 @@ const QRScanner = () => {
               console.log('Commande chargée depuis URL par id:', data.id);
               // If it's already in delivery and assigned to this user, open scanner
               if (data.status === 'in_delivery' && String(data.delivery_person_id) === String(user?.id)) {
-                setOrderModalOpen(false);
-                setShowScanSection(true);
-                setScanSessionId(s => s + 1);
+                openScannerSafely();
                 return;
               }
 
@@ -749,8 +781,7 @@ const QRScanner = () => {
                   // Use ref-stored handler to avoid recreating the effect when
                   // `handleStartDelivery` identity changes (prevents an infinite loop)
                   await handleStartDeliveryRef.current?.();
-                  setShowScanSection(true);
-                  setScanSessionId(s => s + 1);
+                  openScannerSafely();
                   return;
                 } catch (e) {
                   console.warn('Auto start by id failed, will still try code fallback if provided', e);
@@ -774,17 +805,14 @@ const QRScanner = () => {
             console.log('Commande chargée depuis URL par code:', found.id);
 
             if (found.status === 'in_delivery' && String(found.delivery_person_id) === String(user?.id)) {
-              setOrderModalOpen(false);
-              setShowScanSection(true);
-              setScanSessionId(s => s + 1);
+              openScannerSafely();
               return;
             }
 
             if (found.status === 'paid' && autoStart) {
               try {
                 await handleStartDeliveryRef.current?.();
-                setShowScanSection(true);
-                setScanSessionId(s => s + 1);
+                openScannerSafely();
                 return;
               } catch (e) {
                 console.warn('Auto start by code failed, falling back to modal', e);
@@ -1084,11 +1112,9 @@ const QRScanner = () => {
         setScannedCode('');
         setOrderCode('');
         // Keep scanner open for the next delivery and reset session so scanner resumes
-        setShowScanSection(true);
         setCurrentOrder(null);
+        openScannerSafely();
         setIsConfirmingDelivery(false);
-        // bump session to instruct scanner to reset its internal 'hasScanned' state
-        setScanSessionId(s => s + 1);
         // Return to delivery dashboard so the driver sees the updated 'Terminé' tab
         try { navigate('/delivery'); } catch (e) { /* ignore */ }
       } catch (error: unknown) {
@@ -1129,10 +1155,7 @@ const QRScanner = () => {
     // Si la commande est déjà en cours et assignée à ce livreur,
     // ne pas afficher la modale de détails ; ouvrir directement le scanner.
     if (currentOrder.status === 'in_delivery' && String(currentOrder.delivery_person_id) === String(user?.id)) {
-      setOrderModalOpen(false);
-      setShowScanSection(true);
-      // reset le scanner pour qu'il démarre proprement
-      setScanSessionId(s => s + 1);
+      openScannerSafely();
       return;
     }
 
@@ -1148,10 +1171,7 @@ const QRScanner = () => {
         // If the order is already in_delivery and assigned to *this* user, open scanner immediately
         if (currentOrder.status === 'in_delivery') {
           if (String(currentOrder.delivery_person_id) === String(user.id)) {
-            setOrderModalOpen(false);
-            setShowScanSection(true);
-            // reset the internal scanner session so it starts fresh
-            setScanSessionId(s => s + 1);
+            openScannerSafely();
           } else {
             // Order is in delivery by another person — inform and do not open scanner
             toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });
@@ -1160,13 +1180,11 @@ const QRScanner = () => {
           // Paid: attempt to start delivery (existing behavior)
           try {
             await handleStartDelivery();
-            // If start succeeded, ensure the scanner is shown
-            setShowScanSection(true);
-            setScanSessionId(s => s + 1);
+            // If start succeeded, ensure the scanner is shown (safely)
+            openScannerSafely();
           } catch (startErr) {
             console.warn('Auto-start delivery failed, opening scanner without server start:', startErr);
-            setShowScanSection(true);
-            setScanSessionId(s => s + 1);
+            openScannerSafely();
           }
         } else if (currentOrder.status === 'delivered') {
           // Already delivered: do not open scanner, inform the user
@@ -1239,7 +1257,7 @@ const QRScanner = () => {
                 <span className="text-green-700 font-semibold text-lg">Livraison en cours</span>
               </div>
               <p className="text-gray-600 mb-4">Veuillez scanner le QR code du client pour valider la livraison</p>
-              <Button className="bg-green-600 hover:bg-green-700 w-full" onClick={() => { setShowScanSection(true); setOrderModalOpen(false); }}>
+              <Button className="bg-green-600 hover:bg-green-700 w-full" onClick={() => { openScannerSafely(); }}>
                 <Camera className="h-4 w-4 mr-2" /> Scanner le QR code maintenant
               </Button>
             </div>

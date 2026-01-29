@@ -187,7 +187,11 @@ const DeliveryDashboard = () => {
       if (smsSessionStr) {
         try {
           console.log('[DeliveryDashboard] SMS session detected, calling backend /api/delivery/my-orders (SMS flow)');
-          const resp = await fetch('/api/delivery/my-orders', {
+          // Choose API host depending on environment. On real devices (non-localhost) prefer the configured API base or production.
+          const smsApiHost = (typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname))
+            ? (import.meta.env.VITE_API_BASE || 'https://validele.onrender.com')
+            : (import.meta.env.VITE_DEV_BACKEND || 'http://localhost:5000');
+          const resp = await fetch(`${smsApiHost}/api/delivery/my-orders`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ deliveryPersonId: user.id })
@@ -208,7 +212,6 @@ const DeliveryDashboard = () => {
                       try { respText = await resp.text(); } catch (e2) { respText = null; }
                     }
           
-                    console.log('[DeliveryDashboard] /api/delivery/my-orders (SMS) response:', resp.status, j ?? respText);
           
                     // Type-guard the parsed JSON before accessing `.orders`
                     if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
@@ -217,7 +220,7 @@ const DeliveryDashboard = () => {
                       // Ensure we only keep driver-relevant statuses
                       const filteredSmsOrders = ordersFromSms.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
                       setMyDeliveries(filteredSmsOrders);
-                      return;
+                      return; 
                     } else if (!resp.ok) {
                       console.warn('[DeliveryDashboard] /api/delivery/my-orders (SMS) returned non-ok status', resp.status, respText || j);
 
@@ -225,7 +228,6 @@ const DeliveryDashboard = () => {
                         // Server error: try production fallback *first* and log outcome (no toasts shown)
                         let fallbackSucceeded = false;
                         try {
-                          console.log('[DeliveryDashboard] Attempting production fallback to https://validele.onrender.com/api/delivery/my-orders');
                           const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -242,7 +244,6 @@ const DeliveryDashboard = () => {
                           } catch (e) {
                             console.warn('[DeliveryDashboard] Prod fallback parse error', e);
                           }
-                          console.log('[DeliveryDashboard] prod fallback response:', prodResp.status, prodJson);
                           if (
                             prodResp.ok &&
                             prodJson &&
@@ -254,9 +255,7 @@ const DeliveryDashboard = () => {
                             const prodOrders = (prodJson as { orders: DeliveryOrder[] }).orders;
                             const filteredProdOrders = prodOrders.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
                             setMyDeliveries(filteredProdOrders);
-                            try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(filteredProdOrders)); } catch (e) { /* ignore */ }
-                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance', filteredProdOrders.length);
-                            fallbackSucceeded = true;
+                            fallbackSucceeded = true; 
                           }
                         } catch (e) {
                           console.warn('[DeliveryDashboard] production fallback failed:', e);
@@ -306,17 +305,16 @@ const DeliveryDashboard = () => {
 
       if (error2) console.warn('[DeliveryDashboard] myActiveDeliveries supabase error', error2);
 
-      console.log('[DeliveryDashboard] fetchDeliveries:', { userId: user.id, availableCount: (availableDeliveries || []).length, myActiveCount: (myActiveDeliveries || []).length });
+
 
       let finalMyDeliveries = (myActiveDeliveries ?? []) as DeliveryOrder[];
-      console.log('[DeliveryDashboard] initial client myActiveDeliveries count:', (finalMyDeliveries || []).length, 'userId:', user?.id);
+
 
       // If the client-side query returned none (likely RLS) or the user uses SMS auth,
       // always try the backend endpoint to fetch this user's deliveries.
       const shouldCallBackend = (!finalMyDeliveries || finalMyDeliveries.length === 0) || Boolean(typeof window !== 'undefined' && localStorage.getItem('sms_auth_session'));
       if (shouldCallBackend && user?.id) {
         try {
-          console.log('[DeliveryDashboard] calling backend /api/delivery/my-orders to fetch my deliveries');
           const headers: Record<string,string> = { 'Content-Type': 'application/json' };
           try {
             const sessionResp = await supabase.auth.getSession();
@@ -324,7 +322,11 @@ const DeliveryDashboard = () => {
             if (token) headers['Authorization'] = `Bearer ${token}`;
           } catch (e) { /* ignore */ }
 
-          const resp = await fetch('/api/delivery/my-orders', {
+          // Determine API host similarly to SMS flow (prefer prod when not on localhost)
+          const apiHost = (typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname))
+            ? (import.meta.env.VITE_API_BASE || 'https://validele.onrender.com')
+            : (import.meta.env.VITE_DEV_BACKEND || 'http://localhost:5000');
+          const resp = await fetch(`${apiHost}/api/delivery/my-orders`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ deliveryPersonId: user.id })
@@ -339,13 +341,10 @@ const DeliveryDashboard = () => {
             console.warn('[DeliveryDashboard] /api/delivery/my-orders parse error', e);
           }
 
-          console.log('[DeliveryDashboard] backend my-orders response:', resp.status, j);
           if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
             finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
             // ensure only relevant statuses and dedupe
             finalMyDeliveries = finalMyDeliveries.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
-            try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(finalMyDeliveries)); } catch (e) { /* ignore */ }
-            console.log('[DeliveryDashboard] backend /api/delivery/my-orders loaded', finalMyDeliveries.length);
           } else if (!resp.ok) {
             console.warn('[DeliveryDashboard] backend /api/delivery/my-orders returned non-ok', resp.status, j);
           }
@@ -359,19 +358,12 @@ const DeliveryDashboard = () => {
             const prodJson = prodResp.ok ? await prodResp.json().catch(() => null) : null;
             if (prodResp.ok && prodJson && typeof prodJson === 'object' && Array.isArray((prodJson as { orders?: unknown }).orders)) {
               finalMyDeliveries = (prodJson as { orders: DeliveryOrder[] }).orders;
-              try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(finalMyDeliveries)); } catch (e) { /* ignore */ }
             }
           } catch (e2) { console.warn('[DeliveryDashboard] prod fallback failed', e2); }
         }
       }
 
-      // If still empty, try to load a cached copy to improve mobile UX
-      if ((!finalMyDeliveries || finalMyDeliveries.length === 0) && typeof window !== 'undefined') {
-        try {
-          const cached = localStorage.getItem('my_deliveries_cache_v1');
-          if (cached) finalMyDeliveries = JSON.parse(cached) as DeliveryOrder[];
-        } catch (e) { /* ignore */ }
-      }
+      // No local cache: do not load cached deliveries (explicit requirement)
 
       // Filter to only statuses relevant to a delivery person and dedupe by id
       try {
@@ -380,10 +372,21 @@ const DeliveryDashboard = () => {
         for (const o of filtered) deduped[o.id] = o;
         finalMyDeliveries = Object.values(deduped);
         console.log('[DeliveryDashboard] finalMyDeliveries after filter/dedupe:', finalMyDeliveries.length, finalMyDeliveries.map(x => ({ id: x.id, status: x.status })));
+
       } catch (e) { /* ignore */ }
 
       setDeliveries((availableDeliveries ?? []) as DeliveryOrder[]);
-      setMyDeliveries(finalMyDeliveries);
+      // Avoid overwriting a previously-loaded non-empty deliveries list with an empty result from a later failing fetch.
+      setMyDeliveries(prev => {
+        try {
+          const newLen = (finalMyDeliveries || []).length;
+          const prevLen = (prev || []).length;
+          if (newLen === 0 && prevLen > 0) {
+            return prev;
+          }
+        } catch (e) { /* if anything goes wrong, fall through and set the new value */ }
+        return finalMyDeliveries;
+      });
     } catch (error) {
       console.error('Erreur lors du chargement des livraisons:', error);
       console.warn('Impossible de charger les livraisons. Vérifiez votre connexion.');
@@ -696,6 +699,9 @@ const DeliveryDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
+      {/* Dev diagnostics banner (only in development) */}
+
+
       {/* Harmonized Spinner for all main loading states */}
       {isPageLoading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
