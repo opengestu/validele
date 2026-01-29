@@ -2661,18 +2661,20 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
-    // Update only if status is assigned
-    if (order.status !== 'assigned') {
+    // Update only if status is assigned or paid (allow starting delivery from 'paid')
+    if (!['assigned', 'paid'].includes(order.status)) {
       return res.status(400).json({ 
         success: false, 
-        error: 'order_not_assigned',
+        error: 'order_not_assignable',
         currentStatus: order.status 
       });
     }
 
+    const prevStatus = order.status;
     const updates = { 
       status: 'in_delivery', 
-      in_delivery_at: new Date().toISOString() 
+      in_delivery_at: new Date().toISOString(),
+      previous_status: prevStatus
     };
     // Use deliveryPersonId from request or keep existing
     if (deliveryPersonId) {

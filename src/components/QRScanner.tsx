@@ -423,69 +423,64 @@ const QRScanner = () => {
     }
 
     try {
-      console.log('Démarrage de la livraison pour la commande:', currentOrder.id);
+      console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
       if (!currentOrder.id) throw new Error('Order id manquant');
-      
-      const { error } = await supabase
-        .from('orders')
-        .update({ 
-          status: 'in_delivery',
-          delivery_person_id: user.id as string
-        })
-        .eq('id', currentOrder.id as string);
 
-      if (error) {
-        console.error('Erreur lors du démarrage de la livraison:', error);
-        throw error;
-      }
-
-      setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
-      
-      // Notifier l'acheteur que la livraison est en cours (inclure le numéro du livreur si disponible)
+      // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
       try {
-        let deliveryPhone: string | undefined = undefined;
-        if (user?.id) {
-          try {
-            const { data: profileData, error: profileError } = await supabase
-              .from('profiles')
-              .select('phone')
-              .eq('id', user.id)
-              .maybeSingle();
-            if (!profileError && profileData?.phone) {
-              deliveryPhone = profileData.phone;
-            }
-          } catch (e) {
-            console.warn('Impossible de récupérer le numéro du livreur:', e);
-          }
+        const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: currentOrder.id, deliveryPersonId: user?.id })
+        });
+        const json = await resp.json();
+        if (!resp.ok || !json || !json.success) {
+          console.error('Backend mark-in-delivery failed:', resp.status, json);
+          throw new Error(json?.error || json?.message || 'Backend mark-in-delivery failed');
         }
 
-        if (currentOrder?.buyer_id) {
-          notifyBuyerDeliveryStarted(
-            currentOrder.buyer_id,
-            currentOrder.id as string,
-            currentOrder.order_code || undefined,
-            deliveryPhone
-          ).catch(err => console.warn('Notification livraison démarrée échouée:', err));
+        // Mise à jour locale de l'état de la commande
+        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
+
+        console.log('Livraison démarrée avec succès (backend)', json);
+
+        // Fermer le modal et afficher le message + section de scan
+        setOrderModalOpen(false);
+        setShowScanSection(true);
+
+        toast({
+          title: "Livraison en cours",
+          description: "Veuillez scanner le QR code du client pour valider la livraison",
+        });
+
+      } catch (backendErr) {
+        console.warn('Backend mark-in-delivery failed, falling back to client update', backendErr);
+        // Fallback: essayer la mise à jour côté client (peut échouer à cause de RLS)
+        const { error } = await supabase
+          .from('orders')
+          .update({ 
+            status: 'in_delivery',
+            delivery_person_id: user.id as string
+          })
+          .eq('id', currentOrder.id as string);
+
+        if (error) {
+          console.error('Erreur lors du démarrage de la livraison (fallback client):', error);
+          throw error;
         }
-      } catch (e) {
-        console.warn('Erreur lors de la préparation de la notification SMS:', e);
+
+        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
+
+        toast({
+          title: "Livraison en cours",
+          description: "Veuillez scanner le QR code du client pour valider la livraison",
+        });
       }
-      
-      console.log('Livraison démarrée avec succès');
-      
-      // Fermer le modal et afficher le message + section de scan
-      setOrderModalOpen(false);
-      setShowScanSection(true);
-      
-      toast({
-        title: "Livraison en cours",
-        description: "Veuillez scanner le QR code du client pour valider la livraison",
-      });
     } catch (error) {
       console.error('Erreur lors du démarrage de la livraison:', error);
       toast({
         title: "Erreur",
-        description: "Impossible de démarrer la livraison",
+        description: "Impossible de démarrer la livraison : " + (error?.message || ''),
         variant: "destructive",
       });
     }
