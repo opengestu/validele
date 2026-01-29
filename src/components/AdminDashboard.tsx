@@ -209,7 +209,8 @@ const AdminDashboard: React.FC = () => {
     setLoading(true);
     try {
       const headers = getAuthHeader();
-      const oRes = await fetch(apiUrl('/api/admin/orders'), { headers, credentials: 'include' });
+      const ordersUrl = apiUrl(`/api/admin/orders${import.meta.env.DEV ? '?debug=1' : ''}`);
+      const oRes = await fetch(ordersUrl, { headers, credentials: 'include' });
       if (oRes.status === 401) {
         setShowAdminLogin(true);
         setLoading(false);
@@ -233,24 +234,39 @@ const AdminDashboard: React.FC = () => {
         setOrders(fetchedOrders);
         try { localStorage.setItem('admin_orders', JSON.stringify(fetchedOrders)); } catch(e) { /* ignore cache errors */ }
 
-        // Dev diagnostics: compute counts & sample IDs
-        try {
-          setOrdersCount(fetchedOrders.length);
-          const counts: Record<string, number> = {};
-          for (const o of fetchedOrders) {
-            const st = String((o as Order).status || 'unknown').toLowerCase();
-            counts[st] = (counts[st] || 0) + 1;
+        // Prefer server-provided debug payload when present (server returns debug when ?debug=1)
+        type ServerDebug = { count?: number; sample?: Array<{ id: string; status?: string }> };
+        const serverDebug = (oJson && typeof oJson === 'object' && 'debug' in oJson) ? (oJson as { debug?: ServerDebug }).debug ?? null : null;
+        if (serverDebug) {
+          setOrdersCount(typeof serverDebug.count === 'number' ? serverDebug.count : fetchedOrders.length);
+          try {
+            const counts = serverDebug.sample && Array.isArray(serverDebug.sample) ? serverDebug.sample.reduce((acc: Record<string, number>, r: { status?: string }) => { const s = String(r.status || 'unknown').toLowerCase(); acc[s] = (acc[s]||0)+1; return acc; }, {} as Record<string, number>) : null;
+            setOrdersStatusCounts(counts);
+            setOrdersSampleIds(serverDebug.sample ? serverDebug.sample.map((s: { id: string }) => s.id) : fetchedOrders.slice(0,5).map((o: Order) => o.id));
+          } catch (err: unknown) {
+            setOrdersStatusCounts(null);
+            setOrdersSampleIds(null);
           }
-          setOrdersStatusCounts(counts);
-          setOrdersSampleIds(fetchedOrders.slice(0,5).map((o: Order) => o.id));
-        } catch (e) {
-          setOrdersCount(null);
-          setOrdersStatusCounts(null);
-          setOrdersSampleIds(null);
+        } else {
+          // Dev diagnostics: compute counts & sample IDs
+          try {
+            setOrdersCount(fetchedOrders.length);
+            const counts: Record<string, number> = {};
+            for (const o of fetchedOrders) {
+              const st = String((o as Order).status || 'unknown').toLowerCase();
+              counts[st] = (counts[st] || 0) + 1;
+            }
+            setOrdersStatusCounts(counts);
+            setOrdersSampleIds(fetchedOrders.slice(0,5).map((o: Order) => o.id));
+          } catch (e) {
+            setOrdersCount(null);
+            setOrdersStatusCounts(null);
+            setOrdersSampleIds(null);
+          }
         }
 
         // Dev: log fetchedOrders to console immediately for tracing
-        console.debug('[AdminDashboard] fetchedOrders:', fetchedOrders);
+        console.debug('[AdminDashboard] fetchedOrders:', fetchedOrders, 'serverDebug:', serverDebug);
         // END dev diagnostics
       }
       if (tRes.ok && oRes.ok) {

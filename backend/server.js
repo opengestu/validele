@@ -1607,8 +1607,9 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
       console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
     }
 
-    // Include debug info in the response when DEBUG environment flag is enabled (admin-only route)
-    const debugPayload = (process.env.DEBUG === 'true') ? { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } : undefined;
+    // Include debug info in the response when DEBUG env var is enabled or when the client requests ?debug=1
+    const debugRequested = (process.env.DEBUG === 'true') || String(req.query?.debug || '') === '1';
+    const debugPayload = debugRequested ? { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } : undefined;
     return res.json(Object.assign({ success: true, orders: data }, debugPayload ? { debug: debugPayload } : {}));
   } catch (error) {
     console.error('[ADMIN] Erreur list orders:', error);
