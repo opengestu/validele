@@ -491,6 +491,8 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erreur DB (exception)', details: String(queryEx) });
     }
 
+    console.log('[API/delivery/my-orders] query returned', Array.isArray(data) ? data.length : 0, 'orders');
+    if (Array.isArray(data) && data.length > 0) console.log('[API/delivery/my-orders] sample:', (data || []).slice(0,5).map(o => ({ id: o.id, status: o.status, delivery_person_id: o.delivery_person_id })));
     return res.json({ success: true, orders: data || [] });
   } catch (err) {
     console.error('[API/delivery/my-orders] Exception:', err);

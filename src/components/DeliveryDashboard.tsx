@@ -36,6 +36,11 @@ type DeliveryOrder = {
 const DeliveryDashboard = () => {
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [callTarget, setCallTarget] = useState<string | null>(null);
+  const [loadingLocal, setLoading] = useState(false);
 
   // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
   React.useEffect(() => {
@@ -57,183 +62,75 @@ const DeliveryDashboard = () => {
       phone: ''
     }
   );
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [loadingState, setLoading] = useState(true); // Ajouté pour loading local
-  const { toast } = useToast();
 
-  // Call modal state
-  const [callModalOpen, setCallModalOpen] = useState(false);
-  const [callTarget, setCallTarget] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (user) {
-      fetchDeliveries();
-      fetchTransactions();
-    }
-  }, [user]);
-
-  // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
-      if (user?.id) {
-        
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('full_name, phone')
-          .eq('id', user.id)
-          .maybeSingle();
-        
-        let profileData = data;
-        if (error || !profileData) {
-          // If not found, create a new profile row for this user
-          // But if the client is an SMS-authenticated session (no access_token),
-          // avoid attempting the insert and use the SMS session cache instead.
-          try {
-            const smsRaw = localStorage.getItem('sms_auth_session');
-            if (smsRaw) {
-              try {
-                const sms = JSON.parse(smsRaw);
-
-                // Prefer an authoritative server read when possible (handles updates made via admin endpoints)
-                try {
-                  const check = await getProfileById(user.id);
-                  
-                  if (check.ok && check.json && check.json.profile) {
-                    profileData = check.json.profile;
-                    try {
-                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
-                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
-                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
-                      
-                    } catch (e) {
-                      console.warn('[DEBUG] failed to cache profile from backend GET', e);
-                    }
-                  } else if (sms?.profileId && sms.profileId === user.id) {
-                    // Fallback to SMS session values if backend GET can't be used
-                    profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
-                    try {
-                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
-                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
-                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
-                      
-                    } catch (e) {
-                      console.warn('[DEBUG] failed to cache sms profile', e);
-                    }
-                  }
-                } catch (e) {
-                  // If GET fails, still fall back to SMS values when present
-                  if (sms?.profileId && sms.profileId === user.id) {
-                    profileData = { full_name: sms.fullName || '', phone: sms.phone || '' };
-                    try {
-                      const cachedFull = (profileData as unknown as Record<string, unknown>)?.full_name ?? '';
-                      const cachedPhone = (profileData as unknown as Record<string, unknown>)?.phone ?? '';
-                      localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: '', full_name: cachedFull, phone: cachedPhone, role: 'delivery' }));
-                      
-                    } catch (e2) {
-                      console.warn('[DEBUG] failed to cache sms profile after GET fail', e2);
-                    }
-                  }
-                }
-
-              } catch (e) {
-                // ignore parse errors and continue to attempt insert
-              }
+      if (!user?.id) return;
+      try {
+        // Try loading a cached profile first to improve mobile UX
+        if (typeof window !== 'undefined') {
+          const cached = localStorage.getItem('auth_cached_profile_v1');
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              setUserProfile({ full_name: parsed.full_name || '', phone: parsed.phone || '' });
+              setEditProfile({ full_name: parsed.full_name || '', phone: parsed.phone || '' });
+              return;
+            } catch (e) {
+              console.warn('[DeliveryDashboard] failed to parse cached profile', e);
             }
-
-            if (!profileData) {
-              const { error: insertError, data: insertData } = await supabase
-                .from('profiles')
-                .insert({ id: user.id, full_name: '', phone: '' });
-              console.log('[DEBUG] Delivery insert profiles result', { insertError, insertData });
-              if (!insertError) {
-                profileData = { full_name: '', phone: '' };
-              } else {
-                // Insert failed: build a UI fallback from cached profile / sms / user metadata
-                try {
-                  // Do NOT read `auth_cached_profile_v1` as authoritative for display.
-                  // Build a concrete fallback object from SMS session or user metadata.
-                  const fallback: { full_name?: string; phone?: string } = { full_name: '', phone: '' };
-
-                  // Prefer SMS session when available
-                  const smsRaw2 = localStorage.getItem('sms_auth_session');
-                  if (smsRaw2) {
-                    try {
-                      const parsed = JSON.parse(smsRaw2) as unknown;
-                      if (parsed && typeof parsed === 'object') {
-                        const sms2 = parsed as Record<string, unknown>;
-                        const smsName = typeof sms2.fullName === 'string' ? sms2.fullName as string : '';
-                        const smsPhone = typeof sms2.phone === 'string' ? sms2.phone as string : '';
-                        if (smsName) fallback.full_name = smsName;
-                        if (smsPhone) fallback.phone = smsPhone;
-                      }
-                    } catch (e) {
-                      console.warn('[DEBUG] failed to parse sms_auth_session', e);
-                    }
-                  }
-
-                  // Fall back to Supabase user metadata / email
-                  if (!fallback.full_name && !fallback.phone) {
-                    const userMeta = user.user_metadata as Record<string, unknown> | undefined;
-                    const maybePhone = typeof userMeta?.phone === 'string' ? (userMeta.phone as string) : user.email || '';
-                    const maybeFull = typeof userMeta?.full_name === 'string' ? (userMeta.full_name as string) : '';
-                    if (maybeFull) fallback.full_name = maybeFull;
-                    if (maybePhone) fallback.phone = maybePhone;
-                  }
-
-                  if (!fallback.full_name || String(fallback.full_name).trim() === '') {
-                    const p = String(fallback.phone || '');
-                    const last4 = p.replace(/[^0-9]/g, '').slice(-4);
-                    fallback.full_name = last4 ? `Livreur ${last4}` : 'Livreur';
-                  }
-                  profileData = { full_name: fallback.full_name || '', phone: fallback.phone || '' };
-                  try {
-                    localStorage.setItem('auth_cached_profile_v1', JSON.stringify({ id: user.id, email: user.email || '', full_name: profileData.full_name, phone: profileData.phone, role: 'delivery' }));
-                    console.log('[DEBUG] Delivery cached fallback profile to localStorage');
-                  } catch (e) {
-                    console.warn('[DEBUG] failed to cache fallback profile', e);
-                  }
-                } catch (e) {
-                  console.warn('[DEBUG] building fallback profile failed', e);
-                }
-
-                // Log detailed insert error without using `any`
-                const extractErrorMeta = (err: unknown) => {
-                  if (!err || typeof err !== 'object') return { details: undefined as string | undefined, hint: undefined as string | undefined };
-                  const e = err as Record<string, unknown>;
-                  return {
-                    details: typeof e['details'] === 'string' ? (e['details'] as string) : undefined,
-                    hint: typeof e['hint'] === 'string' ? (e['hint'] as string) : undefined,
-                  };
-                };
-                const { details, hint } = extractErrorMeta(insertError);
-                console.error('[DEBUG] Delivery insert error details', {
-                  message: insertError.message,
-                  details,
-                  hint,
-                  code: insertError.code
-                });
-              }
-            }
-          } catch (ex) {
-            console.error('[DEBUG] Exception during Profile insert/fallback', ex);
           }
         }
-        if (profileData) {
-          setUserProfile({
-            full_name: profileData.full_name || '',
-            phone: profileData.phone || ''
-          });
-          setEditProfile({
-            full_name: profileData.full_name || '',
-            phone: profileData.phone || ''
-          });
+
+        // Fallback: fetch profile from backend helper
+        try {
+          const profResp = await getProfileById(user.id).catch(() => null);
+          let profDataObj: ProfileRow | null = null;
+          if (profResp) {
+            // getProfileById may return a wrapper { ok, json } or the profile object directly
+            if (typeof profResp === 'object' && profResp !== null && 'json' in profResp && (profResp as { json: unknown }).json) {
+              const jsonPart = (profResp as { json: unknown }).json;
+              const candidateProfile = (jsonPart as { profile?: ProfileRow }).profile ?? (jsonPart as ProfileRow);
+              if (candidateProfile && typeof candidateProfile === 'object') {
+                profDataObj = {
+                  full_name: (candidateProfile as ProfileRow).full_name ?? null,
+                  phone: (candidateProfile as ProfileRow).phone ?? null
+                };
+              }
+            } else if (typeof profResp === 'object' && profResp !== null) {
+              const maybeUnknown = profResp as unknown;
+              if (maybeUnknown && typeof maybeUnknown === 'object') {
+                const rec = maybeUnknown as Record<string, unknown>;
+                const hasFull = typeof rec['full_name'] === 'string';
+                const hasPhone = typeof rec['phone'] === 'string';
+                if (hasFull || hasPhone) {
+                  profDataObj = {
+                    full_name: hasFull ? String(rec['full_name']) : null,
+                    phone: hasPhone ? String(rec['phone']) : null
+                  };
+                }
+              }
+            }
+          }
+          if (profDataObj && (profDataObj.full_name || profDataObj.phone)) {
+            setUserProfile({ full_name: profDataObj.full_name || '', phone: profDataObj.phone || '' });
+            setEditProfile({ full_name: profDataObj.full_name || '', phone: profDataObj.phone || '' });
+          }
+        } catch (e) {
+          console.warn('[DeliveryDashboard] getProfileById failed', e);
         }
+      } catch (e) {
+        console.warn('[DeliveryDashboard] fetchOrCreateProfile failed', e);
       }
     };
     fetchOrCreateProfile();
   }, [user]);
 
   useEffect(() => {
+    // Initial load when component mounts
+    fetchDeliveries();
+    fetchTransactions();
+
     const channel = supabase
       .channel('orders-changes-delivery')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
@@ -316,7 +213,10 @@ const DeliveryDashboard = () => {
                     // Type-guard the parsed JSON before accessing `.orders`
                     if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
                       setDeliveries([]);
-                      setMyDeliveries((j as { orders: DeliveryOrder[] }).orders);
+                      const ordersFromSms = (j as { orders: DeliveryOrder[] }).orders;
+                      // Ensure we only keep driver-relevant statuses
+                      const filteredSmsOrders = ordersFromSms.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+                      setMyDeliveries(filteredSmsOrders);
                       return;
                     } else if (!resp.ok) {
                       console.warn('[DeliveryDashboard] /api/delivery/my-orders (SMS) returned non-ok status', resp.status, respText || j);
@@ -351,8 +251,11 @@ const DeliveryDashboard = () => {
                             Array.isArray((prodJson as { orders?: unknown }).orders)
                           ) {
                             setDeliveries([]);
-                            setMyDeliveries((prodJson as { orders: DeliveryOrder[] }).orders);
-                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance');
+                            const prodOrders = (prodJson as { orders: DeliveryOrder[] }).orders;
+                            const filteredProdOrders = prodOrders.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+                            setMyDeliveries(filteredProdOrders);
+                            try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(filteredProdOrders)); } catch (e) { /* ignore */ }
+                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance', filteredProdOrders.length);
                             fallbackSucceeded = true;
                           }
                         } catch (e) {
@@ -401,20 +304,19 @@ const DeliveryDashboard = () => {
         .in('status', ['assigned', 'in_delivery', 'delivered'])
         .order('created_at', { ascending: false });
 
-      if (error2) {
-        console.error('[DeliveryDashboard] error fetching myActiveDeliveries:', error2);
-        throw error2;
-      }
+      if (error2) console.warn('[DeliveryDashboard] myActiveDeliveries supabase error', error2);
 
       console.log('[DeliveryDashboard] fetchDeliveries:', { userId: user.id, availableCount: (availableDeliveries || []).length, myActiveCount: (myActiveDeliveries || []).length });
 
       let finalMyDeliveries = (myActiveDeliveries ?? []) as DeliveryOrder[];
+      console.log('[DeliveryDashboard] initial client myActiveDeliveries count:', (finalMyDeliveries || []).length, 'userId:', user?.id);
 
-      // Fallback: if client-side query returned none, try backend endpoint to bypass RLS
-      if ((!finalMyDeliveries || finalMyDeliveries.length === 0) && user?.id) {
+      // If the client-side query returned none (likely RLS) or the user uses SMS auth,
+      // always try the backend endpoint to fetch this user's deliveries.
+      const shouldCallBackend = (!finalMyDeliveries || finalMyDeliveries.length === 0) || Boolean(typeof window !== 'undefined' && localStorage.getItem('sms_auth_session'));
+      if (shouldCallBackend && user?.id) {
         try {
-          console.log('[DeliveryDashboard] myActiveDeliveries empty, calling backend /api/delivery/my-orders fallback');
-          // include auth token if available to help backend log and debug
+          console.log('[DeliveryDashboard] calling backend /api/delivery/my-orders to fetch my deliveries');
           const headers: Record<string,string> = { 'Content-Type': 'application/json' };
           try {
             const sessionResp = await supabase.auth.getSession();
@@ -428,73 +330,57 @@ const DeliveryDashboard = () => {
             body: JSON.stringify({ deliveryPersonId: user.id })
           });
 
-          // Defensive parse: handle 500/empty responses gracefully and log body for debugging
-                    let j: unknown = null;
-                    let respText: string | null = null;
-                    try {
-                      const ct = resp.headers.get('content-type') || '';
-                      if (ct.includes('application/json')) {
-                        j = await resp.json();
-                      } else {
-                        respText = await resp.text();
-                      }
-                    } catch (e) {
-                      console.warn('[DeliveryDashboard] /api/delivery/my-orders fallback parse error:', e);
-                      try { respText = await resp.text(); } catch (e2) { respText = null; }
-                    }
-          
-                    console.log('[DeliveryDashboard] /api/delivery/my-orders response:', resp.status, j ?? respText);
-                    // Type-guard the parsed JSON before accessing `.orders`
-                    if (resp.ok && j && typeof j === 'object' && 'orders' in j && Array.isArray((j as { orders?: unknown }).orders)) {
-                      finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
-                    } else if (!resp.ok) {
-                      console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders non-ok status', resp.status, respText || j);
+          let j: unknown = null;
+          try {
+            const ct = resp.headers.get('content-type') || '';
+            if (ct.includes('application/json')) j = await resp.json();
+            else j = null;
+          } catch (e) {
+            console.warn('[DeliveryDashboard] /api/delivery/my-orders parse error', e);
+          }
 
-                      if (resp.status >= 500) {
-                        // Server error: try production fallback first, only log outcome (no UI toasts)
-                        let fallbackSucceeded = false;
-                        try {
-                          const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ deliveryPersonId: user.id })
-                          });
-                          let prodJson: unknown = null;
-                          try {
-                            const ct2 = prodResp.headers.get('content-type') || '';
-                            if (ct2.includes('application/json')) {
-                              prodJson = await prodResp.json();
-                            } else {
-                              try { prodJson = await prodResp.text(); } catch (e) { prodJson = null; }
-                            }
-                          } catch (e) {
-                            console.warn('[DeliveryDashboard] Prod fallback parse error', e);
-                          }
-                          console.log('[DeliveryDashboard] prod fallback response:', prodResp.status, prodJson);
-                          if (
-                            prodResp.ok &&
-                            prodJson &&
-                            typeof prodJson === 'object' &&
-                            'orders' in (prodJson as Record<string, unknown>) &&
-                            Array.isArray((prodJson as { orders?: unknown }).orders)
-                          ) {
-                            finalMyDeliveries = (prodJson as { orders: DeliveryOrder[] }).orders;
-                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance');
-                            fallbackSucceeded = true;
-                          }
-                        } catch (e) {
-                          console.warn('[DeliveryDashboard] production fallback failed:', e);
-                        }
-
-                        if (!fallbackSucceeded) {
-                          console.warn('[DeliveryDashboard] Unable to load deliveries from local backend or remote instance');
-                        }
-                      }
-                    }
+          console.log('[DeliveryDashboard] backend my-orders response:', resp.status, j);
+          if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
+            finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
+            // ensure only relevant statuses and dedupe
+            finalMyDeliveries = finalMyDeliveries.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+            try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(finalMyDeliveries)); } catch (e) { /* ignore */ }
+            console.log('[DeliveryDashboard] backend /api/delivery/my-orders loaded', finalMyDeliveries.length);
+          } else if (!resp.ok) {
+            console.warn('[DeliveryDashboard] backend /api/delivery/my-orders returned non-ok', resp.status, j);
+          }
         } catch (e) {
-          console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders failed:', e);
+          console.warn('[DeliveryDashboard] backend /api/delivery/my-orders failed', e);
+          // try remote prod fallback (best-effort)
+          try {
+            const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deliveryPersonId: user.id })
+            });
+            const prodJson = prodResp.ok ? await prodResp.json().catch(() => null) : null;
+            if (prodResp.ok && prodJson && typeof prodJson === 'object' && Array.isArray((prodJson as { orders?: unknown }).orders)) {
+              finalMyDeliveries = (prodJson as { orders: DeliveryOrder[] }).orders;
+              try { localStorage.setItem('my_deliveries_cache_v1', JSON.stringify(finalMyDeliveries)); } catch (e) { /* ignore */ }
+            }
+          } catch (e2) { console.warn('[DeliveryDashboard] prod fallback failed', e2); }
         }
       }
+
+      // If still empty, try to load a cached copy to improve mobile UX
+      if ((!finalMyDeliveries || finalMyDeliveries.length === 0) && typeof window !== 'undefined') {
+        try {
+          const cached = localStorage.getItem('my_deliveries_cache_v1');
+          if (cached) finalMyDeliveries = JSON.parse(cached) as DeliveryOrder[];
+        } catch (e) { /* ignore */ }
+      }
+
+      // Filter to only statuses relevant to a delivery person and dedupe by id
+      try {
+        const filtered = (finalMyDeliveries || []).filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+        const deduped: Record<string, DeliveryOrder> = {};
+        for (const o of filtered) deduped[o.id] = o;
+        finalMyDeliveries = Object.values(deduped);
+        console.log('[DeliveryDashboard] finalMyDeliveries after filter/dedupe:', finalMyDeliveries.length, finalMyDeliveries.map(x => ({ id: x.id, status: x.status })));
+      } catch (e) { /* ignore */ }
 
       setDeliveries((availableDeliveries ?? []) as DeliveryOrder[]);
       setMyDeliveries(finalMyDeliveries);

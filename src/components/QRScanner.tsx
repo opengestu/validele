@@ -79,6 +79,13 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
       ro = new ResizeObserver(handler);
       ro.observe(el);
       window.addEventListener('resize', handler);
+      // Also listen to orientation changes which are common on Android devices
+      window.addEventListener('orientationchange', handler);
+      // Some Android browsers report sizes late; schedule a few extra updates
+      // shortly after mount to converge to the final size.
+      try { window.setTimeout(update, 200); } catch (e) { /* ignore */ }
+      try { window.setTimeout(update, 600); } catch (e) { /* ignore */ }
+      try { window.setTimeout(update, 1200); } catch (e) { /* ignore */ }
     } catch (e) {
       // ResizeObserver may not be available in some environments; ignore
     }
@@ -86,6 +93,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
       if (debounce) window.clearTimeout(debounce);
       if (ro) ro.disconnect();
       try { window.removeEventListener('resize', handler); } catch (e) { /* ignore */ }
+      try { window.removeEventListener('orientationchange', handler); } catch (e) { /* ignore */ }
     };
   }, [isMobile]);
   // Initialize and start the scanner once. We compute the qrbox from the
@@ -112,12 +120,17 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
         }
 
         html5Qr.current = new Html5Qrcode(divId);
-        const cameras = await Html5Qrcode.getCameras();
+          let cameras = [] as { id: string; label?: string }[];
+          try {
+            cameras = await Html5Qrcode.getCameras();
+          } catch (e) {
+            console.debug('[QR] getCameras failed:', e);
+          }
+          console.debug('[QR] cameras detected:', cameras);
         if (!isMounted || !active) return;
         const cameraId = cameras && cameras[0] && cameras[0].id;
         if (!cameraId) {
-          onError('Aucune caméra détectée');
-          return;
+          console.debug('[QR] no cameraId found, will try facingMode fallback');
         }
 
         const el = containerRef.current;
@@ -132,22 +145,108 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
             return;
           }
 
+          type StartConfigLocal = {
+            fps: number;
+            qrbox: number;
+            videoConstraints?: MediaTrackConstraints | { facingMode?: string; width?: { ideal: number } };
+          };
           const inst = html5Qr.current;
-          await inst.start(
-            cameraId,
-            {
-              fps: 15,
-              qrbox: startQrbox,
-              videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } }
-            },
-            (decodedText) => {
-              if (scanPausedRef.current) return;
-              setScanPaused(true);
-              onScan(decodedText);
-              setTimeout(() => setScanPaused(false), 2000);
-            },
-            (err) => { console.debug('[QR] scan error:', err); }
-          );
+          const startConfig: StartConfigLocal = {
+            fps: 15,
+            qrbox: startQrbox,
+            videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } }
+          };
+
+          // Try with enumerated cameraId first; fall back to facingMode object
+          try {
+            if (cameraId) {
+              await inst.start(
+                cameraId,
+                startConfig,
+                (decodedText) => {
+                  if (scanPausedRef.current) return;
+                  setScanPaused(true);
+                  onScan(decodedText);
+                  setTimeout(() => setScanPaused(false), 2000);
+                },
+                (err) => { console.debug('[QR] scan error:', err); }
+              );
+            } else {
+              // Some Android browsers don't return camera IDs reliably; use facingMode fallback
+              const fallbackCamera: MediaTrackConstraints = { facingMode: 'environment' };
+              await inst.start(
+                fallbackCamera,
+                startConfig,
+                (decodedText) => {
+                  if (scanPausedRef.current) return;
+                  setScanPaused(true);
+                  onScan(decodedText);
+                  setTimeout(() => setScanPaused(false), 2000);
+                },
+                (err) => { console.debug('[QR] scan error (facingMode):', err); }
+              );
+            }
+          } catch (errStart) {
+            console.error('[QR] start() failed', errStart);
+            // Provide a more helpful error to the UI (permissions/HTTPS hints)
+            let hint = '';
+            try {
+              const msg = String(errStart || '');
+              if (msg.includes('NotAllowedError') || msg.includes('PermissionDeniedError')) hint = "Permission caméra refusée";
+              else if (msg.includes('NotFoundError')) hint = 'Aucune caméra détectée';
+              else if (msg.includes('NotReadableError')) hint = 'La caméra est utilisée par une autre application';
+            } catch (e) { /* ignore */ }
+            const userMessage = hint || 'Impossible d\'initialiser la caméra. Vérifiez les permissions et servez la page en HTTPS.';
+            onError(new Error(userMessage + ' — ' + (errStart instanceof Error ? errStart.message : String(errStart))));
+          }
+          // Mobile devices (particularly Android) may report layout changes
+          // after the camera stream starts. If the container size changes
+          // significantly right after start, attempt a safe one-time restart
+          // to realign the scanner's qrbox to the visual frame.
+          if (isMobileRef.current) {
+            (async () => {
+              try {
+                const restartAttempted = { val: false } as { val: boolean };
+                await new Promise(r => setTimeout(r, 500));
+                if (!isMounted || !active || !html5Qr.current) return;
+                const el2 = containerRef.current;
+                if (!el2) return;
+                const w2 = el2.clientWidth || (isMobileRef.current ? 360 : 600);
+                const h2 = el2.clientHeight || w2;
+                const recalculated = Math.max(120, Math.floor(Math.min(w2, h2) * 0.92));
+                if (Math.abs(recalculated - startQrbox) > 8 && !restartAttempted.val) {
+                  restartAttempted.val = true;
+                  try {
+                    const inst2 = html5Qr.current;
+                    if (inst2) {
+                      try { await inst2.stop(); } catch (e) { /* ignore */ }
+                      try { inst2.clear(); } catch (e) { /* ignore */ }
+                    }
+                    if (!isMounted || !active) return;
+                    html5Qr.current = new Html5Qrcode(divId);
+                    const inst3 = html5Qr.current;
+                    if (!inst3) return;
+                    await inst3.start(
+                      cameraId,
+                      { fps: 15, qrbox: recalculated, videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } } },
+                      (decodedText) => {
+                        if (scanPausedRef.current) return;
+                        setScanPaused(true);
+                        onScan(decodedText);
+                        setTimeout(() => setScanPaused(false), 2000);
+                      },
+                      (err) => console.debug('[QR] scan error:', err)
+                    );
+                  } catch (e) {
+                    // ignore restart failures; continue with existing instance
+                    console.warn('[QR] mobile restart attempt failed', e);
+                  }
+                }
+              } catch (e) {
+                /* ignore */
+              }
+            })();
+          }
         } catch (startErr) {
           const msg = String(startErr || '');
           if ((msg.includes('Cannot clear while scan is ongoing') || msg.includes('clear while scan')) && isMounted && active) {
@@ -285,7 +384,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
       <div
         id={divId}
         ref={containerRef}
-        style={{ width: '100%', maxWidth: isMobile ? 360 : 600, aspectRatio: '1', margin: '12px auto' }}
+        style={{ width: '100%', maxWidth: isMobile ? '100%' : 600, aspectRatio: '1', margin: '12px auto' }}
       >
         <div className="qr-overlay"><div className="scan-frame" /></div>
       </div>
@@ -915,29 +1014,41 @@ const QRScanner = () => {
         console.log('QRScanner: confirmation livraison, id =', validationResult.id);
         console.log('QRScanner: vendor_id =', validationResult.vendor_id);
         
-        // 1) Marquer la commande comme delivered
-        const { error: updateError, data: updatedOrders } = await supabase
-          .from('orders')
-          .update({ 
-            status: 'delivered',
-            delivered_at: new Date().toISOString()
-          })
-          .eq('id', validationResult.id as string)
-          .select();
-        
-        console.log('QRScanner: résultat update delivered', { error: updateError, data: updatedOrders });
-        
-        if (updateError) {
-          console.error('QRScanner: ERREUR mise à jour statut delivered:', updateError);
-          throw new Error(`Erreur mise à jour statut: ${updateError.message}`);
+        // 1) Marquer la commande comme delivered via backend (évite RLS côté client)
+        let updatedOrder: Order | null = null;
+        try {
+          const resp = await fetch(apiUrl('/api/orders/mark-delivered'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: validationResult.id, deliveredBy: user?.id })
+          });
+          const json = await resp.json().catch(() => ({}));
+          console.log('QRScanner: mark-delivered response', resp.status, json);
+          if (!resp.ok || !json || !json.success) {
+            // If backend failed, fall back to client update (best-effort)
+            console.warn('QRScanner: backend mark-delivered failed, attempting client-side update as fallback', json);
+            const { error: updateError, data: updatedOrders } = await supabase
+              .from('orders')
+              .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+              .eq('id', validationResult.id as string)
+              .select();
+            if (updateError) {
+              console.error('QRScanner: ERREUR mise à jour statut delivered (fallback):', updateError);
+              throw new Error(json?.error || updateError.message || 'Erreur mise à jour statut');
+            }
+            if (!updatedOrders || updatedOrders.length === 0) {
+              throw new Error('Commande non mise à jour - aucune donnée retournée. Vérifiez les politiques RLS.');
+            }
+            updatedOrder = updatedOrders[0];
+          } else {
+            // Backend returns success; updated info may be in json.updated or json.order
+            updatedOrder = json.order || json.updated || { id: validationResult.id, status: 'delivered' };
+          }
+        } catch (e) {
+          console.error('QRScanner: erreur lors du mark-delivered backend+fallback flow:', e);
+          throw e;
         }
-        
-        if (!updatedOrders || updatedOrders.length === 0) {
-          throw new Error('Commande non mise à jour - aucune donnée retournée. Vérifiez les politiques RLS.');
-        }
-        
-        const updatedOrder = updatedOrders[0];
-        console.log('QRScanner: ✅ Statut mis à jour avec succès - Commande livrée:', updatedOrder.status);
+        console.log('QRScanner: ✅ Statut mis à jour avec succès - Commande livrée:', updatedOrder?.status || 'delivered');
 
         // Notifier vendeur + acheteur que la livraison est terminée
         notifyDeliveryCompleted(
@@ -978,6 +1089,8 @@ const QRScanner = () => {
         setIsConfirmingDelivery(false);
         // bump session to instruct scanner to reset its internal 'hasScanned' state
         setScanSessionId(s => s + 1);
+        // Return to delivery dashboard so the driver sees the updated 'Terminé' tab
+        try { navigate('/delivery'); } catch (e) { /* ignore */ }
       } catch (error: unknown) {
         let errorMessage = 'Erreur inconnue';
         if (error instanceof Error) {
