@@ -1,3 +1,5 @@
+// ...existing code...
+
 // Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)
 app.post('/api/orders/search', async (req, res) => {
   try {
