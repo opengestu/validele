@@ -2681,16 +2681,58 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       updates.delivery_person_id = deliveryPersonId;
     }
 
-    const { error: updateErr } = await supabase
-      .from('orders')
-      .update(updates)
-      .eq('id', orderId);
-    if (updateErr) {
-      console.error('[MARK-IN-DELIVERY] Erreur update order:', updateErr);
+    // Tentative d'update robuste : si une colonne manque dans le schéma (PGRST204),
+    // on supprime les clés problématiques et on réessaie.
+    async function safeUpdateOrder(id, updateObj) {
+      try {
+        const { error } = await supabase.from('orders').update(updateObj).eq('id', id);
+        if (!error) return { ok: true, used: updateObj, removed: [] };
+
+        const msg = String(error?.message || '');
+        console.error('[MARK-IN-DELIVERY] Première tentative update returned error:', error);
+
+        // Detecte l'erreur PostgREST sur colonne manquante
+        const missingCols = [];
+        const regex = /Could not find the '(.+?)' column/g;
+        let m;
+        while ((m = regex.exec(msg)) !== null) {
+          missingCols.push(m[1]);
+        }
+
+        if (missingCols.length === 0) {
+          // Si ce n'est pas une erreur de colonne manquante, retour d'erreur
+          return { ok: false, error };
+        }
+
+        // Supprimer les colonnes manquantes des updates et réessayer
+        const cleaned = { ...updateObj };
+        for (const col of missingCols) {
+          if (col in cleaned) {
+            delete cleaned[col];
+          }
+        }
+        if (Object.keys(cleaned).length === 0) {
+          return { ok: false, error, removed: missingCols };
+        }
+
+        const { error: retryErr } = await supabase.from('orders').update(cleaned).eq('id', id);
+        if (!retryErr) return { ok: true, used: cleaned, removed: missingCols };
+
+        console.error('[MARK-IN-DELIVERY] Retry update failed:', retryErr);
+        return { ok: false, error: retryErr, removed: missingCols };
+      } catch (e) {
+        console.error('[MARK-IN-DELIVERY] safeUpdateOrder exception:', e);
+        return { ok: false, exception: e };
+      }
+    }
+
+    const safeRes = await safeUpdateOrder(orderId, updates);
+    if (!safeRes.ok) {
+      console.error('[MARK-IN-DELIVERY] Erreur update order finale:', safeRes.error || safeRes.exception);
       return res.status(500).json({ 
         success: false, 
         error: 'update_failed',
-        details: updateErr.message 
+        details: (safeRes.error && safeRes.error.message) ? safeRes.error.message : String(safeRes.exception || safeRes.error)
       });
     }
 
@@ -2723,7 +2765,8 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     res.json({ 
       success: true, 
       orderId, 
-      updated: updates,
+      updated: safeRes.used,
+      removedColumns: safeRes.removed || [],
       message: 'Livraison démarrée avec succès' 
     });
   } catch (err) {
