@@ -1595,7 +1595,21 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
       `)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json({ success: true, orders: data });
+
+    // Debug logs to help understand why some orders may not be returned to admin UI
+    try {
+      const count = Array.isArray(data) ? data.length : 0;
+      console.log('[ADMIN] /api/admin/orders fetched count:', count);
+      if (process.env.DEBUG === 'true') {
+        console.log('[ADMIN] /api/admin/orders sample rows:', JSON.stringify((data || []).slice(0, 10)));
+      }
+    } catch (e) {
+      console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
+    }
+
+    // Include debug info in the response when DEBUG environment flag is enabled (admin-only route)
+    const debugPayload = (process.env.DEBUG === 'true') ? { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } : undefined;
+    return res.json(Object.assign({ success: true, orders: data }, debugPayload ? { debug: debugPayload } : {}));
   } catch (error) {
     console.error('[ADMIN] Erreur list orders:', error);
     res.status(500).json({ success: false, error: String(error) });
