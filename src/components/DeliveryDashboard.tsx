@@ -295,13 +295,78 @@ const DeliveryDashboard = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ deliveryPersonId: user.id })
           });
-          const j = await resp.json();
-          console.log('[DeliveryDashboard] /api/delivery/my-orders (SMS) response:', resp.status, j);
-          if (resp.ok && j && Array.isArray(j.orders)) {
-            setDeliveries([]);
-            setMyDeliveries(j.orders as DeliveryOrder[]);
-            return;
-          }
+
+          // Defensive parse and logging
+                    let j: unknown = null;
+                    let respText: string | null = null;
+                    try {
+                      const ct = resp.headers.get('content-type') || '';
+                      if (ct.includes('application/json')) {
+                        j = await resp.json();
+                      } else {
+                        respText = await resp.text();
+                      }
+                    } catch (parseErr) {
+                      console.warn('[DeliveryDashboard] /api/delivery/my-orders (SMS) parse error:', parseErr);
+                      try { respText = await resp.text(); } catch (e2) { respText = null; }
+                    }
+          
+                    console.log('[DeliveryDashboard] /api/delivery/my-orders (SMS) response:', resp.status, j ?? respText);
+          
+                    // Type-guard the parsed JSON before accessing `.orders`
+                    if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
+                      setDeliveries([]);
+                      setMyDeliveries((j as { orders: DeliveryOrder[] }).orders);
+                      return;
+                    } else if (!resp.ok) {
+                      console.warn('[DeliveryDashboard] /api/delivery/my-orders (SMS) returned non-ok status', resp.status, respText || j);
+
+                      if (resp.status >= 500) {
+                        // Server error: try production fallback *first* and log outcome (no toasts shown)
+                        let fallbackSucceeded = false;
+                        try {
+                          console.log('[DeliveryDashboard] Attempting production fallback to https://validele.onrender.com/api/delivery/my-orders');
+                          const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ deliveryPersonId: user.id })
+                          });
+                          let prodJson: unknown = null;
+                          try {
+                            const ct2 = prodResp.headers.get('content-type') || '';
+                            if (ct2.includes('application/json')) {
+                              prodJson = await prodResp.json();
+                            } else {
+                              try { prodJson = await prodResp.text(); } catch (e) { prodJson = null; }
+                            }
+                          } catch (e) {
+                            console.warn('[DeliveryDashboard] Prod fallback parse error', e);
+                          }
+                          console.log('[DeliveryDashboard] prod fallback response:', prodResp.status, prodJson);
+                          if (
+                            prodResp.ok &&
+                            prodJson &&
+                            typeof prodJson === 'object' &&
+                            'orders' in (prodJson as Record<string, unknown>) &&
+                            Array.isArray((prodJson as { orders?: unknown }).orders)
+                          ) {
+                            setDeliveries([]);
+                            setMyDeliveries((prodJson as { orders: DeliveryOrder[] }).orders);
+                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance');
+                            fallbackSucceeded = true;
+                          }
+                        } catch (e) {
+                          console.warn('[DeliveryDashboard] production fallback failed:', e);
+                        }
+
+                        if (!fallbackSucceeded) {
+                          console.warn('[DeliveryDashboard] Unable to load deliveries from local backend or remote instance');
+                        }
+                      } else {
+                        console.warn('[DeliveryDashboard] Delivery fetch returned non-ok status', resp.status);
+                      }
+                      // continue to client-side fetch fallback
+                    }
         } catch (e) {
           console.warn('[DeliveryDashboard] backend /api/delivery/my-orders (SMS) failed:', e);
           // continue to try client-side fetch as fallback
@@ -352,8 +417,8 @@ const DeliveryDashboard = () => {
           // include auth token if available to help backend log and debug
           const headers: Record<string,string> = { 'Content-Type': 'application/json' };
           try {
-            const session = await supabase.auth.getSession();
-            const token = session?.data?.session?.access_token || session?.session?.access_token || null;
+            const sessionResp = await supabase.auth.getSession();
+            const token = sessionResp?.data?.session?.access_token ?? null;
             if (token) headers['Authorization'] = `Bearer ${token}`;
           } catch (e) { /* ignore */ }
 
@@ -384,6 +449,47 @@ const DeliveryDashboard = () => {
                       finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
                     } else if (!resp.ok) {
                       console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders non-ok status', resp.status, respText || j);
+
+                      if (resp.status >= 500) {
+                        // Server error: try production fallback first, only log outcome (no UI toasts)
+                        let fallbackSucceeded = false;
+                        try {
+                          const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ deliveryPersonId: user.id })
+                          });
+                          let prodJson: unknown = null;
+                          try {
+                            const ct2 = prodResp.headers.get('content-type') || '';
+                            if (ct2.includes('application/json')) {
+                              prodJson = await prodResp.json();
+                            } else {
+                              try { prodJson = await prodResp.text(); } catch (e) { prodJson = null; }
+                            }
+                          } catch (e) {
+                            console.warn('[DeliveryDashboard] Prod fallback parse error', e);
+                          }
+                          console.log('[DeliveryDashboard] prod fallback response:', prodResp.status, prodJson);
+                          if (
+                            prodResp.ok &&
+                            prodJson &&
+                            typeof prodJson === 'object' &&
+                            'orders' in (prodJson as Record<string, unknown>) &&
+                            Array.isArray((prodJson as { orders?: unknown }).orders)
+                          ) {
+                            finalMyDeliveries = (prodJson as { orders: DeliveryOrder[] }).orders;
+                            console.log('[DeliveryDashboard] Prod fallback succeeded: orders loaded from remote instance');
+                            fallbackSucceeded = true;
+                          }
+                        } catch (e) {
+                          console.warn('[DeliveryDashboard] production fallback failed:', e);
+                        }
+
+                        if (!fallbackSucceeded) {
+                          console.warn('[DeliveryDashboard] Unable to load deliveries from local backend or remote instance');
+                        }
+                      }
                     }
         } catch (e) {
           console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders failed:', e);
@@ -394,7 +500,7 @@ const DeliveryDashboard = () => {
       setMyDeliveries(finalMyDeliveries);
     } catch (error) {
       console.error('Erreur lors du chargement des livraisons:', error);
-      toast({ title: 'Erreur', description: 'Impossible de charger les livraisons. Vérifiez votre connexion.', variant: 'destructive' });
+      console.warn('Impossible de charger les livraisons. Vérifiez votre connexion.');
     } finally {
       setLoading(false);
     }
@@ -680,7 +786,7 @@ const DeliveryDashboard = () => {
               )}
               <Button
                 className="w-full bg-green-500 hover:bg-green-600 text-white"
-                onClick={() => navigate(`/scanner?orderId=${delivery.id}`)}
+                onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}&autoStart=1`)}
               >
                 <QrCode className="h-4 w-4 mr-2" />
                 Marquer livré

@@ -93,7 +93,11 @@ module.exports = {
   notifyDeliveryCompleted,
   notifyBuyerOrderReady,
   notifyBuyerPaymentFailed,
-  sendPushNotificationToUser
+  sendPushNotificationToUser,
+  // Exporter une API SMS simple attendue par le serveur
+  sendSMS: sendD7SMSNotify,
+  // Expose également la fonction originale si besoin
+  sendD7SMSNotify
 };
 
 /**
@@ -343,5 +347,7 @@ module.exports = {
   notifyDeliveryCompleted,
   notifyBuyerOrderReady,
   notifyBuyerPaymentFailed,
-  sendPushNotificationToUser
+  sendPushNotificationToUser,
+  sendSMS: sendD7SMSNotify,
+  sendD7SMSNotify
 };

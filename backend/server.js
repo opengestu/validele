@@ -200,6 +200,37 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
 
+// Admin: test SMS sending (POST JSON { to, text }) or GET with query params
+app.all('/api/admin/test-sms', async (req, res) => {
+  try {
+    const method = req.method.toUpperCase();
+    const to = (method === 'GET') ? req.query.to : (req.body && req.body.to);
+    const text = (method === 'GET') ? req.query.text : (req.body && req.body.text);
+    if (!to || !text) {
+      return res.status(400).json({ success: false, error: 'to and text required' });
+    }
+
+    console.log('[ADMIN TEST SMS] to:', String(to).slice(0, 40), 'text:', String(text).slice(0, 160));
+
+    if (!notificationService || typeof notificationService.sendSMS !== 'function') {
+      console.error('[ADMIN TEST SMS] notificationService.sendSMS not available');
+      return res.status(500).json({ success: false, error: 'notificationService.sendSMS not available on server' });
+    }
+
+    try {
+      const result = await notificationService.sendSMS(String(to), String(text));
+      console.log('[ADMIN TEST SMS] sendSMS result:', result);
+      return res.json({ success: true, result });
+    } catch (e) {
+      console.error('[ADMIN TEST SMS] sendSMS exception:', e);
+      return res.status(500).json({ success: false, error: String(e) });
+    }
+  } catch (err) {
+    console.error('[ADMIN TEST SMS] handler error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+});
+
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
 async function deleteProductHandler(req, res) {
   try {

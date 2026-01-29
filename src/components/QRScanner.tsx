@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info, Loader2 } from 'lucide-react';
 import valideLogo from '@/assets/validel-logo.png';
@@ -39,93 +39,256 @@ type Order = {
 type ValidationResult = Order & { status: 'valid'|'invalid'|string; timestamp: string; error?: string; code?: string };
 
 
-function Html5QrcodeReact({ onScan, onError }) {
+function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onScan: (s: string) => void; onError: (e: unknown) => void; resetSignal?: number; active?: boolean }) {
   const divId = 'qr-reader-react';
   const html5Qr = useRef<Html5Qrcode | null>(null);
   const [scanPaused, setScanPaused] = useState(false);
+  const scanPausedRef = useRef<boolean>(scanPaused);
+  useEffect(() => { scanPausedRef.current = scanPaused; }, [scanPaused]);
   // Détection mobile
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent);
-  const qrboxSize = isMobile ? 140 : 200;
+  const isMobileRef = useRef<boolean>(isMobile);
+
+  // Measure the container and compute a proportional qrbox size so the
+  // scanning box stays inside the visible frame and scales with layout.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // computed size used for the visual overlay. Start with a reasonable
+  // default but compute a stable size based on the container (92% of
+  // the smaller dimension so the visual frame fills the rounded square).
+  const [computedQrbox, setComputedQrbox] = useState<number>(isMobile ? 220 : 420);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const update = () => {
+      const w = el.clientWidth || (isMobileRef.current ? 360 : 600);
+      const h = el.clientHeight || w;
+      // Use 92% of the smaller dimension so the scan-frame (CSS uses 92%)
+      const raw = Math.floor(Math.min(w, h) * 0.92);
+      const size = Math.max(120, Math.min(raw, Math.floor(Math.max(w, h))));
+      // Only update when change is meaningful to avoid tiny oscillations
+      setComputedQrbox(prev => (Math.abs(prev - size) > 8 ? size : prev));
+    };
+    const handler = () => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(update, 120);
+    };
+    update();
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(handler);
+      ro.observe(el);
+      window.addEventListener('resize', handler);
+    } catch (e) {
+      // ResizeObserver may not be available in some environments; ignore
+    }
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      if (ro) ro.disconnect();
+      try { window.removeEventListener('resize', handler); } catch (e) { /* ignore */ }
+    };
+  }, [isMobile]);
+  // Initialize and start the scanner once. We compute the qrbox from the
+  // container at start so the scanner matches the visual frame, but we do
+  // NOT re-run the entire start sequence on every tiny resize to avoid
+  // flicker and instability. The visual overlay (`computedQrbox`) still
+  // updates for the UI, but the scanner remains stable until unmount.
+  // Start/stop scanner on mount and when resetSignal changes. This prevents
+  // continuous remounts from the parent and allows controlled resets.
   useEffect(() => {
     let isMounted = true;
-    try {
-      html5Qr.current = new Html5Qrcode(divId);
-      Html5Qrcode.getCameras().then(cameras => {
-        if (!isMounted) return;
+    const isStarting = { current: false } as { current: boolean };
+
+    const doStart = async () => {
+      if (!active || isStarting.current) return;
+      isStarting.current = true;
+      try {
+        // stop/clear any existing instance
+        if (html5Qr.current) {
+          const inst = html5Qr.current;
+          try { await inst.stop(); } catch (e) { /* ignore */ }
+          try { inst.clear(); } catch (e) { /* ignore */ }
+          html5Qr.current = null;
+        }
+
+        html5Qr.current = new Html5Qrcode(divId);
+        const cameras = await Html5Qrcode.getCameras();
+        if (!isMounted || !active) return;
         const cameraId = cameras && cameras[0] && cameras[0].id;
         if (!cameraId) {
           onError('Aucune caméra détectée');
           return;
         }
-        if (!html5Qr.current) {
-          onError('Scanner non initialisé');
-          return;
-        }
-        html5Qr.current.start(
-          cameraId,
-          {
-            fps: 20,
-            qrbox: qrboxSize,
-            videoConstraints: {
-              facingMode: "environment",
-              width: { ideal: 640 }
-            }
-          },
-          (decodedText) => {
-            if (scanPaused) return;
-            setScanPaused(true);
-            onScan(decodedText);
-            setTimeout(() => setScanPaused(false), 2000); // 2s de pause
-          },
-          (err) => {
-            // Ignore les erreurs de scan mais logguer pour debug
-            console.debug('[QR] scan error:', err);
-          }
-        ).catch(err => {
-          onError('Erreur lors de l\'accès à la caméra : ' + err);
-        });
-      }).catch(err => {
-        onError('Erreur lors de la détection de la caméra : ' + err);
-      });
-    } catch (err) {
-      onError('Erreur critique lors de l\'initialisation du scanner : ' + err);
-    }
-    return () => {
-      isMounted = false;
-      if (html5Qr.current) {
+
+        const el = containerRef.current;
+        const w = el ? (el.clientWidth || (isMobileRef.current ? 360 : 600)) : (isMobileRef.current ? 360 : 600);
+        const h = el ? (el.clientHeight || w) : w;
+        const startQrbox = Math.max(120, Math.floor(Math.min(w, h) * 0.92));
+        setComputedQrbox(prev => (Math.abs(prev - startQrbox) > 8 ? startQrbox : prev));
+
         try {
-          html5Qr.current.stop()
-            .then(() => {
-              try { html5Qr.current?.clear(); } catch (e) { console.debug('[QR] clear after stop error:', e); }
-            })
-            .catch(() => {
-              try { html5Qr.current?.clear(); } catch (e) { console.debug('[QR] clear after stop (catch) error:', e); }
-            });
-        } catch (e) {
-          try { html5Qr.current?.clear(); } catch (err) { console.debug('[QR] clear in outer catch error:', err); }
+          if (!isMounted || !active || !html5Qr.current) {
+            onError(new Error('L\'initialisation du scanner a été annulée'));
+            return;
+          }
+
+          const inst = html5Qr.current;
+          await inst.start(
+            cameraId,
+            {
+              fps: 15,
+              qrbox: startQrbox,
+              videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } }
+            },
+            (decodedText) => {
+              if (scanPausedRef.current) return;
+              setScanPaused(true);
+              onScan(decodedText);
+              setTimeout(() => setScanPaused(false), 2000);
+            },
+            (err) => { console.debug('[QR] scan error:', err); }
+          );
+        } catch (startErr) {
+          const msg = String(startErr || '');
+          if ((msg.includes('Cannot clear while scan is ongoing') || msg.includes('clear while scan')) && isMounted && active) {
+            try {
+              const inst = html5Qr.current;
+              if (inst) {
+                try { await inst.stop(); } catch (e) { /* ignore */ }
+                try { inst.clear(); } catch (e) { /* ignore */ }
+              }
+              if (!isMounted || !active) { onError(new Error('L\'initialisation du scanner a été annulée')); return; }
+              html5Qr.current = new Html5Qrcode(divId);
+              const inst2 = html5Qr.current;
+              if (!inst2) { onError(new Error('Impossible de créer une instance du scanner')); return; }
+              await inst2.start(
+                cameraId,
+                { fps: 15, qrbox: startQrbox, videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } } },
+                (decodedText) => {
+                  if (scanPausedRef.current) return;
+                  setScanPaused(true);
+                  onScan(decodedText);
+                  setTimeout(() => setScanPaused(false), 2000);
+                },
+                (err) => console.debug('[QR] scan error:', err)
+              );
+              return;
+            } catch (e) {
+              // fall through
+            }
+          }
+          const friendly = startErr instanceof Error ? startErr : new Error(String(startErr));
+          onError(friendly);
         }
+      } finally {
+        isStarting.current = false;
       }
     };
-  }, [onScan, onError, qrboxSize, scanPaused]);
+
+    const doStop = async () => {
+      const inst = html5Qr.current;
+      if (!inst) return;
+      try { await inst.stop(); } catch (e) { /* ignore */ }
+      try { inst.clear(); } catch (e) { /* ignore */ }
+      try { html5Qr.current = null; } catch (e) { /* ignore */ }
+    };
+
+    if (active) {
+      doStart();
+    }
+
+    return () => {
+      isMounted = false;
+      doStop();
+    };
+  }, [onScan, onError, resetSignal, active]);
   return (
     <>
       <style>{`
-        /* Video styling */
+        /* Container with rounded corners and subtle shadow */
+        #${divId} {
+          display:flex;
+          justify-content:center;
+          align-items:center;
+          position:relative;
+          width:100%;
+          max-width:600px;
+          margin:12px auto;
+          aspect-ratio: 1 / 1;
+          border-radius:28px;
+          overflow:hidden;
+          background:#000;
+          box-shadow:0 20px 48px rgba(16,24,40,0.10);
+        }
+
+        /* Video fills the container and inherits the rounded look via overflow:hidden */
         #${divId} video {
           object-fit: cover !important;
+          object-position: center center !important;
           width: 100% !important;
-          height: auto !important;
-          max-width: 360px;
-          margin: 0 auto;
-          border-radius: 16px;
-          box-shadow: 0 10px 30px rgba(79, 70, 229, 0.15);
+          height: 100% !important;
+          display:block;
+          background-color:#000;
+          -webkit-border-radius: inherit;
+          border-radius: inherit;
         }
-        #${divId} { display: flex; justify-content: center; align-items: center; position: relative; }
+
+        /* Ensure any canvas or html5-qrcode injected elements inherit rounded corners */
+        #${divId} canvas,
+        #${divId} [class*="html5-qrcode"],
+        #${divId} .qrbox,
+        #${divId} .html5-qrcode-video {
+          -webkit-border-radius: inherit !important;
+          border-radius: inherit !important;
+          overflow: hidden !important;
+        }
+
+        /* Remove default library borders/boxes so our rounded scan-frame is the visual focus */
+        #${divId} .qrbox,
+        #${divId} .html5-qrcode-region {
+          box-shadow: none !important;
+          border: none !important;
+        }
+
+        /* Overlay centered scan frame */
+        #${divId} .qr-overlay{
+          position:absolute;
+          inset:0;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          pointer-events:none;
+        }
+        #${divId} .scan-frame{
+          /* Make the visual frame large and mostly transparent so the camera
+             feed is visible inside the frame. Keep it proportional to the
+             container so the clickable area is obvious to the user. */
+          width:92%;
+          aspect-ratio:1;
+          border-radius:28px;
+          box-shadow: inset 0 0 0 2px rgba(255,255,255,0.06);
+          position:relative;
+          display:block;
+          margin:auto;
+          background: transparent;
+        }
+
+        /* Optional: subtle inner border for the scanning area */
+        #${divId} .scan-frame::after{
+          content:'';
+          position:absolute;
+          inset:0;
+          border-radius:20px;
+          box-shadow: 0 0 0 2px rgba(255,255,255,0.06) inset;
+        }
       `}</style>
       <div
         id={divId}
-        style={{ width: isMobile ? 240 : 360, margin: '0 auto' }}
-      />
+        ref={containerRef}
+        style={{ width: '100%', maxWidth: isMobile ? 360 : 600, aspectRatio: '1', margin: '12px auto' }}
+      >
+        <div className="qr-overlay"><div className="scan-frame" /></div>
+      </div>
     </>
   );
 }
@@ -138,23 +301,56 @@ function QRScanSection({
   handleConfirmDelivery,
   resetScan,
   isConfirmingDelivery,
-  matchInfo
+  matchInfo,
+  scanSessionId,
+  active
 }) {
   // matchInfo: { type: 'order_code'|'qr_code'|'partial', code: string } | null
   const [cameraError, setCameraError] = useState(false);
   const [cameraErrorMsg, setCameraErrorMsg] = useState('');
   const [hasScanned, setHasScanned] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
-  const handleScan = (decodedText) => {
+  // When scanSessionId increments, reset internal scanner state so scanning resumes
+  useEffect(() => {
+    setHasScanned(false);
+  }, [scanSessionId]);
+
+  const handleScan = (decodedText: string) => {
     console.log('handleScan appelé, decodedText =', decodedText);
     setScannedCode(decodedText);
     handleScanQR(decodedText, () => setHasScanned(false));
     setHasScanned(true); // Masquer le scanner dès qu'un code est détecté
-  };
-  const handleError = (err) => {
+  }; 
+  const handleError = (err: unknown) => {
+    // Try to produce a helpful, localized message based on the error type
+    let name = '';
+    if (typeof err === 'string') name = err;
+    else if (err && typeof err === 'object' && 'name' in err && typeof (err as { name?: unknown }).name === 'string') name = (err as { name?: string }).name ?? '';
+
+    let msg = 'Erreur d\'accès à la caméra. Vérifiez les permissions ou réessayez.';
+
+    try {
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        msg = "Permission caméra refusée. Autorisez la caméra via l'icône cadenas (Paramètres du site) puis rechargez la page.";
+      } else if (name === 'NotFoundError') {
+        msg = "Aucune caméra détectée. Vérifiez que votre appareil a une caméra et qu'elle est bien connectée.";
+      } else if (name === 'NotReadableError') {
+        msg = "La caméra est utilisée par une autre application. Fermez l'application et réessayez.";
+      } else if (typeof location !== 'undefined' && location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        msg = "La caméra nécessite HTTPS. Servez la page en https:// ou utilisez localhost.";
+      } else if (typeof err === 'string') {
+        msg = err;
+      } else if (err && typeof err === 'object' && 'message' in err && typeof (err as { message?: unknown }).message === 'string') {
+        msg = (err as { message?: string }).message ?? msg;
+      }
+    } catch (e) {
+      // fallback to generic message
+    }
+
     setCameraError(true);
-    setCameraErrorMsg(typeof err === 'string' ? err : 'Erreur d\'accès à la caméra. Vérifiez les permissions ou réessayez.');
-  };
+    setCameraErrorMsg(msg);
+  }; 
 
   // Détermine si le scan est validé
   const scanValid = validationResult && validationResult.status === 'valid';
@@ -179,15 +375,11 @@ function QRScanSection({
               <div className="mb-4 text-left bg-white/60 p-3 rounded-md">
                 <p className="text-sm font-medium text-gray-800">✅ Commande {matchInfo.type === 'order_code' ? matchInfo.code : 'trouvée'}</p>
                 <p className="text-xs text-gray-600 mt-1">Veuillez maintenant scanner le <strong>QR code sécurisé</strong> présenté par le client pour valider la livraison.</p>
-                <div className="mt-3">
-                  <Button variant="outline" onClick={() => { setHasScanned(false); resetScan && resetScan(); }}>
-                    Scanner maintenant
-                  </Button>
-                </div>
+                {/* "Scanner maintenant" button removed to avoid confusing duplicate actions */}
               </div>
             )}
             {!cameraError && !scanValid && !hasScanned ? (
-              <Html5QrcodeReact onScan={handleScan} onError={handleError} />
+              <Html5QrcodeReact resetSignal={scanSessionId} onScan={handleScan} onError={handleError} active={active} />
             ) : null}
             {!scanValid && !hasScanned && (
               <>
@@ -196,9 +388,27 @@ function QRScanSection({
               </>
             )}
             {cameraError && !scanValid && !hasScanned && (
-              <div className="mt-4 flex flex-col items-center gap-2">
-                <p className="text-red-600 mt-2 text-sm">{cameraErrorMsg || "Impossible d'accéder à la caméra. Autorisez l'accès ou réessayez."}</p>
-                <Button variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" onClick={() => { setCameraError(false); setCameraErrorMsg(''); setHasScanned(false); }}>Réessayer</Button>
+              <div className="mt-4 flex flex-col items-center gap-3">
+                <p className="text-red-600 mt-2 text-sm text-center">{cameraErrorMsg || "Impossible d'accéder à la caméra. Autorisez l'accès ou réessayez."}</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" onClick={() => { setCameraError(false); setCameraErrorMsg(''); setHasScanned(false); resetScan && resetScan(); }}>
+                    Réessayer
+                  </Button>
+                  <Button variant="outline" className="text-indigo-700 underline" onClick={() => setShowGuide(s => !s)}>
+                    Guide
+                  </Button>
+                </div>
+                {showGuide && (
+                  <div className="mt-2 text-left bg-white/60 p-3 rounded-md text-sm text-gray-700 max-w-md">
+                    <p className="font-semibold">Comment autoriser la caméra</p>
+                    <ol className="list-decimal list-inside mt-2 space-y-1">
+                      <li>Cliquez sur l'icône cadenas à gauche de la barre d'adresse</li>
+                      <li>Ouvrez <strong>Paramètres du site</strong> → <strong>Caméra</strong> → sélectionnez <strong>Autoriser</strong></li>
+                      <li>Rechargez la page</li>
+                      <li>Si vous testez en local, utilisez <code>https://localhost</code> ou servez la page en HTTPS</li>
+                    </ol>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -254,6 +464,10 @@ const QRScanner = () => {
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
+  // session id incrementation to reset scanner state after a delivery is confirmed
+  const [scanSessionId, setScanSessionId] = useState(0);
+  // When navigating from DeliveryDashboard with ?autoStart=1 we want to automatically start delivery and show scanner
+  const [autoOpenScanner, setAutoOpenScanner] = useState(false);
 
   // Mapper d'erreurs PayDunya vers messages plus clairs
   const mapPaydunyaError = (raw: unknown): string => {
@@ -271,38 +485,221 @@ const QRScanner = () => {
     return msg;
   };
 
-  // Si on arrive avec ?orderId=..., on précharge la commande et ouvre le flux de scan
+  // Démarrer la livraison (déplacé ici pour éviter "used before its declaration" dans les useEffect)
+  const handleStartDelivery = useCallback(async () => {
+    if (!currentOrder) return;
+    if (!user?.id) {
+      toast({ title: 'Erreur', description: 'Utilisateur non connecté', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
+      if (!currentOrder.id) throw new Error('Order id manquant');
+
+      // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
+      try {
+        // Include Authorization header (access token) if available to help backend infer user
+        let authHeader: Record<string, string> = {};
+        try {
+          type SupabaseSessionResp = { data?: { session?: { access_token?: string } } | null; session?: { access_token?: string } | null };
+          const sessionResp = await supabase.auth.getSession() as SupabaseSessionResp;
+          const token = sessionResp?.data?.session?.access_token || sessionResp?.session?.access_token || null;
+          if (token) {
+            authHeader = { Authorization: `Bearer ${token}` };
+            console.log('[QRScanner] Using auth token for backend call');
+          } else {
+            console.log('[QRScanner] No auth token available for backend call');
+          }
+        } catch (e) {
+          console.warn('[QRScanner] supabase.getSession() failed:', e);
+        }
+
+        const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({ orderId: currentOrder.id, deliveryPersonId: user?.id })
+        });
+        const json = await resp.json();
+        if (!resp.ok || !json || !json.success) {
+          console.error('Backend mark-in-delivery failed:', resp.status, json);
+          throw new Error(json?.error || json?.message || 'Backend mark-in-delivery failed');
+        }
+
+        const updated = json.order ? json.order : { ...(currentOrder as Order), status: 'in_delivery', delivery_person_id: user?.id || currentOrder?.delivery_person_id };
+        setCurrentOrder(updated as Order);
+
+        try {
+          window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
+        } catch (e) {
+          console.warn('Unable to dispatch delivery:started event', e);
+        }
+        console.log('Livraison démarrée avec succès (backend)', json);
+
+        setOrderModalOpen(false);
+        setShowScanSection(true);
+
+        toast({
+          title: "Livraison en cours",
+          description: "Veuillez scanner le QR code du client pour valider la livraison",
+        });
+
+      } catch (backendErr) {
+        console.warn('Backend mark-in-delivery failed, falling back to client update', backendErr);
+        const { error } = await supabase
+          .from('orders')
+          .update({ 
+            status: 'in_delivery',
+            delivery_person_id: user.id as string
+          })
+          .eq('id', currentOrder.id as string);
+
+        if (error) {
+          console.error('Erreur lors du démarrage de la livraison (fallback client):', error);
+          throw error;
+        }
+
+        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
+
+        toast({
+          title: "Livraison en cours",
+          description: "Veuillez scanner le QR code du client pour valider la livraison",
+        });
+      }
+    } catch (error) {
+      console.error('Erreur lors du démarrage de la livraison:', error);
+      toast({
+        title: "Erreur",
+        description: "Impossible de démarrer la livraison : " + (error instanceof Error ? error.message : JSON.stringify(error)),
+        variant: "destructive",
+      });
+    }
+  }, [currentOrder, user?.id, toast]);
+
+  // Keep a stable ref to the start-delivery handler so other effects can
+  // call it without depending on its identity (prevents infinite loops).
+  const handleStartDeliveryRef = useRef(handleStartDelivery);
+  useEffect(() => {
+    handleStartDeliveryRef.current = handleStartDelivery;
+  }, [handleStartDelivery]);
+
+  // Si on arrive avec ?orderId=... ou ?orderCode=..., on précharge la commande et ouvre le flux de scan
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get('orderId');
-    if (!orderId || !user?.id) return;
-    (async () => {
+    const orderCodeParam = params.get('orderCode');
+    const autoStart = params.get('autoStart') || params.get('scan');
+    if (autoStart) setAutoOpenScanner(true);
+
+    // Helper: try to resolve an order by its code (client first, then backend fallback)
+    const resolveByCode = async (code: string) => {
+      const cleaned = (code || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+      if (!cleaned) return null;
       try {
+        const pattern = `%${cleaned}%`;
         const { data, error } = await supabase
           .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`) 
-          .eq('id', orderId)
+          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+          .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
           .maybeSingle();
-        if (!error && data) {
-          setCurrentOrder(data as Order);
-          console.log('Commande chargée depuis URL:', { 
-            id: data.id, 
-            vendor_id: data.vendor_id,
-            buyer_id: data.buyer_id,
-            vendor_profile: data.vendor_profile,
-            toutes_les_données: data
-          });
-          // Si la commande est déjà en cours et assignée au livreur, on amène l'utilisateur au scan
-          if (data.status === 'in_delivery' && data.delivery_person_id === user?.id) {
-            setOrderModalOpen(false);
-            setShowScanSection(true);
-          } else if (data.status === 'paid') {
-            // Sinon, on laisse la modale proposer de commencer la livraison
-            setOrderModalOpen(true);
+        if (!error && data) return data as Order;
+      } catch (e) {
+        console.warn('resolveByCode supabase error', e);
+      }
+
+      // Backend fallback
+      try {
+        const resp = await fetch(apiUrl('/api/orders/search'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: cleaned })
+        });
+        const json = await resp.json();
+        if (json && json.success && json.order) return json.order as Order;
+      } catch (e) {
+        console.warn('resolveByCode backend fallback error', e);
+      }
+      return null;
+    };
+
+    (async () => {
+      try {
+        if (orderId && user?.id) {
+          // Prefer fetching by id first (fast path)
+          try {
+            const { data, error } = await supabase
+              .from('orders')
+              .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`) 
+              .eq('id', orderId)
+              .maybeSingle();
+
+            if (!error && data) {
+              setCurrentOrder(data as Order);
+              console.log('Commande chargée depuis URL par id:', data.id);
+              // If it's already in delivery and assigned to this user, open scanner
+              if (data.status === 'in_delivery' && String(data.delivery_person_id) === String(user?.id)) {
+                setOrderModalOpen(false);
+                setShowScanSection(true);
+                setScanSessionId(s => s + 1);
+                return;
+              }
+
+              // If paid and autoStart, attempt to start delivery
+                if (data.status === 'paid' && autoStart) {
+                try {
+                  // Use ref-stored handler to avoid recreating the effect when
+                  // `handleStartDelivery` identity changes (prevents an infinite loop)
+                  await handleStartDeliveryRef.current?.();
+                  setShowScanSection(true);
+                  setScanSessionId(s => s + 1);
+                  return;
+                } catch (e) {
+                  console.warn('Auto start by id failed, will still try code fallback if provided', e);
+                }
+              }
+
+              // Otherwise show modal
+              setOrderModalOpen(true);
+              return;
+            }
+          } catch (e) {
+            console.warn('Fetch by id failed:', e);
           }
         }
+
+        // If we didn't resolve by id and an orderCode param is available, try to resolve by code
+        if (orderCodeParam) {
+          const found = await resolveByCode(orderCodeParam);
+          if (found) {
+            setCurrentOrder(found as Order);
+            console.log('Commande chargée depuis URL par code:', found.id);
+
+            if (found.status === 'in_delivery' && String(found.delivery_person_id) === String(user?.id)) {
+              setOrderModalOpen(false);
+              setShowScanSection(true);
+              setScanSessionId(s => s + 1);
+              return;
+            }
+
+            if (found.status === 'paid' && autoStart) {
+              try {
+                await handleStartDeliveryRef.current?.();
+                setShowScanSection(true);
+                setScanSessionId(s => s + 1);
+                return;
+              } catch (e) {
+                console.warn('Auto start by code failed, falling back to modal', e);
+              }
+            }
+
+            setOrderModalOpen(true);
+            return;
+          }
+        }
+
+        // If we reach here and nothing resolved, leave the page in search mode
       } catch (e) {
-        // silencieux
+        console.warn('Error resolving order params', e);
       }
     })();
   }, [user?.id]);
@@ -357,7 +754,8 @@ const QRScanner = () => {
         else if (orderCodeNorm && orderCodeNorm.includes(cleaned)) matchType = 'order_code';
         else if (qrNorm && qrNorm.includes(cleaned)) matchType = 'qr_code';
 
-        setLastMatchInfo({ type: matchType, code: (matchType === 'qr_code' && data.qr_code) ? data.qr_code : data.order_code || '' });
+        const codeVal = matchType === 'qr_code' ? (data.qr_code ?? data.order_code ?? '') : (data.order_code ?? data.qr_code ?? '');
+        setLastMatchInfo({ type: matchType, code: codeVal });
         
         console.log('Commande trouvée:', data, 'matchType:', matchType, 'statut:', data.status);
         
@@ -382,7 +780,7 @@ const QRScanner = () => {
         console.log('[Fallback backend] Résultat:', json);
         if (json && json.success && json.order) {
           setCurrentOrder(json.order as Order);
-          setLastMatchInfo({ type: 'order_code', code: json.order.order_code || '' });
+          setLastMatchInfo({ type: 'order_code', code: json.order.order_code ?? '' });
           setOrderModalOpen(true);
           toast({
             title: "Commande trouvée (backend)",
@@ -415,100 +813,7 @@ const QRScanner = () => {
     }
   };
 
-  const handleStartDelivery = async () => {
-    if (!currentOrder) return;
-    if (!user?.id) {
-      toast({ title: 'Erreur', description: 'Utilisateur non connecté', variant: 'destructive' });
-      return;
-    }
-
-    try {
-      console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
-      if (!currentOrder.id) throw new Error('Order id manquant');
-
-      // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
-      try {
-        // Include Authorization header (access token) if available to help backend infer user
-        let authHeader: Record<string, string> = {};
-        try {
-          // Typed response shape to avoid 'any' and satisfy ESLint
-          type SupabaseSessionResp = { data?: { session?: { access_token?: string } } | null; session?: { access_token?: string } | null };
-          const sessionResp = await supabase.auth.getSession() as SupabaseSessionResp;
-          const token = sessionResp?.data?.session?.access_token || sessionResp?.session?.access_token || null;
-          if (token) {
-            authHeader = { Authorization: `Bearer ${token}` };
-            console.log('[QRScanner] Using auth token for backend call');
-          } else {
-            console.log('[QRScanner] No auth token available for backend call');
-          }
-        } catch (e) {
-          console.warn('[QRScanner] supabase.getSession() failed:', e);
-        }
-
-        const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
-          body: JSON.stringify({ orderId: currentOrder.id, deliveryPersonId: user?.id })
-        });
-        const json = await resp.json();
-        if (!resp.ok || !json || !json.success) {
-          console.error('Backend mark-in-delivery failed:', resp.status, json);
-          throw new Error(json?.error || json?.message || 'Backend mark-in-delivery failed');
-        }
-
-        // Mise à jour locale de l'état de la commande
-          const updated = json.order ? json.order : { ...(currentOrder as Order), status: 'in_delivery', delivery_person_id: user?.id || currentOrder?.delivery_person_id };
-          setCurrentOrder(updated as Order);
-
-          // Dispatch an event so other parts of the app (dashboard) can refresh immediately
-          try {
-            window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
-          } catch (e) {
-            console.warn('Unable to dispatch delivery:started event', e);
-          }
-        console.log('Livraison démarrée avec succès (backend)', json);
-
-        // Fermer le modal et afficher le message + section de scan
-        setOrderModalOpen(false);
-        setShowScanSection(true);
-
-        toast({
-          title: "Livraison en cours",
-          description: "Veuillez scanner le QR code du client pour valider la livraison",
-        });
-
-      } catch (backendErr) {
-        console.warn('Backend mark-in-delivery failed, falling back to client update', backendErr);
-        // Fallback: essayer la mise à jour côté client (peut échouer à cause de RLS)
-        const { error } = await supabase
-          .from('orders')
-          .update({ 
-            status: 'in_delivery',
-            delivery_person_id: user.id as string
-          })
-          .eq('id', currentOrder.id as string);
-
-        if (error) {
-          console.error('Erreur lors du démarrage de la livraison (fallback client):', error);
-          throw error;
-        }
-
-        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
-
-        toast({
-          title: "Livraison en cours",
-          description: "Veuillez scanner le QR code du client pour valider la livraison",
-        });
-      }
-    } catch (error) {
-      console.error('Erreur lors du démarrage de la livraison:', error);
-      toast({
-        title: "Erreur",
-        description: "Impossible de démarrer la livraison : " + (error?.message || ''),
-        variant: "destructive",
-      });
-    }
-  };
+  
 
   const handleScanQR = async (code, resetScan) => {
     const codeToCheck = code !== undefined ? code : scannedCode;
@@ -522,27 +827,51 @@ const QRScanner = () => {
       return;
     }
 
+    // If we don't have a currentOrder, try to resolve the order by the scanned QR code
     if (!currentOrder) {
-      toast({
-        title: "Erreur",
-        description: "Veuillez d'abord sélectionner une commande",
-        variant: "destructive",
-      });
-      return;
+      console.log('No currentOrder; attempting to find order by QR code');
+      try {
+        const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+        const scannedNormalized = normalize(codeToCheck);
+        // Query supabase for orders with matching qr_code (tolerant match)
+        const { data: found, error: findErr } = await supabase
+          .from('orders')
+          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+          .ilike('qr_code', `%${scannedNormalized}%`)
+          .in('status', ['assigned', 'in_delivery', 'paid', 'delivered'])
+          .limit(1)
+          .maybeSingle();
+
+        if (findErr) {
+          console.warn('Error searching order by QR:', findErr);
+        }
+        if (found && found.id) {
+          console.log('Order found by QR:', found.id, 'status:', found.status);
+          setCurrentOrder(found as Order);
+          // proceed with normal validation against that order
+        } else {
+          toast({ title: 'Commande introuvable', description: 'Aucune commande associée à ce QR code.', variant: 'destructive' });
+          return;
+        }
+      } catch (e) {
+        console.error('Error resolving order by QR:', e);
+        toast({ title: 'Erreur', description: 'Impossible de vérifier la commande pour ce QR.', variant: 'destructive' });
+        return;
+      }
     }
 
     try {
-      console.log('QRScanner: code scanné =', codeToCheck, 'QR attendu =', currentOrder.qr_code);
+      console.log('QRScanner: code scanné =', codeToCheck, 'QR attendu =', currentOrder?.qr_code);
       // Normaliser les codes (supprimer espaces, tirets et non-alphanumériques, mettre en majuscule)
       const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
       const scannedNormalized = normalize(codeToCheck);
-      const expectedNormalized = normalize(currentOrder.qr_code);
+      const expectedNormalized = normalize(currentOrder?.qr_code);
       // Vérifier que le QR code correspond à la commande en cours
       if (scannedNormalized !== expectedNormalized) {
         throw new Error('QR code ne correspond pas à la commande');
       }
       // Vérifier que c'est bien le livreur assigné
-      if (currentOrder.delivery_person_id !== user?.id) {
+      if (currentOrder?.delivery_person_id !== user?.id) {
         throw new Error('Vous n\'êtes pas le livreur assigné à cette commande');
       }
       setValidationResult({
@@ -550,10 +879,10 @@ const QRScanner = () => {
         status: 'valid',
         timestamp: new Date().toLocaleString()
       });
-      console.log('QRScanner: validation OK, commande id =', currentOrder.id, 'vendor_profile:', currentOrder.vendor_profile);
+      console.log('QRScanner: validation OK, commande id =', currentOrder?.id, 'vendor_profile:', currentOrder?.vendor_profile);
       toast({
         title: "QR Code valide",
-        description: `Livraison confirmée pour ${currentOrder.buyer_profile?.full_name}`,
+        description: `Livraison confirmée pour ${currentOrder?.buyer_profile?.full_name}`,
       });
       // Ne pas fermer la section ici
       // setShowScanSection(false);
@@ -643,10 +972,12 @@ const QRScanner = () => {
         setValidationResult(null);
         setScannedCode('');
         setOrderCode('');
-        setShowScanSection(false);
-        setDeliveryConfirmed(true);
+        // Keep scanner open for the next delivery and reset session so scanner resumes
+        setShowScanSection(true);
         setCurrentOrder(null);
         setIsConfirmingDelivery(false);
+        // bump session to instruct scanner to reset its internal 'hasScanned' state
+        setScanSessionId(s => s + 1);
       } catch (error: unknown) {
         let errorMessage = 'Erreur inconnue';
         if (error instanceof Error) {
@@ -680,17 +1011,64 @@ const QRScanner = () => {
 
   // Ouvre la modal quand une commande est trouvée
   useEffect(() => {
-    if (currentOrder) {
-      setOrderModalOpen(true);
+    if (!currentOrder) return;
+
+    // Si la commande est déjà en cours et assignée à ce livreur,
+    // ne pas afficher la modale de détails ; ouvrir directement le scanner.
+    if (currentOrder.status === 'in_delivery' && String(currentOrder.delivery_person_id) === String(user?.id)) {
+      setOrderModalOpen(false);
+      setShowScanSection(true);
+      // reset le scanner pour qu'il démarre proprement
+      setScanSessionId(s => s + 1);
+      return;
     }
-  }, [currentOrder]);
+
+    // Cas normal : afficher la modale
+    setOrderModalOpen(true);
+  }, [currentOrder, user?.id]);
+
+  // If the URL requested auto-start scanning (e.g. ?autoStart=1), either start the delivery or open the scanner directly
+  useEffect(() => {
+    if (!autoOpenScanner || !currentOrder || !user?.id) return;
+    (async () => {
+      try {
+        // If the order is already in_delivery and assigned to *this* user, open scanner immediately
+        if (currentOrder.status === 'in_delivery') {
+          if (String(currentOrder.delivery_person_id) === String(user.id)) {
+            setOrderModalOpen(false);
+            setShowScanSection(true);
+            // reset the internal scanner session so it starts fresh
+            setScanSessionId(s => s + 1);
+          } else {
+            // Order is in delivery by another person — inform and do not open scanner
+            toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });
+          }
+        } else {
+          // Otherwise (paid), attempt to start delivery (existing behavior)
+          try {
+            await handleStartDelivery();
+            // If start succeeded, ensure the scanner is shown
+            setShowScanSection(true);
+            setScanSessionId(s => s + 1);
+          } catch (startErr) {
+            console.warn('Auto-start delivery failed, opening scanner without server start:', startErr);
+            setShowScanSection(true);
+            setScanSessionId(s => s + 1);
+          }
+        }
+      } finally {
+        setAutoOpenScanner(false);
+      }
+    })();
+  }, [autoOpenScanner, currentOrder, handleStartDelivery, toast, user?.id]);
 
   // Redirection automatique après succès
-  useEffect(() => {
-    if (!deliveryConfirmed) return;
-    const t = setTimeout(() => navigate('/delivery'), 3000);
-    return () => clearTimeout(t);
-  }, [deliveryConfirmed, navigate]);
+  // Removed automatic redirect after confirmation so scanner can continue scanning
+  // useEffect(() => {
+  //   if (!deliveryConfirmed) return;
+  //   const t = setTimeout(() => navigate('/delivery'), 3000);
+  //   return () => clearTimeout(t);
+  // }, [deliveryConfirmed, navigate]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
@@ -829,9 +1207,11 @@ const QRScanner = () => {
             handleScanQR={handleScanQR}
             validationResult={validationResult}
             handleConfirmDelivery={handleConfirmDelivery}
-            resetScan={() => {}}
+            resetScan={() => setScanSessionId(s => s + 1)}
             isConfirmingDelivery={isConfirmingDelivery}
             matchInfo={lastMatchInfo}
+            scanSessionId={scanSessionId}
+            active={showScanSection}
           />
         )}
       </div>
