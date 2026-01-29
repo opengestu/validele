@@ -1156,8 +1156,8 @@ const QRScanner = () => {
             // Order is in delivery by another person — inform and do not open scanner
             toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });
           }
-        } else {
-          // Otherwise (paid), attempt to start delivery (existing behavior)
+        } else if (currentOrder.status === 'paid') {
+          // Paid: attempt to start delivery (existing behavior)
           try {
             await handleStartDelivery();
             // If start succeeded, ensure the scanner is shown
@@ -1168,6 +1168,15 @@ const QRScanner = () => {
             setShowScanSection(true);
             setScanSessionId(s => s + 1);
           }
+        } else if (currentOrder.status === 'delivered') {
+          // Already delivered: do not open scanner, inform the user
+          toast({ title: 'Commande déjà livrée', description: 'Cette commande est déjà marquée comme livrée.', variant: 'default' });
+          // Ensure we do not open the scanner
+          setOrderModalOpen(false);
+          setShowScanSection(false);
+        } else {
+          // Other statuses are not appropriate to auto-open scanner
+          toast({ title: 'Commande non prête', description: 'Impossible d\'ouvrir le scanner pour cette commande.', variant: 'destructive' });
         }
       } finally {
         setAutoOpenScanner(false);

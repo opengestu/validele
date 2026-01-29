@@ -13,8 +13,10 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'https://localhost:3001',
+        // Local backend (dev). Adjust with VITE_DEV_BACKEND env var if your backend runs on a different host/port.
+        target: process.env.VITE_DEV_BACKEND || 'http://localhost:5000',
         changeOrigin: true,
+        // `secure: false` allows self-signed certs when target is https
         secure: false,
       }
     }
