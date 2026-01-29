@@ -428,9 +428,26 @@ const QRScanner = () => {
 
       // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
       try {
+        // Include Authorization header (access token) if available to help backend infer user
+        let authHeader: Record<string, string> = {};
+        try {
+          // Typed response shape to avoid 'any' and satisfy ESLint
+          type SupabaseSessionResp = { data?: { session?: { access_token?: string } } | null; session?: { access_token?: string } | null };
+          const sessionResp = await supabase.auth.getSession() as SupabaseSessionResp;
+          const token = sessionResp?.data?.session?.access_token || sessionResp?.session?.access_token || null;
+          if (token) {
+            authHeader = { Authorization: `Bearer ${token}` };
+            console.log('[QRScanner] Using auth token for backend call');
+          } else {
+            console.log('[QRScanner] No auth token available for backend call');
+          }
+        } catch (e) {
+          console.warn('[QRScanner] supabase.getSession() failed:', e);
+        }
+
         const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeader },
           body: JSON.stringify({ orderId: currentOrder.id, deliveryPersonId: user?.id })
         });
         const json = await resp.json();

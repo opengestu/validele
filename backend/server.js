@@ -2793,6 +2793,11 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
         .maybeSingle();
       if (!refErr && refreshed) updatedOrder = refreshed;
       if (refErr) console.warn('[MARK-IN-DELIVERY] Warning fetching updated order:', refErr);
+
+      // If delivery_person_id is still missing, log explicitly for debugging
+      if (!updatedOrder || !updatedOrder.delivery_person_id) {
+        console.warn('[MARK-IN-DELIVERY] Warning: delivery_person_id is not set on order after mark-in-delivery', { orderId, deliveryPersonId, updatedOrder });
+      }
     } catch (e) {
       console.warn('[MARK-IN-DELIVERY] Exception fetching updated order:', e);
     }
