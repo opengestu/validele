@@ -251,6 +251,36 @@ const DeliveryDashboard = () => {
     };
   }, []);
 
+  // Listen to app-level event when a delivery is started so we can refresh immediately
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const payload: any = (ev as CustomEvent)?.detail?.order;
+        console.log('DeliveryDashboard: delivery:started event received', payload);
+        if (payload) {
+          // if it's for this user or it's in_delivery, ensure visible immediately
+          if (String(payload.delivery_person_id) === String(user?.id) || payload.status === 'in_delivery') {
+            setMyDeliveries(prev => {
+              const exists = prev.some(p => p.id === payload.id);
+              if (!exists) return [payload, ...prev];
+              return prev.map(p => (p.id === payload.id ? payload : p));
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('delivery:started handler error', e);
+      }
+
+      // Trigger a full re-fetch for consistency
+      fetchDeliveries();
+      fetchTransactions();
+    };
+
+    window.addEventListener('delivery:started', handler as EventListener);
+    return () => window.removeEventListener('delivery:started', handler as EventListener);
+  }, [user]);
+
   const fetchDeliveries = async () => {
     if (!user?.id) return;
     

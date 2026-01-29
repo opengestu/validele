@@ -2640,10 +2640,31 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 app.post('/api/orders/mark-in-delivery', async (req, res) => {
   try {
     // Accepter les deux formats : orderId et orderId
-    const orderId = req.body.orderId || req.body.orderId;
-    const deliveryPersonId = req.body.deliveryPersonId || req.body.deliveryPersonId;
+    const orderId = req.body.orderId || req.body.order_id || req.body.id;
+    let deliveryPersonId = req.body.deliveryPersonId || req.body.delivery_person_id || req.body.deliveryPerson || null;
     if (!orderId) {
       return res.status(400).json({ success: false, error: 'orderId required' });
+    }
+
+    // If deliveryPersonId was not provided, try to infer from Authorization bearer token (Supabase session or JWT)
+    if (!deliveryPersonId) {
+      try {
+        const authHeader = req.headers.authorization;
+        if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.split(' ')[1];
+          try {
+            const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+            if (!userErr && user && user.id) {
+              deliveryPersonId = user.id;
+              console.log('[MARK-IN-DELIVERY] Inferred deliveryPersonId from bearer token:', deliveryPersonId);
+            }
+          } catch (e) {
+            // ignore and continue; deliveryPersonId remains null
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
     }
 
     // Fetch current order with buyer, delivery person, and product info
@@ -2762,11 +2783,26 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       // Ne pas échouer la requête principale à cause de l'erreur de notification
     }
 
+    // Fetch the updated order row to return to the caller (useful for UI immediate update)
+    let updatedOrder = null;
+    try {
+      const { data: refreshed, error: refErr } = await supabase
+        .from('orders')
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+        .eq('id', orderId)
+        .maybeSingle();
+      if (!refErr && refreshed) updatedOrder = refreshed;
+      if (refErr) console.warn('[MARK-IN-DELIVERY] Warning fetching updated order:', refErr);
+    } catch (e) {
+      console.warn('[MARK-IN-DELIVERY] Exception fetching updated order:', e);
+    }
+
     res.json({ 
       success: true, 
       orderId, 
       updated: safeRes.used,
       removedColumns: safeRes.removed || [],
+      order: updatedOrder,
       message: 'Livraison démarrée avec succès' 
     });
   } catch (err) {

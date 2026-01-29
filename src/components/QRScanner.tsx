@@ -440,8 +440,15 @@ const QRScanner = () => {
         }
 
         // Mise à jour locale de l'état de la commande
-        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
+          const updated = json.order ? json.order : { ...(currentOrder as Order), status: 'in_delivery', delivery_person_id: user?.id || currentOrder?.delivery_person_id };
+          setCurrentOrder(updated as Order);
 
+          // Dispatch an event so other parts of the app (dashboard) can refresh immediately
+          try {
+            window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
+          } catch (e) {
+            console.warn('Unable to dispatch delivery:started event', e);
+          }
         console.log('Livraison démarrée avec succès (backend)', json);
 
         // Fermer le modal et afficher le message + section de scan
