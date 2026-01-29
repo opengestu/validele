@@ -420,6 +420,32 @@ app.post('/api/orders/search', async (req, res) => {
   }
 });
 
+// Retourne les commandes pour un livreur (bypass RLS) — POST /api/delivery/my-orders
+app.post('/api/delivery/my-orders', async (req, res) => {
+  try {
+    const { deliveryPersonId } = req.body || {};
+    if (!deliveryPersonId) return res.status(400).json({ success: false, error: 'deliveryPersonId requis' });
+
+    console.log('[API/delivery/my-orders] Request for deliveryPersonId:', deliveryPersonId);
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+      .eq('delivery_person_id', deliveryPersonId)
+      .in('status', ['assigned', 'in_delivery', 'delivered'])
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[API/delivery/my-orders] Error querying orders:', error);
+      return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
+    }
+
+    return res.json({ success: true, orders: data || [] });
+  } catch (err) {
+    console.error('[API/delivery/my-orders] Exception:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
+  }
+});
 // Debug: IP publique sortante du serveur (utile pour whitelister Direct7)
 app.get('/api/debug/egress-ip', async (req, res) => {
   try {

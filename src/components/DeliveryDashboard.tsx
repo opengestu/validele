@@ -313,12 +313,39 @@ const DeliveryDashboard = () => {
         .in('status', ['assigned', 'in_delivery', 'delivered'])
         .order('created_at', { ascending: false });
 
-      if (error2) throw error2;
+      if (error2) {
+        console.error('[DeliveryDashboard] error fetching myActiveDeliveries:', error2);
+        throw error2;
+      }
+
+      console.log('[DeliveryDashboard] fetchDeliveries:', { userId: user.id, availableCount: (availableDeliveries || []).length, myActiveCount: (myActiveDeliveries || []).length });
+
+      let finalMyDeliveries = (myActiveDeliveries ?? []) as DeliveryOrder[];
+
+      // Fallback: if client-side query returned none, try backend endpoint to bypass RLS
+      if ((!finalMyDeliveries || finalMyDeliveries.length === 0) && user?.id) {
+        try {
+          console.log('[DeliveryDashboard] myActiveDeliveries empty, calling backend /api/delivery/my-orders fallback');
+          const resp = await fetch('/api/delivery/my-orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deliveryPersonId: user.id })
+          });
+          const j = await resp.json();
+          console.log('[DeliveryDashboard] /api/delivery/my-orders response:', resp.status, j);
+          if (resp.ok && j && Array.isArray(j.orders)) {
+            finalMyDeliveries = j.orders as DeliveryOrder[];
+          }
+        } catch (e) {
+          console.warn('[DeliveryDashboard] backend fallback /api/delivery/my-orders failed:', e);
+        }
+      }
 
       setDeliveries((availableDeliveries ?? []) as DeliveryOrder[]);
-      setMyDeliveries((myActiveDeliveries ?? []) as DeliveryOrder[]);
+      setMyDeliveries(finalMyDeliveries);
     } catch (error) {
       console.error('Erreur lors du chargement des livraisons:', error);
+      toast({ title: 'Erreur', description: 'Impossible de charger les livraisons. Vérifiez votre connexion.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
