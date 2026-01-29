@@ -1,51 +1,4 @@
 // ...existing code...
-
-// Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)
-app.post('/api/orders/search', async (req, res) => {
-  try {
-    const { code } = req.body || {};
-    if (!code || typeof code !== 'string') {
-      return res.status(400).json({ success: false, error: 'Code de commande requis' });
-    }
-    // Nettoyage du code (majuscules, suppression espaces et caractères spéciaux)
-    const cleaned = code.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
-    const pattern = `%${cleaned}%`;
-    console.log('[API/orders/search] Recherche code nettoyé:', cleaned);
-
-    // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
-      .in('status', ['paid', 'in_delivery'])
-      .maybeSingle();
-
-    if (error) {
-      console.error('[API/orders/search] Erreur requête:', error);
-      return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
-    }
-
-    if (data) {
-      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
-      return res.json({ success: true, order: data });
-    } else {
-      console.warn('[API/orders/search] Aucune commande trouvée pour code:', cleaned);
-      return res.status(404).json({
-        success: false,
-        error: 'Commande non trouvée',
-        code: cleaned,
-        message: 'Aucune commande payée ou en cours trouvée avec ce code. Vérifiez le code et le statut.'
-      });
-    }
-  } catch (err) {
-    console.error('[API/orders/search] Exception:', err);
-    return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
-  }
-});
-
-// ...existing code...
-
-// (À placer après const app = express;)
 // backend/server.js
 // INSPECT: server.js - checking DB and routes
 const express = require('express');
@@ -422,6 +375,49 @@ app.post('/api/vendor/orders', async (req, res) => {
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)
+app.post('/api/orders/search', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({ success: false, error: 'Code de commande requis' });
+    }
+    // Nettoyage du code (majuscules, suppression espaces et caractères spéciaux)
+    const cleaned = code.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const pattern = `%${cleaned}%`;
+    console.log('[API/orders/search] Recherche code nettoyé:', cleaned);
+
+    // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
+      .in('status', ['paid', 'in_delivery'])
+      .maybeSingle();
+
+    if (error) {
+      console.error('[API/orders/search] Erreur requête:', error);
+      return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
+    }
+
+    if (data) {
+      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
+      return res.json({ success: true, order: data });
+    } else {
+      console.warn('[API/orders/search] Aucune commande trouvée pour code:', cleaned);
+      return res.status(404).json({
+        success: false,
+        error: 'Commande non trouvée',
+        code: cleaned,
+        message: 'Aucune commande payée ou en cours trouvée avec ce code. Vérifiez le code et le statut.'
+      });
+    }
+  } catch (err) {
+    console.error('[API/orders/search] Exception:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
+  }
 });
 
 // Debug: IP publique sortante du serveur (utile pour whitelister Direct7)
