@@ -1077,12 +1077,13 @@ const BuyerDashboard = () => {
       case 'pending': return 'En attente';
       case 'paid': return 'Payé';
       case 'in_delivery': return 'En cours de livraison';
-      case 'delivered': return 'Livré';
+      case 'delivered': return 'Livrée';
       case 'cancelled': return 'Annulée';
       case 'refunded': return 'Remboursée';
       default: return status;
     }
   };
+
 
   const renderStatusBadge = (status?: string) => {
     if (!status) return null;

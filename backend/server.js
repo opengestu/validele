@@ -516,6 +516,44 @@ app.get('/api/debug/egress-ip', async (req, res) => {
   }
 });
 
+// Debug: verify orders visibility with/without auth token (use to diagnose RLS problems)
+app.get('/api/debug/orders-visibility', async (req, res) => {
+  try {
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const anon = SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+    if (!SUPABASE_URL) return res.status(500).json({ error: 'SUPABASE_URL missing on server' });
+
+    // 1) Query as anon (no Authorization header)
+    const headersAnon = { apikey: anon };
+    let anonCount = null;
+    try {
+      const r = await axios.get(`${SUPABASE_URL}/rest/v1/orders?select=id&limit=100`, { headers: headersAnon, timeout: 8000 });
+      anonCount = Array.isArray(r.data) ? r.data.length : null;
+    } catch (e) {
+      anonCount = { error: String(e.message || e) };
+    }
+
+    // 2) Query as provided token (if any)
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let withTokenCount = null;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const headersAuth = { apikey: anon, Authorization: `Bearer ${token}` };
+      try {
+        const r2 = await axios.get(`${SUPABASE_URL}/rest/v1/orders?select=id&limit=100`, { headers: headersAuth, timeout: 8000 });
+        withTokenCount = Array.isArray(r2.data) ? r2.data.length : null;
+      } catch (e) {
+        withTokenCount = { error: String(e.message || e) };
+      }
+    }
+
+    return res.json({ success: true, anonCount, withTokenCount, tokenProvided: !!authHeader });
+  } catch (err) {
+    console.error('[DEBUG] /api/debug/orders-visibility error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // ==========================================
 // ENDPOINTS OTP (Direct7Networks)
 // ==========================================
