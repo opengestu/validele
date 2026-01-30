@@ -622,6 +622,55 @@ app.get('/api/debug/admin/orders-audit', requireAdmin, async (req, res) => {
   }
 });
 
+// Admin endpoint: run a one-shot reconciliation of pending transactions (will respect force flag)
+app.post('/api/debug/admin/reconcile-payments', requireAdmin, async (req, res) => {
+  const { forceConfirm = false, minutes, limit = 200 } = req.body || {};
+  try {
+    const reconcileMinutes = parseInt(minutes || process.env.PAYMENT_RECONCILE_MINUTES || '15', 10);
+    const threshold = new Date(Date.now() - reconcileMinutes * 60 * 1000).toISOString();
+    const { data: txs, error } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .in('status', ['PENDING1','PENDING2'])
+      .lte('created_at', threshold)
+      .limit(limit);
+
+    if (error) return res.status(500).json({ error: 'failed fetching transactions' });
+
+    const results = [];
+    for (const tx of txs || []) {
+      let providerOk = false;
+      try {
+        const pixpay = require('./pixpay');
+        if (typeof pixpay.checkTransactionStatus === 'function') {
+          const check = await pixpay.checkTransactionStatus(tx.transaction_id);
+          if (check && check.success && (check.state === 'SUCCESS' || check.state === 'SUCCESSFUL' || check.state === 'COMPLETED')) {
+            providerOk = true;
+          }
+        }
+      } catch (e) {
+        // provider check not available
+      }
+
+      if (providerOk || forceConfirm) {
+        const { error: updErr } = await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', updated_at: new Date().toISOString(), provider_response: JSON.stringify({ reconciled: true, reconciler: req.user?.id || 'admin', timestamp: new Date().toISOString() }) }).eq('id', tx.id);
+        if (updErr) {
+          results.push({ tx: tx.id, ok: false, error: updErr });
+        } else {
+          results.push({ tx: tx.id, ok: true });
+        }
+      } else {
+        results.push({ tx: tx.id, ok: false, reason: 'not confirmed' });
+      }
+    }
+
+    res.json({ results });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 // ==========================================
 // ENDPOINTS OTP (Direct7Networks)
 // ==========================================
@@ -2424,6 +2473,90 @@ if (process.env.ENABLE_PAYOUT_SCHEDULER === 'true') {
     console.warn('[SCHEDULER] node-cron not installed, scheduler disabled');
   }
 }
+
+// Optional payment reconciler: mark old PENDING transactions as SUCCESSFUL (configurable and disabled by default)
+if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
+  try {
+    const cron = require('node-cron');
+    const expr = process.env.PAYMENT_RECONCILE_CRON || '*/5 * * * *'; // default every 5 minutes
+    const reconcileMinutes = parseInt(process.env.PAYMENT_RECONCILE_MINUTES || '15', 10);
+    const forceConfirm = String(process.env.PAYMENT_RECONCILE_FORCE || 'false').toLowerCase() === 'true';
+
+    async function reconcilePendingPayments() {
+      console.log(`[RECONCILER] Running payment reconciler at ${new Date().toISOString()} (older than ${reconcileMinutes}m, forceConfirm=${forceConfirm})`);
+      try {
+        const threshold = new Date(Date.now() - reconcileMinutes * 60 * 1000).toISOString();
+        const { data: txs, error } = await supabase
+          .from('payment_transactions')
+          .select('*')
+          .in('status', ['PENDING1','PENDING2'])
+          .lte('created_at', threshold)
+          .limit(200);
+        if (error) {
+          console.error('[RECONCILER] Error fetching pending transactions:', error);
+          return;
+        }
+        if (!txs || txs.length === 0) {
+          console.log('[RECONCILER] No pending transactions found');
+          return;
+        }
+
+        for (const tx of txs) {
+          try {
+            console.log('[RECONCILER] Inspecting tx:', tx.transaction_id, tx.id, 'order_id:', tx.order_id, 'status:', tx.status);
+
+            // Try provider status check if available
+            let providerOk = false;
+            try {
+              const pixpay = require('./pixpay');
+              const check = await pixpay.checkTransactionStatus(tx.transaction_id);
+              if (check && check.success && (check.state === 'SUCCESS' || check.state === 'SUCCESSFUL' || check.state === 'COMPLETED')) {
+                providerOk = true;
+              } else {
+                // check may not be supported by provider; fallback to forceConfirm
+                console.log('[RECONCILER] provider check result for', tx.transaction_id, check);
+              }
+            } catch (e) {
+              console.warn('[RECONCILER] provider check failed or not supported for tx:', tx.transaction_id, e?.message || e);
+            }
+
+            if (providerOk || forceConfirm) {
+              // Mark transaction SUCCESSFUL
+              const { error: updErr } = await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', updated_at: new Date().toISOString(), provider_response: JSON.stringify({ reconciled: true, reconciler: 'system', timestamp: new Date().toISOString() }) }).eq('id', tx.id);
+              if (updErr) {
+                console.error('[RECONCILER] Failed to mark tx successful:', tx.id, updErr);
+                continue;
+              }
+              console.log('[RECONCILER] Marked transaction SUCCESSFUL:', tx.transaction_id, tx.id);
+
+              // Note: the trigger payment_transactions_sync_orders_fn will synchronize orders/payouts
+            } else {
+              console.log('[RECONCILER] Not confirmed for tx:', tx.transaction_id, '- skipping (provider check negative)');
+            }
+          } catch (e) {
+            console.error('[RECONCILER] Exception handling tx:', tx.id, e);
+          }
+        }
+      } catch (e) {
+        console.error('[RECONCILER] Exception:', e);
+      }
+    }
+
+    // Schedule
+    cron.schedule(expr, async () => {
+      try {
+        await reconcilePendingPayments();
+      } catch (e) {
+        console.error('[RECONCILER] Scheduled run failed:', e);
+      }
+    }, { scheduled: true });
+
+    console.log(`[RECONCILER] Payment reconciler enabled (${expr})`);
+  } catch (e) {
+    console.warn('[RECONCILER] node-cron not installed, reconciler disabled');
+  }
+}
+
 
 // Remboursement client (annulation commande)
 app.post('/api/payment/pixpay/refund', async (req, res) => {
