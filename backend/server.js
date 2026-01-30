@@ -561,7 +561,7 @@ app.get('/api/debug/orders-visibility', async (req, res) => {
 // Envoyer un code OTP
 app.post('/api/otp/send', async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, allowExisting } = req.body || {};
 
     if (!phone) {
       return res.status(400).json({ success: false, error: 'Numéro de téléphone requis' });
@@ -584,7 +584,7 @@ app.post('/api/otp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
     }
 
-    console.log(`[OTP] Demande d'envoi pour: ${formattedPhone}`);
+    console.log(`[OTP] Demande d'envoi pour: ${formattedPhone} (allowExisting: ${!!allowExisting})`);
 
     // Protection serveur : empêcher l'envoi d'OTP si un profil existe déjà pour ce numéro
     try {
@@ -600,7 +600,7 @@ app.post('/api/otp/send', async (req, res) => {
         console.error('[OTP] Erreur recherche profil existant:', searchError);
       }
 
-      if (existingProfiles && existingProfiles.length > 0) {
+      if (existingProfiles && existingProfiles.length > 0 && !allowExisting) {
         console.log(`[OTP] Envoi bloqué pour ${formattedPhone} : profil existant ${existingProfiles[0].id}`);
         return res.status(409).json({
           success: false,

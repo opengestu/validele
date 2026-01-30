@@ -691,7 +691,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       setFormData(prev => ({ ...prev, phone: formatted }));
 
       // Envoyer un OTP via Direct7 pour vérifier l'identité
-      await sendOTP(formatted);
+      // allowExisting=true permet d'envoyer l'OTP même si le profil existe (cas reset PIN)
+      await sendOTP(formatted, { allowExisting: true });
       setIsResetPin(true);
       toast({
         title: "Code envoyé ! 📱",

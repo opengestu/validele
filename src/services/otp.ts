@@ -15,13 +15,13 @@ export interface OTPVerifyResponse {
 }
 
 // Envoyer un code OTP
-export async function sendOTP(phone: string): Promise<OTPSendResponse> {
+export async function sendOTP(phone: string, opts?: { allowExisting?: boolean }): Promise<OTPSendResponse> {
   const response = await fetch(apiUrl('/api/otp/send'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, allowExisting: !!(opts && opts.allowExisting) }),
   });
 
   const data = await response.json();
