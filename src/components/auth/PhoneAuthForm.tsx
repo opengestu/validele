@@ -351,25 +351,21 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
     setLoading(true);
     try {
-      // Vérifier l'OTP via notre backend Direct7Networks
+      // Si on est en mode réinitialisation, NE PAS vérifier l'OTP côté client
+      // (la vérification sera faite côté serveur au moment de la sauvegarde du PIN)
+      if (isResetPin) {
+        setResetOtpCode(otpCode);
+        toast({ title: "Identité confirmée ! ✅", description: "Créez votre nouveau code PIN" });
+        setStep('pin');
+        setPinDigits(['', '', '', '']);
+        setTimeout(() => pinRefs[0].current?.focus(), 100);
+        return;
+      }
+
+      // Vérifier l'OTP via notre backend Direct7Networks (flow normal)
       const result = await verifyOTPService(formData.phone, otpCode);
       if (result.valid) {
-        // OTP validé - vérifier si c'est une réinitialisation de PIN
-        if (isResetPin) {
-          // Mode réinitialisation - créer un nouveau PIN
-          // Save the otp code so we can re-verify server-side when saving the new PIN
-          setResetOtpCode(otpCode);
-          toast({
-            title: "Identité confirmée ! ✅",
-            description: "Créez votre nouveau code PIN",
-          });
-          setStep('pin');
-          setPinDigits(['', '', '', '']);
-          setTimeout(() => pinRefs[0].current?.focus(), 100);
-          return;
-        }
-       
-        // Vérifier si c'est un utilisateur existant avec PIN (connexion normale)
+        // OTP validé (flow normal)
         if (existingProfile && existingProfile.pin_hash) {
           // OTP validé + profil existant avec PIN - connexion réussie !
           // Pour les utilisateurs SMS : on utilise localStorage pour maintenir la session
@@ -569,6 +565,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        // Si OTP invalide, proposer de renvoyer le code et retourner à l'étape OTP
+        if (json?.error && json.error.toLowerCase().includes('otp')) {
+          toast({ title: 'Erreur', description: 'OTP invalide ou expiré. Veuillez renvoyer le code et réessayer.', variant: 'destructive' });
+          setIsResetPin(true);
+          setStep('otp');
+          setOtpDigits(['', '', '', '']);
+          setTimeout(() => otpRefs[0].current?.focus(), 200);
+          return;
+        }
         throw new Error(json?.error || 'Impossible de réinitialiser le PIN');
       }
 
