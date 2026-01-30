@@ -2107,13 +2107,43 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
 app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
   try {
     if (process.env.DEBUG === 'true') console.log('[ADMIN] list transactions requested by:', req.adminUser?.id || 'unknown');
-    const { data, error } = await supabase
-      .from('payment_transactions')
-      .select('*, order:orders(id, order_code), provider, status, transaction_type, provider_transaction_id, raw_response, provider_response, batch_id')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (error) throw error;
-    res.json({ success: true, transactions: data });
+
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.warn('[ADMIN] SUPABASE_SERVICE_ROLE_KEY not configured - falling back to RLS-bound client');
+      const { data, error } = await supabase
+        .from('payment_transactions')
+        .select('*, order:orders(id, order_code), provider, status, transaction_type, provider_transaction_id, raw_response, provider_response, batch_id')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return res.json({ success: true, transactions: data, usingServiceRole: false });
+    }
+
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+      const { data, error } = await supabaseAdmin
+        .from('payment_transactions')
+        .select('*, order:orders(id, order_code), provider, status, transaction_type, provider_transaction_id, raw_response, provider_response, batch_id')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (error) {
+        console.error('[ADMIN] admin client error fetching transactions:', error);
+        return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+      }
+
+      if (process.env.DEBUG === 'true') {
+        console.log('[ADMIN] admin transactions count:', Array.isArray(data) ? data.length : 0);
+      }
+
+      return res.json({ success: true, transactions: data || [], usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[ADMIN] admin client failed to fetch transactions:', e);
+      return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
+    }
   } catch (error) {
     console.error('[ADMIN] Erreur list transactions:', error?.message || error, error?.stack || 'no stack');
     // Avoid leaking sensitive stacks unless DEBUG enabled
