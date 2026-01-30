@@ -388,11 +388,22 @@ app.post('/api/vendor/orders', async (req, res) => {
         });
       }
 
+      // Log and group by status for debugging
+      console.log('[VENDOR ORDERS] Retrieved', Array.isArray(data) ? data.length : 0, 'orders');
+      const byStatus = {};
+      if (Array.isArray(data)) {
+        for (const o of data) {
+          byStatus[o.status] = (byStatus[o.status] || 0) + 1;
+        }
+      }
+
       return res.json({ 
         success: true, 
         orders: data || [],
         count: data?.length || 0,
-        usingServiceRole: true
+        byStatus,
+        usingServiceRole: true,
+        timestamp: new Date().toISOString()
       });
     } else {
       // Fallback avec le client normal
@@ -510,7 +521,50 @@ app.get('/api/vendor/transactions', async (req, res) => {
 
     console.log('[VENDOR] fetching transactions for vendor:', userId);
 
-    // Récupérer les commandes du vendeur
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+        const { data: orderRows, error: ordersError } = await supabaseAdmin
+          .from('orders')
+          .select('id')
+          .eq('vendor_id', userId);
+
+        if (ordersError) {
+          console.error('[VENDOR] admin Error fetching orders for vendor transactions:', ordersError);
+          return res.status(500).json({ success: false, error: 'Erreur serveur' });
+        }
+
+        const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+        if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
+
+        const { data, error } = await supabaseAdmin
+          .from('payment_transactions')
+          .select('*')
+          .in('order_id', orderIds)
+          .in('transaction_type', ['payout','vendor_payout'])
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('[VENDOR] Error fetching transactions (admin):', error);
+          return res.status(500).json({ success: false, error: 'Erreur serveur' });
+        }
+
+        if (process.env.DEBUG === 'true') {
+          console.log('[VENDOR] /api/vendor/transactions count (admin):', Array.isArray(data) ? data.length : 0);
+          return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) }, usingServiceRole: true, timestamp: new Date().toISOString() });
+        }
+
+        return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+      } catch (e) {
+        console.error('[VENDOR] admin client failed:', e);
+        // fallback to normal flow
+      }
+    }
+
+    // Récupérer les commandes du vendeur (fallback)
     const { data: orderRows, error: ordersError } = await supabase
       .from('orders')
       .select('id')
@@ -541,7 +595,7 @@ app.get('/api/vendor/transactions', async (req, res) => {
       return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } });
     }
 
-    return res.json({ success: true, transactions: data || [] });
+    return res.json({ success: true, transactions: data || [], count: data?.length || 0 });
   } catch (err) {
     console.error('[VENDOR] /api/vendor/transactions error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -614,8 +668,32 @@ app.post('/api/delivery/my-orders', async (req, res) => {
 
     console.log('[API/delivery/my-orders] Request for deliveryPersonId:', deliveryPersonId);
 
-    // Run the query and capture any detailed errors
-    let data = null;
+    // Use service role client when available for deterministic visibility
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        const { data, error } = await supabaseAdmin
+          .from('orders')
+          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+          .eq('delivery_person_id', deliveryPersonId)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('[API/delivery/my-orders] admin query error:', error);
+          return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
+        }
+
+        console.log('[API/delivery/my-orders] admin query returned', Array.isArray(data) ? data.length : 0, 'orders');
+        return res.json({ success: true, orders: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+      } catch (e) {
+        console.error('[API/delivery/my-orders] admin client failed:', e);
+        // fallback to normal flow below
+      }
+    }
+
+    // Fallback: regular server client (may be subject to RLS depending on config)
     try {
       const q = supabase
         .from('orders')
@@ -625,20 +703,17 @@ app.post('/api/delivery/my-orders', async (req, res) => {
         .order('created_at', { ascending: false });
 
       const result = await q;
-      data = result.data;
-      const queryError = result.error;
-      if (queryError) {
-        console.error('[API/delivery/my-orders] Supabase query returned error:', queryError);
-        return res.status(500).json({ success: false, error: 'Erreur DB', details: queryError.message, meta: queryError });
+      const data = result.data;
+      if (result.error) {
+        console.error('[API/delivery/my-orders] Supabase query returned error:', result.error);
+        return res.status(500).json({ success: false, error: 'Erreur DB', details: result.error.message });
       }
+      console.log('[API/delivery/my-orders] query returned', Array.isArray(data) ? data.length : 0, 'orders');
+      return res.json({ success: true, orders: data || [], count: data?.length || 0 });
     } catch (queryEx) {
       console.error('[API/delivery/my-orders] Exception during Supabase query:', queryEx);
       return res.status(500).json({ success: false, error: 'Erreur DB (exception)', details: String(queryEx) });
     }
-
-    console.log('[API/delivery/my-orders] query returned', Array.isArray(data) ? data.length : 0, 'orders');
-    if (Array.isArray(data) && data.length > 0) console.log('[API/delivery/my-orders] sample:', (data || []).slice(0,5).map(o => ({ id: o.id, status: o.status, delivery_person_id: o.delivery_person_id })));
-    return res.json({ success: true, orders: data || [] });
   } catch (err) {
     console.error('[API/delivery/my-orders] Exception:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
@@ -678,7 +753,46 @@ app.get('/api/delivery/transactions', async (req, res) => {
 
     console.log('[DELIVERY] fetching transactions for deliveryPerson:', userId);
 
-    // Get order ids assigned to this delivery person
+    // Use service role client when available for deterministic visibility
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let orderIds = [];
+    if (serviceRoleKey) {
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        const { data: orderRows, error: ordersError } = await supabaseAdmin
+          .from('orders')
+          .select('id')
+          .eq('delivery_person_id', userId);
+
+        if (ordersError) {
+          console.error('[DELIVERY] admin Error fetching orders for delivery person transactions:', ordersError);
+          return res.status(500).json({ success: false, error: 'Erreur serveur' });
+        }
+
+        orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+        if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
+
+        const { data, error } = await supabaseAdmin
+          .from('payment_transactions')
+          .select('*')
+          .in('order_id', orderIds)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('[DELIVERY] Error fetching transactions (admin):', error);
+          return res.status(500).json({ success: false, error: 'Erreur serveur' });
+        }
+
+        console.log('[DELIVERY] /api/delivery/transactions count (admin):', Array.isArray(data) ? data.length : 0);
+        return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+      } catch (e) {
+        console.error('[DELIVERY] admin client failed:', e);
+        // fallback to normal flow below
+      }
+    }
+
+    // Get order ids assigned to this delivery person (fallback)
     const { data: orderRows, error: ordersError } = await supabase
       .from('orders')
       .select('id')
@@ -689,7 +803,7 @@ app.get('/api/delivery/transactions', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
 
-    const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+    orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
     if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
 
     const { data, error } = await supabase
