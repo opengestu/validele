@@ -19,7 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { API_BASE, apiUrl, postProfileUpdate } from '@/lib/api';
+import { API_BASE, apiUrl, postProfileUpdate, getProfileById } from '@/lib/api';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import useNetwork from '@/hooks/useNetwork';
@@ -198,7 +198,7 @@ const BuyerDashboard = () => {
         qr_code: o.qr_code || o.token || null,
       }));
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
-      const normalizedOrders = (data || [])
+      let normalizedOrders = (data || [])
         .filter((o) => typeof o.status === 'string' && allowedStatus.includes(o.status))
         .map((o) => ({
           ...o,
@@ -206,6 +206,46 @@ const BuyerDashboard = () => {
           assigned_at: o.assigned_at ?? undefined,
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
+
+      // If some orders are missing vendor/delivery profiles, try to fetch them via backend profile endpoint (batch)
+      try {
+        const missingVendorIds = Array.from(new Set(normalizedOrders.filter(o => !o.profiles && o.vendor_id).map(o => String(o.vendor_id))));
+        const missingDeliveryIds = Array.from(new Set(normalizedOrders.filter(o => !o.delivery_person && o.delivery_person_id).map(o => String(o.delivery_person_id))));
+
+        // Helper to fetch and return profile map
+        const fetchProfilesMap = async (ids: string[]) => {
+          const map: Record<string, any> = {};
+          await Promise.all(ids.map(async (id) => {
+            try {
+              const { ok, json } = await getProfileById(id);
+              if (ok && json) {
+                const profile = json.profile ?? json;
+                if (profile && profile.id) map[id] = profile;
+              }
+            } catch (e) {
+              console.warn('[BUYER] failed to fetch profile for id', id, e);
+            }
+          }));
+          return map;
+        };
+
+        const vendorMap = missingVendorIds.length > 0 ? await fetchProfilesMap(missingVendorIds) : {};
+        const deliveryMap = missingDeliveryIds.length > 0 ? await fetchProfilesMap(missingDeliveryIds) : {};
+
+        // Merge profiles into orders
+        normalizedOrders = normalizedOrders.map(o => {
+          const copy = { ...o } as any;
+          if (!copy.profiles && copy.vendor_id && vendorMap[String(copy.vendor_id)]) {
+            copy.profiles = vendorMap[String(copy.vendor_id)];
+          }
+          if (!copy.delivery_person && copy.delivery_person_id && deliveryMap[String(copy.delivery_person_id)]) {
+            copy.delivery_person = deliveryMap[String(copy.delivery_person_id)];
+          }
+          return copy as Order;
+        });
+      } catch (fetchProfileErr) {
+        console.warn('[BUYER] profile enrichment failed:', fetchProfileErr);
+      }
 
       // Cache les dernières commandes connues pour éviter le "flash" si le backend
       // renvoie temporairement une liste vide (problèmes de session / propagation).
