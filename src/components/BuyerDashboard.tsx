@@ -158,41 +158,45 @@ const BuyerDashboard = () => {
         return;
       }
       let data: Array<Record<string, unknown>> = [];
-      if (smsSessionStr) {
-        // Correction: Utiliser GET si le backend ne supporte pas POST, sinon corriger l'endpoint ici
-        const sms = JSON.parse(smsSessionStr || '{}');
-        const token = sms?.access_token || sms?.token || sms?.jwt || '';
-        // Essayez d'abord GET, sinon adaptez ici selon votre backend
-        const resp = await fetch(apiUrl(`/api/buyer/orders?buyer_id=${buyerId}`), {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const json = await resp.json().catch(() => null);
-        if (!resp.ok || !json || !json.success) {
-          throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+      // Use server endpoint for both SMS and Supabase sessions to avoid RLS issues.
+      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
+      let token = sms?.access_token || sms?.token || sms?.jwt || '';
+      if (!token) {
+        // Try to get Supabase session access token
+        try {
+          const sessRes = await supabase.auth.getSession();
+          const sess = sessRes.data?.session ?? null;
+          token = sess?.access_token || '';
+        } catch (e) {
+          // ignore
+          token = '';
         }
-        data = json.orders || [];
-
-        // Normalisation: backend retourne `vendor` et `delivery` (ou vendor/delivery), adapter au format attendu côté UI
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data = (data || []).map((o: any) => ({
-          ...o,
-          // Adapter les clés venant du backend à celles attendues par l'UI
-          profiles: o.profiles || o.vendor || null,
-          delivery_person: o.delivery_person || o.delivery || null,
-          products: o.products || o.product || null,
-          // qr_code peut venir sous différentes formes (qr_code / token)
-          qr_code: o.qr_code || o.token || null,
-        }));
-      } else {
-        const { data: supData, error } = await supabase
-          .from('orders')
-          .select(`*, products(name), profiles!orders_vendor_id_fkey(full_name, phone), delivery_person:profiles!orders_delivery_person_id_fkey(full_name, phone)`)
-          .eq('buyer_id', buyerId)
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        data = supData || [];
       }
+
+      // Call server endpoint; fallback to query param buyer_id if no token
+      const url = apiUrl(`/api/buyer/orders?buyer_id=${buyerId}`);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const resp = await fetch(url, { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+      }
+
+      data = json.orders || [];
+
+      // Normalisation: backend retourne `vendor` et `delivery` (ou vendor/delivery), adapter au format attendu côté UI
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data = (data || []).map((o: any) => ({
+        ...o,
+        // Adapter les clés venant du backend à celles attendues par l'UI
+        profiles: o.profiles || o.vendor || null,
+        delivery_person: o.delivery_person || o.delivery || null,
+        products: o.products || o.product || null,
+        // qr_code peut venir sous différentes formes (qr_code / token)
+        qr_code: o.qr_code || o.token || null,
+      }));
       const allowedStatus = ['paid', 'in_delivery', 'delivered', 'refunded', 'cancelled'];
       const normalizedOrders = (data || [])
         .filter((o) => typeof o.status === 'string' && allowedStatus.includes(o.status))
@@ -202,7 +206,36 @@ const BuyerDashboard = () => {
           assigned_at: o.assigned_at ?? undefined,
           delivered_at: o.delivered_at ?? undefined,
         })) as Order[];
-      setOrders(normalizedOrders);
+
+      // Cache les dernières commandes connues pour éviter le "flash" si le backend
+      // renvoie temporairement une liste vide (problèmes de session / propagation).
+      const cacheKey = `cached_buyer_orders_${buyerId}`;
+      try {
+        if (normalizedOrders.length > 0) {
+          localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() }));
+          setOrders(normalizedOrders);
+        } else {
+          // Si la réponse est vide, tenter d'utiliser le cache récent (<5min)
+          const raw = localStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.orders && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
+              console.warn('[BUYER] backend returned empty orders — using cached orders to avoid flicker');
+              setOrders(parsed.orders as Order[]);
+              // Schedule a quick retry to get fresh data
+              setTimeout(() => { fetchOrders(); }, 2000);
+            } else {
+              // Cache stale or absent — clear orders
+              setOrders([]);
+            }
+          } else {
+            setOrders([]);
+          }
+        }
+      } catch (e) {
+        console.warn('[BUYER] cache error:', e);
+        setOrders(normalizedOrders);
+      }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
       toast({
@@ -221,33 +254,34 @@ const BuyerDashboard = () => {
     if (!user && !smsSessionStr) return;
 
     try {
-      // Étape 1: récupérer les commandes de l'acheteur pour éviter un JOIN FK manquant
+      // Use server endpoint to fetch transactions (handles auth and RLS safely)
       const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) return;
 
-      const { data: orderRows, error: ordersError } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('buyer_id', buyerId);
-
-      if (ordersError) throw ordersError;
-
-      const orderIds = (orderRows || []).map((row) => row.id);
-      if (orderIds.length === 0) {
-        setTransactions([]);
-        return;
+      // Determine token (SMS session or Supabase session)
+      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
+      let token = sms?.access_token || sms?.token || sms?.jwt || '';
+      if (!token) {
+        try {
+          const sessRes = await supabase.auth.getSession();
+          const sess = sessRes.data?.session ?? null;
+          token = sess?.access_token || '';
+        } catch (e) {
+          token = '';
+        }
       }
 
-      // Étape 2: récupérer les transactions liées aux commandes de l'acheteur
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
-        .from('payment_transactions')
-        .select('*')
-        .in('order_id', orderIds)
-        .order('created_at', { ascending: false });
+      const url = apiUrl(`/api/buyer/transactions?buyer_id=${buyerId}`);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      if (error) throw error;
-      const txs = (data || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
+      const resp = await fetch(url, { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+      }
+
+      const txs = (json.transactions || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
       setTransactions(txs);
       try { localStorage.setItem(`cached_buyer_transactions_${buyerId}`, JSON.stringify(txs)); } catch(e) { /* ignore */ }
     } catch (error) {
@@ -1589,9 +1623,6 @@ const BuyerDashboard = () => {
                                       <div className="flex items-center gap-3">
                                         <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
                                         <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person.full_name}</span>
-                                        {order.delivery_person.phone && (
-                                          <span className="text-xs text-gray-500 whitespace-nowrap">{order.delivery_person.phone}</span>
-                                        )}
                                       </div>
                                       {order.delivery_person.phone && (
                                         <div className="flex items-center gap-3 text-sm">

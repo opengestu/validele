@@ -3428,6 +3428,71 @@ app.get('/api/buyer/orders', async (req, res) => {
   }
 });
 
+// BUYER: Transactions liées aux commandes de l'acheteur
+app.get('/api/buyer/transactions', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let buyerId = req.query.buyer_id;
+    let userId = null;
+
+    // 1) Try JWT (SMS sessions)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) {
+          userId = decoded.sub;
+        }
+      } catch (e) {
+        // not a JWT we issued, try Supabase
+        try {
+          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+          if (!authErr && user) userId = user.id;
+        } catch (e2) {
+          // ignore
+        }
+      }
+    }
+
+    // fallback to buyer_id query param (dev/test)
+    if (!userId && buyerId) userId = buyerId;
+
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token ou buyer_id query param)' });
+
+    console.log('[BUYER] fetching transactions for buyer:', userId);
+
+    // Récupérer les commandes de l'acheteur
+    const { data: orderRows, error: ordersError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('buyer_id', userId);
+
+    if (ordersError) {
+      console.error('[BUYER] Error fetching buyer orders for transactions:', ordersError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+    if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
+
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[BUYER] Error fetching transactions:', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    return res.json({ success: true, transactions: data || [] });
+  } catch (err) {
+    console.error('[BUYER] /api/buyer/transactions error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // ==========================================
 // ENDPOINT CREATE ORDER AND INVOICE
 // ==========================================
