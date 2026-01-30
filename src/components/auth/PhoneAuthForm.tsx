@@ -54,6 +54,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [confirmPinDigits, setConfirmPinDigits] = useState(['', '', '', '']);
   const [loginPinDigits, setLoginPinDigits] = useState(['', '', '', '']);
+  // Store OTP code used for reset so we can re-verify server-side when saving the new PIN
+  const [resetOtpCode, setResetOtpCode] = useState('');
  
   // Refs stables pour les inputs
   const otpRef0 = useRef<HTMLInputElement>(null);
@@ -355,6 +357,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         // OTP validé - vérifier si c'est une réinitialisation de PIN
         if (isResetPin) {
           // Mode réinitialisation - créer un nouveau PIN
+          // Save the otp code so we can re-verify server-side when saving the new PIN
+          setResetOtpCode(otpCode);
           toast({
             title: "Identité confirmée ! ✅",
             description: "Créez votre nouveau code PIN",
@@ -547,12 +551,27 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       if (!existingProfile?.id) {
         throw new Error('Profil utilisateur introuvable');
       }
-      // Mettre à jour uniquement le PIN (utiliser rpc ou raw query si la colonne n'est pas dans le type)
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ pin_hash: formData.pin } as Record<string, unknown>)
-        .eq('id', existingProfile.id);
-      if (updateError) throw updateError;
+      // Validate PIN locally
+      if (!formData.pin || String(formData.pin).length !== 4 || !/^[0-9]{4}$/.test(String(formData.pin))) {
+        throw new Error('PIN invalide');
+      }
+
+      // Call backend endpoint to securely verify OTP and save hashed PIN
+      const body = {
+        phone: formData.phone,
+        code: resetOtpCode,
+        newPin: String(formData.pin)
+      };
+      const resp = await fetch(apiUrl('/api/auth/reset-pin'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(json?.error || 'Impossible de réinitialiser le PIN');
+      }
+
       // Créer la session locale
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
@@ -578,9 +597,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       window.location.href = redirectPath;
     } catch (error: unknown) {
       console.error('Erreur mise à jour PIN:', error);
+      const message = (error instanceof Error) ? error.message : 'Impossible de sauvegarder le PIN';
       toast({
         title: "Erreur",
-        description: "Impossible de sauvegarder le PIN",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -1084,7 +1104,17 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-sm text-muted-foreground mt-1">Entrez votre code PIN pour continuer</p>
             </div>
             <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
-            {renderNumericKeypad()} 
+            {renderNumericKeypad()}
+            <div className="text-center mt-3">
+              <button
+                type="button"
+                onClick={() => handleForgotPin()}
+                disabled={!formData.phone || loading}
+                className="text-sm text-primary hover:underline"
+              >
+                PIN oublié ?
+              </button>
+            </div>
           </>
         )}
 

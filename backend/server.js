@@ -662,6 +662,9 @@ app.post('/api/otp/verify', async (req, res) => {
 
     const result = await verifyOTP(formattedPhone, code);
 
+    // New endpoint support: /api/auth/reset-pin will re-call verifyOTP server-side; no changes here
+    
+
 // Génération de JWT pour vendeur SMS après login (à appeler côté frontend après login PIN ou OTP validé)
 app.post('/api/vendor/generate-jwt', async (req, res) => {
   try {
@@ -3609,6 +3612,70 @@ app.post('/api/orange-money/otp', async (req, res) => {
       message: 'Erreur lors du paiement Orange Money OTP',
       error: error?.response?.data || error.message
     });
+  }
+});
+
+// Endpoint pour réinitialiser le PIN via OTP (sécurisé côté serveur)
+app.post('/api/auth/reset-pin', async (req, res) => {
+  try {
+    const { phone, code, newPin } = req.body || {};
+    if (!phone || !code || !newPin) return res.status(400).json({ success: false, error: 'phone, code et newPin requis' });
+    if (!/^[0-9]{4}$/.test(String(newPin))) return res.status(400).json({ success: false, error: 'newPin doit être 4 chiffres' });
+
+    // Formatter le numéro
+    let formattedPhone = String(phone).replace(/[\s\-\(\)]/g, '');
+    if (!formattedPhone.startsWith('+')) {
+      if (formattedPhone.startsWith('221')) formattedPhone = '+' + formattedPhone;
+      else formattedPhone = '+221' + formattedPhone;
+    }
+
+    // Vérifier l'OTP côté serveur
+    try {
+      const otpRes = await verifyOTP(formattedPhone, String(code));
+      if (!otpRes || !otpRes.valid) {
+        return res.status(400).json({ success: false, error: 'OTP invalide' });
+      }
+    } catch (e) {
+      console.error('[RESET-PIN] verifyOTP failed:', e);
+      return res.status(400).json({ success: false, error: 'OTP invalide ou erreur fournisseur' });
+    }
+
+    // Chercher le profil (recherche tolerant sur les 9 derniers chiffres comme ailleurs)
+    const digitsOnly = formattedPhone.replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const { data: profiles, error: profErr } = await supabase
+      .from('profiles')
+      .select('id')
+      .ilike('phone', `%${last9}%`)
+      .limit(1);
+
+    if (profErr) {
+      console.error('[RESET-PIN] Erreur recherche profil:', profErr);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+    if (!profiles || profiles.length === 0) {
+      return res.status(404).json({ success: false, error: 'Profil non trouvé' });
+    }
+    const profileId = profiles[0].id;
+
+    // Hasher le PIN côté serveur (bcrypt)
+    try {
+      const bcrypt = require('bcryptjs');
+      const hashed = await bcrypt.hash(String(newPin), 10);
+      const { error: updateErr } = await supabase.from('profiles').update({ pin_hash: hashed }).eq('id', profileId);
+      if (updateErr) {
+        console.error('[RESET-PIN] Erreur update:', updateErr);
+        return res.status(500).json({ success: false, error: 'Erreur sauvegarde PIN' });
+      }
+    } catch (e) {
+      console.error('[RESET-PIN] Hash/update error:', e);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[RESET-PIN] Exception:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
