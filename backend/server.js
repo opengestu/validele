@@ -2505,14 +2505,34 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 // List payout batches
 app.get('/api/admin/payout-batches', requireAdmin, async (req, res) => {
   try {
-    const { data: batches, error } = await supabase.from('payout_batches').select('*').order('created_at', { ascending: false }).limit(200);
-    if (error) throw error;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.warn('[ADMIN] SUPABASE_SERVICE_ROLE_KEY not configured - falling back to RLS-bound client for payout batches');
+      const { data: batches, error } = await supabase.from('payout_batches').select('*').order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      const batchIds = (batches || []).map(b => b.id);
+      const { data: items } = await supabase.from('payout_batch_items').select('*').in('batch_id', batchIds || []);
+      return res.json({ success: true, batches, items: items || [], usingServiceRole: false });
+    }
 
-    // For convenience, fetch items for each batch
-    const batchIds = batches.map(b => b.id);
-    const { data: items } = await supabase.from('payout_batch_items').select('*').in('batch_id', batchIds);
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-    res.json({ success: true, batches, items: items || [] });
+      const { data: batches, error: batchesErr } = await supabaseAdmin.from('payout_batches').select('*').order('created_at', { ascending: false }).limit(200);
+      if (batchesErr) throw batchesErr;
+
+      const batchIds = (batches || []).map(b => b.id);
+      const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*').in('batch_id', batchIds || []);
+      if (itemsErr) {
+        console.warn('[ADMIN] warning fetching payout_batch_items (admin):', itemsErr.message || itemsErr);
+      }
+
+      return res.json({ success: true, batches, items: items || [], usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[ADMIN] failed fetching payout batches as admin:', e);
+      return res.status(500).json({ success: false, error: 'Server error fetching payout batches', details: String(e) });
+    }
   } catch (error) {
     console.error('[ADMIN] list payout batches error:', error);
     res.status(500).json({ success: false, error: String(error) });
@@ -2525,14 +2545,33 @@ app.get('/api/admin/payout-batches/:id/details', requireAdmin, async (req, res) 
     const batchId = req.params.id;
     if (!batchId) return res.status(400).json({ success: false, error: 'batch id required' });
 
-    const { data: batch, error: batchErr } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    if (batchErr) throw batchErr;
-    if (!batch) return res.status(404).json({ success: false, error: 'Batch not found' });
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.warn('[ADMIN] SUPABASE_SERVICE_ROLE_KEY not configured - falling back to RLS-bound client for batch details');
+      const { data: batch, error: batchErr } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+      if (batchErr) throw batchErr;
+      if (!batch) return res.status(404).json({ success: false, error: 'Batch not found' });
+      const { data: items, error: itemsErr } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type)').eq('batch_id', batchId).order('id', { ascending: true });
+      if (itemsErr) throw itemsErr;
+      return res.json({ success: true, batch, items: items || [], usingServiceRole: false });
+    }
 
-    const { data: items, error: itemsErr } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, payout_status), vendor:profiles(id, full_name, phone, wallet_type)').eq('batch_id', batchId).order('id', { ascending: true });
-    if (itemsErr) throw itemsErr;
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-    res.json({ success: true, batch, items: items || [] });
+      const { data: batch, error: batchErr } = await supabaseAdmin.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+      if (batchErr) throw batchErr;
+      if (!batch) return res.status(404).json({ success: false, error: 'Batch not found' });
+
+      const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type)').eq('batch_id', batchId).order('id', { ascending: true });
+      if (itemsErr) throw itemsErr;
+
+      return res.json({ success: true, batch, items: items || [], usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[ADMIN] failed fetching batch details as admin:', e);
+      return res.status(500).json({ success: false, error: 'Server error fetching batch details', details: String(e) });
+    }
   } catch (err) {
     console.error('[ADMIN] get batch details error:', err);
     res.status(500).json({ success: false, error: String(err) });
