@@ -881,7 +881,7 @@ const BuyerDashboard = () => {
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
-            storeName: searchResult.profiles?.company_name || ''
+            storeName: (searchResult.profiles as any)?.company_name || ''
           }
         });
 
@@ -933,7 +933,7 @@ const BuyerDashboard = () => {
             buyer_phone: userProfile?.phone || '',
             delivery_address: 'Adresse à définir',
             description: searchResult.description,
-            storeName: searchResult.profiles?.full_name || searchResult.profiles?.company_name || 'Boutique'
+            storeName: searchResult.profiles?.full_name || (searchResult.profiles as any)?.company_name || 'Boutique'
           })
         },
         60000 // 60 secondes pour gérer le cold start
