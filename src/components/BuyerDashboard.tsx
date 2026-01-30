@@ -881,8 +881,7 @@ const BuyerDashboard = () => {
           orderId: createdOrderId,
           customData: {
             description: `Achat ${searchResult.name}`,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            storeName: (searchResult.profiles as any)?.company_name || ''
+            storeName: searchResult.profiles?.company_name || ''
           }
         });
 
@@ -934,8 +933,7 @@ const BuyerDashboard = () => {
             buyer_phone: userProfile?.phone || '',
             delivery_address: 'Adresse à définir',
             description: searchResult.description,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            storeName: searchResult.profiles?.full_name || (searchResult.profiles as any)?.company_name || 'Boutique'
+            storeName: searchResult.profiles?.full_name || searchResult.profiles?.company_name || 'Boutique'
           })
         },
         60000 // 60 secondes pour gérer le cold start
@@ -1176,8 +1174,8 @@ const BuyerDashboard = () => {
     else if (status === 'cancelled') { bg = 'bg-red-100 text-red-700'; dot = 'bg-red-500'; }
 
     return (
-      <span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-base ${bg}`} role="status" aria-label={text}>
-        <span className={`w-2.5 h-2.5 rounded-full ${dot} flex-shrink-0`} />
+      <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${bg}`} role="status" aria-label={text}>
+        <span className={`w-2 h-2 rounded-full ${dot} flex-shrink-0`} />
         <span className="leading-none">{text}</span>
       </span>
     );
@@ -1615,11 +1613,11 @@ const BuyerDashboard = () => {
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <p className="font-semibold text-gray-900 break-words text-lg md:text-xl max-w-[220px] xs:max-w-[260px] sm:max-w-none truncate">
+                                  <p className="font-semibold text-gray-900 break-words text-sm max-w-[220px] xs:max-w-[260px] sm:max-w-none truncate">
                                     {order.products?.name || 'Commande'}
                                   </p>
                                   <div className="flex items-center gap-2">
-                                    <span className="text-lg md:text-xl font-bold text-green-600">
+                                    <span className="text-sm font-semibold text-green-600">
                                       {order.total_amount?.toLocaleString()} FCFA
                                     </span>
                                   </div>
@@ -1627,22 +1625,22 @@ const BuyerDashboard = () => {
                                 <div className="mt-2 space-y-1 text-sm text-gray-600">
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-3">
-                                      <span className="font-medium text-gray-700 text-sm whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 truncate text-sm">{order.profiles?.full_name || 'N/A'}</span>
+                                      <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur(se):</span>
+                                      <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-sm">
-                                        <span className="font-medium text-gray-700 text-sm whitespace-nowrap">Contacts:</span>
+                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
                                         <div className="flex items-center gap-2">
                                           <Tooltip>
                                             <TooltipTrigger asChild>
                                               <a
                                                 href={`tel:${order.profiles.phone}`}
-                                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100 transition min-w-[64px]"
+                                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
                                                 aria-label="Appeler le vendeur(se)"
                                               >
-                                                <PhoneIcon className="h-4 w-4" size={16} />
-                                                <span className="ml-1 text-sm leading-tight">Appeler</span>
+                                                <PhoneIcon className="h-4 w-4" size={14} />
+                                                <span className="ml-1 text-[11px] leading-tight">Appeler</span>
                                               </a>
                                             </TooltipTrigger>
                                             <TooltipContent>Appeler le vendeur(se)</TooltipContent>
@@ -1652,11 +1650,11 @@ const BuyerDashboard = () => {
                                             href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-green-50 text-green-700 text-sm font-medium hover:bg-green-100 transition min-w-[64px]"
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 text-green-700 text-[11px] font-medium hover:bg-green-100 transition min-w-[56px]"
                                             title="Contacter sur WhatsApp"
                                           >
-                                            <WhatsAppIcon className="h-4 w-4" size={16} />
-                                            <span className="ml-1 text-sm leading-tight">WhatsApp</span>
+                                            <WhatsAppIcon className="h-4 w-4" size={14} />
+                                            <span className="ml-1 text-[11px] leading-tight">WhatsApp</span>
                                           </a>
                                         </div>
                                       </div>
@@ -1665,32 +1663,29 @@ const BuyerDashboard = () => {
                                   {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
                                     <div className="flex flex-col gap-1 mt-3">
                                       <div className="flex items-center gap-3">
-                                        <span className="font-medium text-gray-700 text-sm whitespace-nowrap">Livreur:</span>
-                                        <span className="flex-1 min-w-0 truncate text-sm">{order.delivery_person?.full_name || ((order.delivery_person as unknown) as { company_name?: string })?.company_name || 'N/A'}</span>
+                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
+                                        <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person?.full_name || (order.status === 'in_delivery' ? "En cours d'affectation" : 'N/A')}</span>
                                       </div>
-
                                       {order.delivery_person?.phone ? (
                                         <div className="flex items-center gap-3 text-sm">
-                                          <span className="font-medium text-gray-700 text-sm whitespace-nowrap">Contacts:</span>
+                                          <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
                                           <div className="flex items-center gap-2">
                                             <Tooltip>
                                               <TooltipTrigger asChild>
                                                 <a
                                                   href={`tel:${order.delivery_person.phone}`}
-                                                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100 transition min-w-[64px]"
+                                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
                                                   aria-label="Appeler le livreur"
                                                 >
-                                                  <PhoneIcon className="h-4 w-4" size={16} />
-                                                  <span className="ml-1 text-sm leading-tight">Appeler</span>
+                                                  <PhoneIcon className="h-4 w-4" size={14} />
+                                                  <span className="ml-1 text-[11px] leading-tight">Appeler</span>
                                                 </a>
                                               </TooltipTrigger>
                                               <TooltipContent>Appeler le livreur</TooltipContent>
                                             </Tooltip>
                                           </div>
                                         </div>
-                                      ) : (
-                                        <div className="text-sm text-gray-400 mt-1">Numéro non disponible</div>
-                                      )}
+                                      ) : null}
                                     </div>
                                   )}
                                 </div>
@@ -1753,16 +1748,16 @@ const BuyerDashboard = () => {
                             <div className="flex flex-wrap gap-2">
                               {order.qr_code ? (
                                 <button
-                                  className="rounded-md border border-orange-400 px-4 py-2 text-base font-medium text-orange-600 hover:bg-orange-50"
+                                  className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
                                   onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
                                 >
                                   Voir QR code
                                 </button>
                               ) : (
-                                <span className="text-sm text-gray-400">QR code indisponible</span>
+                                <span className="text-xs text-gray-400">QR code indisponible</span>
                               )}
                               <button
-                                className="rounded-md border border-blue-500 px-4 py-2 text-base font-medium text-blue-600 hover:bg-blue-50"
+                                className="rounded-md border border-blue-500 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50"
                                 onClick={toggleDetails}
                               >
                                 {isExpanded ? 'Masquer les détails' : 'Détails'}

@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { postProfileUpdate, getProfileById } from '@/lib/api';
+import { postProfileUpdate, getProfileById, apiUrl } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
 

@@ -3730,24 +3730,70 @@ app.get('/api/buyer/orders', async (req, res) => {
 
     console.log('[BUYER] fetching orders for buyer:', userId);
 
-    const { data: orders, error } = await supabase
-      .from('orders')
-      .select(`
-        id, order_code, total_amount, status, vendor_id, product_id, created_at,
-        product:products(id, name, price, description),
-        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
-        delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
-        qr_code
-      `)
-      .eq('buyer_id', userId)
-      .order('created_at', { ascending: false });
+    // If service role key is available, use an admin client to bypass RLS and ensure
+    // delivery/vendor profiles are always joined and visible. Otherwise fall back to
+    // the normal supabase client (RLS-bound) but emit extra diagnostics.
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let orders = null;
+    let queryError = null;
+    try {
+      if (serviceRoleKey) {
+        const { createClient } = require('@supabase/supabase-js');
+        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        const q = await supabaseAdmin
+          .from('orders')
+          .select(`
+            id, order_code, total_amount, status, vendor_id, product_id, created_at,
+            product:products(id, name, price, description),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
+            qr_code, delivery_person_id
+          `)
+          .eq('buyer_id', userId)
+          .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('[BUYER] Erreur récupération commandes:', error);
-      return res.status(500).json({ success: false, error: error.message || 'Erreur serveur' });
+        orders = q.data;
+        queryError = q.error;
+      } else {
+        const q = await supabase
+          .from('orders')
+          .select(`
+            id, order_code, total_amount, status, vendor_id, product_id, created_at,
+            product:products(id, name, price, description),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
+            qr_code, delivery_person_id
+          `)
+          .eq('buyer_id', userId)
+          .order('created_at', { ascending: false });
+
+        orders = q.data;
+        queryError = q.error;
+      }
+    } catch (e) {
+      console.error('[BUYER] Exception fetching orders:', e);
+      return res.status(500).json({ success: false, error: String(e) });
     }
 
-    return res.json({ success: true, orders });
+    if (queryError) {
+      console.error('[BUYER] Erreur récupération commandes:', queryError);
+      return res.status(500).json({ success: false, error: queryError.message || 'Erreur serveur' });
+    }
+
+    // Diagnostics: if an order has delivery_person_id but no delivery profile joined,
+    // log a warning to help trace whether delivery_person_id was not set or the join failed.
+    try {
+      const missingDelivery = (orders || []).filter(o => o.delivery_person_id && (!o.delivery || !o.delivery.id));
+      if (missingDelivery.length > 0) {
+        console.warn('[BUYER] Orders with delivery_person_id but missing delivery profile join count:', missingDelivery.length);
+        // Log a sample (ids and delivery_person_id)
+        console.warn('[BUYER] sample missingDelivery:', missingDelivery.slice(0,5).map(o => ({ id: o.id, delivery_person_id: o.delivery_person_id })));
+      }
+    } catch (diagErr) {
+      console.warn('[BUYER] diagnostics failed:', diagErr?.message || diagErr);
+    }
+
+    return res.json({ success: true, orders: orders || [] , usingServiceRole: !!serviceRoleKey, timestamp: new Date().toISOString() });
   } catch (err) {
     console.error('[BUYER] /api/buyer/orders error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
