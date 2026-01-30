@@ -403,6 +403,114 @@ app.post('/api/vendor/orders', async (req, res) => {
   }
 });
 
+// Retourne les produits d'un vendeur (bypass RLS via service or token-aware endpoint)
+app.post('/api/vendor/products', async (req, res) => {
+  try {
+    const { vendor_id } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
+
+    const authHeader = req.headers.authorization || null;
+    let userId = null;
+
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) userId = decoded.sub;
+      } catch (e) {
+        // try Supabase token
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) userId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+
+    if (userId && String(userId) !== String(vendor_id)) {
+      return res.status(403).json({ success: false, error: 'Accès refusé : vendor_id mismatch' });
+    }
+
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('vendor_id', vendor_id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[API] /api/vendor/products supabase error', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+    }
+
+    return res.json({ success: true, products: data || [] });
+  } catch (err) {
+    console.error('[API] /api/vendor/products error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// Transactions (payouts/vendor payouts) liées aux commandes d'un vendor
+app.get('/api/vendor/transactions', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let vendorId = req.query.vendor_id || req.query.vendorId;
+    let userId = null;
+
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) userId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) userId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+
+    if (!userId && vendorId) userId = vendorId;
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token ou vendor_id param)' });
+
+    console.log('[VENDOR] fetching transactions for vendor:', userId);
+
+    // Récupérer les commandes du vendeur
+    const { data: orderRows, error: ordersError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('vendor_id', userId);
+
+    if (ordersError) {
+      console.error('[VENDOR] Error fetching orders for vendor transactions:', ordersError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+    if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
+
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .in('order_id', orderIds)
+      .in('transaction_type', ['payout','vendor_payout'])
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[VENDOR] Error fetching transactions:', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    if (process.env.DEBUG === 'true') {
+      console.log('[VENDOR] /api/vendor/transactions count:', Array.isArray(data) ? data.length : 0);
+      return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } });
+    }
+
+    return res.json({ success: true, transactions: data || [] });
+  } catch (err) {
+    console.error('[VENDOR] /api/vendor/transactions error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

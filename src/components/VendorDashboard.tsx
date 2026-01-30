@@ -229,93 +229,155 @@ const VendorDashboard = () => {
   }, [user, smsUser, toast]);
 // ...existing code...
   const fetchProducts = useCallback(async () => {
-    if (!user) return;
-    console.log('[VendorDashboard] fetchProducts start for vendor', user.id);
-  
+    const caller = smsUser || user;
+    if (!caller) return;
+    console.log('[VendorDashboard] fetchProducts start for vendor', caller?.id);
+
     try {
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('vendor_id', user.id)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      // Convertir null en undefined pour compatibilité avec le type Product
-      const mappedData = (data || []).map(p => ({
-        ...p,
-        description: p.description ?? undefined,
-        category: p.category ?? undefined,
-        image_url: p.image_url ?? undefined,
-        stock_quantity: p.stock_quantity ?? undefined,
-        is_available: p.is_available ?? true
-      })) as Product[];
-      setProducts(mappedData);
-      console.log('[VendorDashboard] fetchProducts success', mappedData.length);
-      try {
-        localStorage.setItem(`cached_products_${user.id}`, JSON.stringify(mappedData));
-      } catch (e) {
-        // ignore cache failures
+      // Get token (SMS JWT or Supabase access token)
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try {
+          const sess = await supabase.auth.getSession();
+          token = sess?.data?.session?.access_token || '';
+        } catch (e) { token = ''; }
       }
-    } catch (error) {
-      console.error('[VendorDashboard] fetchProducts error', error);
-      // Try to use cached products if offline
+
+      const resp = await fetch(apiUrl('/api/vendor/products'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ vendor_id: caller.id })
+      });
+
+      let j: unknown = null;
       try {
-        const cached = localStorage.getItem(`cached_products_${user?.id}`);
+        const ct = resp.headers.get('content-type') || '';
+        if (ct.includes('application/json')) j = await resp.json();
+      } catch (e) {
+        console.warn('[VendorDashboard] /api/vendor/products parse error', e);
+      }
+
+      if (!resp.ok || !j || typeof j !== 'object' || !(j as any).success) {
+        console.warn('[VendorDashboard] backend /api/vendor/products returned non-ok', { status: resp.status, body: j });
+        // fallback to cache
+        try {
+          const cached = localStorage.getItem(`cached_products_${caller.id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached) as Product[];
+            setProducts(parsed);
+            toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
+            return;
+          }
+        } catch (e) { /* ignore */ }
+        throw new Error('Backend returned error');
+      }
+
+      const productsFromBackend = ((j as any).products || []) as Product[];
+      const mappedData = (productsFromBackend || []).map(p => ({
+        ...p,
+        description: (p as any).description ?? undefined,
+        category: (p as any).category ?? undefined,
+        image_url: (p as any).image_url ?? undefined,
+        stock_quantity: (p as any).stock_quantity ?? undefined,
+        is_available: (p as any).is_available ?? true
+      })) as Product[];
+
+      if (mappedData.length > 0) {
+        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
+        setProducts(mappedData);
+      } else {
+        // Empty result: try using recent cache (<5m) and schedule a quick retry
+        try {
+          const raw = localStorage.getItem(`cached_products_${caller.id}`);
+          if (raw) {
+            const parsed = JSON.parse(raw) as Product[];
+            // no ts on old cache -> accept it
+            setProducts(parsed);
+            setTimeout(() => { fetchProducts(); }, 2000);
+          } else {
+            setProducts([]);
+          }
+        } catch (e) {
+          console.warn('[VendorDashboard] cache error while handling empty backend products', e);
+          setProducts([]);
+        }
+      }
+    } catch (err) {
+      console.error('[VendorDashboard] fetchProducts error', err);
+      try {
+        const cached = localStorage.getItem(`cached_products_${caller?.id}`);
         if (cached) {
           const parsed = JSON.parse(cached) as Product[];
           setProducts(parsed);
           toast({ title: 'Hors-ligne', description: 'Affichage des produits en cache' });
           return;
         }
-      } catch (e) {
-        // ignore
-      }
-      toast({
-        title: "Erreur",
-        description: "Impossible de charger les produits",
-        variant: 'destructive'
-      });
+      } catch (e) { /* ignore */ }
+      toast({ title: 'Erreur', description: 'Impossible de charger les produits', variant: 'destructive' });
     }
-  }, [user, toast]);
+  }, [user, smsUser, toast]);
   const fetchTransactions = useCallback(async () => {
-    if (!user) return;
-    console.log('[VendorDashboard] fetchTransactions start for vendor', user.id);
-  
+    const caller = smsUser || user;
+    if (!caller) return;
+    console.log('[VendorDashboard] fetchTransactions start for vendor', caller.id);
+
     try {
-      // Récupérer les transactions de paiement (payouts) pour ce vendeur
-     
-      const { data, error } = await (supabase as any)
-        .from('payment_transactions')
-        .select(`
-          *,
-          orders!inner(vendor_id, order_code, buyer_id)
-        `)
-        .eq('orders.vendor_id', user.id)
-        .eq('transaction_type', 'payout')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setTransactions(data || []);
-      console.log('[VendorDashboard] fetchTransactions success', (data || []).length);
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const sess = await supabase.auth.getSession(); token = sess?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
+
+      const url = apiUrl(`/api/vendor/transactions?vendor_id=${caller.id}`);
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(url, { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+      }
+
+      const txs = (json.transactions || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
+
+      const cacheKey = `cached_transactions_${caller.id}`;
       try {
-        localStorage.setItem(`cached_transactions_${user.id}`, JSON.stringify(data || []));
+        if (txs.length > 0) {
+          localStorage.setItem(cacheKey, JSON.stringify({ transactions: txs, ts: Date.now() }));
+          setTransactions(txs);
+        } else {
+          const raw = localStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.transactions && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
+              console.warn('[VendorDashboard] backend returned empty transactions — using cached transactions to avoid flicker');
+              setTransactions(parsed.transactions);
+              setTimeout(() => { fetchTransactions(); }, 2000);
+            } else {
+              setTransactions([]);
+            }
+          } else {
+            setTransactions([]);
+          }
+        }
       } catch (e) {
-        // ignore
+        console.warn('[VendorDashboard] cache error:', e);
+        setTransactions(txs);
       }
     } catch (error) {
       console.error('[VendorDashboard] fetchTransactions error', error);
       // Try cached transactions
       try {
-        const cached = localStorage.getItem(`cached_transactions_${user?.id}`);
+        const cached = localStorage.getItem(`cached_transactions_${caller?.id}`);
         if (cached) {
-          const parsed = JSON.parse(cached) as any[];
-          setTransactions(parsed as any || []);
-          toast({ title: 'Hors-ligne', description: 'Affichage des transactions en cache' });
-          return;
+          const parsed = JSON.parse(cached) as any;
+          if (parsed && parsed.transactions) {
+            setTransactions(parsed.transactions);
+            toast({ title: 'Hors-ligne', description: 'Affichage des transactions en cache' });
+            return;
+          }
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     }
-  }, [user, toast]);
+  }, [user, smsUser, toast]);
 
   // Fetch profile (keeps parity with BuyerDashboard)
   const fetchProfile = useCallback(async () => {
