@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PinInput from './PinInput';
-import PhoneAuthForm from './PhoneAuthForm';
+import { PhoneAuthForm } from './PhoneAuthForm';
 import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 
@@ -10,6 +10,7 @@ const PhoneLoginFlow: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [checking, setChecking] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [forgotReset, setForgotReset] = useState(false);
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -67,16 +68,17 @@ const PhoneLoginFlow: React.FC = () => {
         <div>
           <h2>Entrez votre code PIN</h2>
           <PinInput onComplete={onPinComplete} />
-          <div style={{ marginTop: 16 }}>
+          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <button onClick={() => setStage('enter-phone')}>Retour</button>
+            <button onClick={() => { setForgotReset(true); setStage('signup'); }} style={{ background: 'none', border: 'none', color: '#0b74de', textDecoration: 'underline', cursor: 'pointer' }}>PIN oublié ?</button>
           </div>
         </div>
       )}
 
       {stage === 'signup' && (
         <div>
-          <h2>Créer un compte</h2>
-          <PhoneAuthForm initialPhone={phone} onBack={() => setStage('enter-phone')} />
+          <h2>Créer un compte / Réinitialiser PIN</h2>
+          <PhoneAuthForm initialPhone={phone} onBack={() => { setStage('enter-phone'); setForgotReset(false); }} startResetPin={forgotReset} />
         </div>
       )}
 

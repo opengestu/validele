@@ -24,9 +24,11 @@ interface PhoneAuthFormProps {
   className?: string;
   /** Show the "Continuer" CTA in the keypad. Default: false. */
   showContinue?: boolean;
+  /** When true and an initialPhone is provided, immediately start the "forgot PIN" flow (send OTP and go to OTP step). */
+  startResetPin?: boolean;
 }
 
-export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false }) => {
+export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false }) => {
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -90,11 +92,27 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Laisse handleSendOTP décider du flow (OTP ou PIN)
       if (!autoStartedRef.current) {
         autoStartedRef.current = true;
-        setTimeout(() => handleSendOTP(initialPhone), 120);
+        setTimeout(() => {
+          if (startResetPin) handleForgotPin(initialPhone);
+          else handleSendOTP(initialPhone);
+        }, 120);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPhone]);
+
+  // Démarrer directement le flux "reset PIN" si demandé via props et si un numéro est pré-rempli
+  useEffect(() => {
+    if (startResetPin && initialPhone && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      // small delay to allow initialPhone to settle
+      setTimeout(() => {
+        // call the forgot handler to send OTP and set reset mode
+        handleForgotPin();
+      }, 150);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startResetPin, initialPhone]);
   // length du numéro (9 chiffres attendus, sans espaces)
   const phoneLen = formData.phone.replace(/\D/g, '').length;
   // Auto-focus sur le premier champ OTP quand on arrive à l'étape OTP
@@ -644,11 +662,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
   };
   // Gérer le PIN oublié
-  const handleForgotPin = async () => {
+  const handleForgotPin = async (phoneOverride?: string) => {
     setLoading(true);
     try {
+      // Format and set phone if override provided or to ensure correct format
+      const rawPhone = phoneOverride || formData.phone;
+      const formatted = formatPhoneNumber(rawPhone || '');
+      setFormData(prev => ({ ...prev, phone: formatted }));
+
       // Envoyer un OTP via Direct7 pour vérifier l'identité
-      await sendOTP(formData.phone);
+      await sendOTP(formatted);
       setIsResetPin(true);
       toast({
         title: "Code envoyé ! 📱",
