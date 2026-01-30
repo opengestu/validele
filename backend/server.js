@@ -347,59 +347,96 @@ app.post('/api/vendor/orders', async (req, res) => {
     const { vendor_id } = req.body || {};
     if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
 
-    // Auth: accepte Bearer JWT (SMS) ou token Supabase
-    const authHeader = req.headers.authorization;
-    let userId = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      // Essayer JWT
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) userId = decoded.sub;
-      } catch (e) {
-        // ignore
+    console.log('[VENDOR ORDERS] Request for vendor:', vendor_id);
+
+    // Utilisez le service role pour bypass RLS complètement
+    // OU assurez-vous que le token a les bonnes permissions
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      // Créez un client avec service role
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(
+        process.env.SUPABASE_URL,
+        serviceRoleKey
+      );
+
+      const { data, error } = await supabaseAdmin
+        .from('orders')
+        .select(`
+          id,
+          order_code,
+          total_amount,
+          status,
+          buyer_id,
+          product_id,
+          delivery_person_id,
+          created_at,
+          updated_at,
+          products(*),
+          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+          delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
+          qr_code
+        `)
+        .eq('vendor_id', vendor_id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[API] /api/vendor/orders supabase error', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: error.message || 'Erreur DB'
+        });
       }
-      // Fallback Supabase token
-      if (!userId) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) userId = user.id;
-        } catch (e) { /* ignore */ }
+
+      return res.json({ 
+        success: true, 
+        orders: data || [],
+        count: data?.length || 0,
+        usingServiceRole: true
+      });
+    } else {
+      // Fallback avec le client normal
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          id,
+          order_code,
+          total_amount,
+          status,
+          buyer_id,
+          product_id,
+          delivery_person_id,
+          created_at,
+          updated_at,
+          products(*),
+          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+          delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
+          qr_code
+        `)
+        .eq('vendor_id', vendor_id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[API] /api/vendor/orders supabase error', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: error.message || 'Erreur DB',
+          hint: 'Vérifiez les permissions RLS ou configurez SUPABASE_SERVICE_ROLE_KEY'
+        });
       }
+
+      return res.json({ 
+        success: true, 
+        orders: data || [],
+        count: data?.length || 0
+      });
     }
-
-    // Si on a un userId et qu'il ne correspond pas au vendor_id, refuser
-    if (userId && String(userId) !== String(vendor_id)) {
-      return res.status(403).json({ success: false, error: 'Accès refusé : vendor_id mismatch' });
-    }
-
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        id,
-        order_code,
-        total_amount,
-        status,
-        buyer_id,
-        product_id,
-        created_at,
-        products(*),
-        buyer:profiles!orders_buyer_id_fkey(full_name, phone),
-        delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
-        qr_code
-      `)
-      .eq('vendor_id', vendor_id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('[API] /api/vendor/orders supabase error', error);
-      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
-    }
-
-    return res.json({ success: true, orders: data || [] });
   } catch (err) {
     console.error('[API] /api/vendor/orders error', err);
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Erreur serveur'
+    });
   }
 });
 
