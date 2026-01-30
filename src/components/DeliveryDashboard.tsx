@@ -399,19 +399,59 @@ const DeliveryDashboard = () => {
     if (!user?.id) return;
     
     try {
-      // Récupérer les transactions de paiement pour les livraisons de ce livreur
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
-        .from('payment_transactions')
-        .select(`
-          *,
-          orders!inner(delivery_person_id, order_code, vendor_id, buyer_id)
-        `)
-        .eq('orders.delivery_person_id', user.id)
-        .order('created_at', { ascending: false });
+      // Use server endpoint to avoid RLS issues and unify auth handling (SMS or Supabase)
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
+      let token = sms?.access_token || sms?.token || sms?.jwt || '';
+      if (!token) {
+        try {
+          const sessRes = await supabase.auth.getSession();
+          token = sessRes?.data?.session?.access_token || '';
+        } catch (e) {
+          token = '';
+        }
+      }
 
-      if (error) throw error;
-      setTransactions(data || []);
+      const url = apiUrl(`/api/delivery/transactions?delivery_person_id=${user.id}`);
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const resp = await fetch(url, { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        throw new Error((json && json.error) ? String(json.error) : `Backend returned ${resp.status}`);
+      }
+
+      const txs = (json.transactions || []) as Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>;
+
+      // Cache to prevent flicker when backend temporarily returns empty
+      const cacheKey = `cached_delivery_transactions_${user.id}`;
+      try {
+        if (txs.length > 0) {
+          localStorage.setItem(cacheKey, JSON.stringify({ transactions: txs, ts: Date.now() }));
+          setTransactions(txs);
+        } else {
+          // Use cached recent transactions (<5min) when server returns empty
+          const raw = localStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.transactions && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
+              console.warn('[DeliveryDashboard] backend returned empty transactions — using cached transactions to avoid flicker');
+              setTransactions(parsed.transactions);
+              // schedule a quick retry
+              setTimeout(() => { fetchTransactions(); }, 2000);
+            } else {
+              setTransactions([]);
+            }
+          } else {
+            setTransactions([]);
+          }
+        }
+      } catch (e) {
+        console.warn('[DeliveryDashboard] cache error:', e);
+        setTransactions(txs);
+      }
+
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
     }

@@ -499,6 +499,76 @@ app.post('/api/delivery/my-orders', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Erreur serveur', details: String(err) });
   }
 });
+
+// DELIVERY: Transactions liées aux commandes attribuées à un livreur
+app.get('/api/delivery/transactions', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let deliveryPersonId = req.query.delivery_person_id || req.query.deliveryPersonId;
+    let userId = null;
+
+    // 1) Try JWT (SMS sessions)
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) {
+          userId = decoded.sub;
+        }
+      } catch (e) {
+        // not our JWT, try Supabase
+        try {
+          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+          if (!authErr && user) userId = user.id;
+        } catch (e2) {
+          // ignore
+        }
+      }
+    }
+
+    // fallback to query param
+    if (!userId && deliveryPersonId) userId = deliveryPersonId;
+
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token ou delivery_person_id param)' });
+
+    console.log('[DELIVERY] fetching transactions for deliveryPerson:', userId);
+
+    // Get order ids assigned to this delivery person
+    const { data: orderRows, error: ordersError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('delivery_person_id', userId);
+
+    if (ordersError) {
+      console.error('[DELIVERY] Error fetching orders for delivery person transactions:', ordersError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+    if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
+
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[DELIVERY] Error fetching transactions:', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    if (process.env.DEBUG === 'true') {
+      console.log('[DELIVERY] /api/delivery/transactions count:', Array.isArray(data) ? data.length : 0);
+      return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } });
+    }
+
+    return res.json({ success: true, transactions: data || [] });
+  } catch (err) {
+    console.error('[DELIVERY] /api/delivery/transactions error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
 // Debug: IP publique sortante du serveur (utile pour whitelister Direct7)
 app.get('/api/debug/egress-ip', async (req, res) => {
   try {
