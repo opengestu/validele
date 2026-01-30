@@ -603,6 +603,25 @@ app.get('/api/debug/admin/orders', requireAdmin, async (req, res) => {
   }
 });
 
+// Admin debug: view orders_audit entries for an order (requires admin)
+app.get('/api/debug/admin/orders-audit', requireAdmin, async (req, res) => {
+  try {
+    const { order_id } = req.query || {};
+    if (!order_id) return res.status(400).json({ success: false, error: 'order_id query param required' });
+
+    const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
+    const { data, error } = await supabase.from('orders_audit').select('*').eq('order_id', order_id).order('changed_at', { ascending: false }).limit(limit);
+    if (error) {
+      console.error('[DEBUG] /api/debug/admin/orders-audit supabase error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'DB error' });
+    }
+    return res.json({ success: true, count: Array.isArray(data) ? data.length : 0, audits: data || [] });
+  } catch (err) {
+    console.error('[DEBUG] /api/debug/admin/orders-audit error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // ==========================================
 // ENDPOINTS OTP (Direct7Networks)
 // ==========================================
