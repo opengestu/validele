@@ -214,12 +214,13 @@ const BuyerDashboard = () => {
 
         // Helper to fetch and return profile map
         const fetchProfilesMap = async (ids: string[]) => {
-          const map: Record<string, any> = {};
+          type ProfileLike = { id?: string; full_name?: string; phone?: string; company_name?: string; [key: string]: unknown };
+          const map: Record<string, ProfileLike> = {};
           await Promise.all(ids.map(async (id) => {
             try {
               const { ok, json } = await getProfileById(id);
               if (ok && json) {
-                const profile = json.profile ?? json;
+                const profile = (json.profile ?? json) as ProfileLike;
                 if (profile && profile.id) map[id] = profile;
               }
             } catch (e) {
@@ -234,6 +235,7 @@ const BuyerDashboard = () => {
 
         // Merge profiles into orders
         normalizedOrders = normalizedOrders.map(o => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const copy = { ...o } as any;
           if (!copy.profiles && copy.vendor_id && vendorMap[String(copy.vendor_id)]) {
             copy.profiles = vendorMap[String(copy.vendor_id)];
@@ -1658,13 +1660,14 @@ const BuyerDashboard = () => {
                                       </div>
                                     )}
                                   </div>
-                                  {order.delivery_person && (
+                                  {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
                                     <div className="flex flex-col gap-1 mt-3">
                                       <div className="flex items-center gap-3">
                                         <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
-                                        <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person.full_name}</span>
+                                        <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person?.full_name || order.delivery_person?.company_name || 'N/A'}</span>
                                       </div>
-                                      {order.delivery_person.phone && (
+
+                                      {order.delivery_person?.phone ? (
                                         <div className="flex items-center gap-3 text-sm">
                                           <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
                                           <div className="flex items-center gap-2">
@@ -1683,6 +1686,8 @@ const BuyerDashboard = () => {
                                             </Tooltip>
                                           </div>
                                         </div>
+                                      ) : (
+                                        <div className="text-xs text-gray-400 mt-1">Numéro non disponible</div>
                                       )}
                                     </div>
                                   )}
