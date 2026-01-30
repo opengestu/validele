@@ -554,6 +554,55 @@ app.get('/api/debug/orders-visibility', async (req, res) => {
   }
 });
 
+// Debug: show user info for provided Bearer token
+app.get('/api/debug/whoami', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      return res.status(400).json({ success: false, error: 'Missing Bearer token' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error) {
+      console.error('[DEBUG] /api/debug/whoami supabase auth.getUser error:', error);
+      return res.status(400).json({ success: false, error: error.message || 'Invalid token' });
+    }
+    const user = data?.user || null;
+    let profile = null;
+    try {
+      if (user && user.id) {
+        const { data: p, error: perr } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+        if (!perr) profile = p || null;
+      }
+    } catch (e) {
+      console.warn('[DEBUG] /api/debug/whoami profile lookup failed:', e?.message || e);
+    }
+    return res.json({ success: true, user, profile });
+  } catch (err) {
+    console.error('[DEBUG] /api/debug/whoami error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// Admin debug: list orders bypassing RLS (uses service_role client) — protected endpoint
+app.get('/api/debug/admin/orders', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
+    const vendorId = req.query.vendor_id;
+    let q = supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (vendorId) q = q.eq('vendor_id', vendorId);
+    const { data, error } = await q;
+    if (error) {
+      console.error('[DEBUG] /api/debug/admin/orders supabase error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'DB error' });
+    }
+    return res.json({ success: true, count: Array.isArray(data) ? data.length : 0, orders: data || [] });
+  } catch (err) {
+    console.error('[DEBUG] /api/debug/admin/orders error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // ==========================================
 // ENDPOINTS OTP (Direct7Networks)
 // ==========================================
