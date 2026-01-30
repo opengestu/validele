@@ -110,6 +110,90 @@ app.use((err, req, res, next) => {
   next();
 });
 
+// Middleware: rafraîchissement automatique des tokens JWT personnalisés (SMS tokens)
+const refreshTokenIfNeeded = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) return next();
+
+    const token = authHeader.split(' ')[1];
+    let decoded = null;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      // invalid or expired - attempt to decode without verify
+      try { decoded = jwt.decode(token); } catch (e2) { decoded = null; }
+    }
+
+    if (!decoded || !decoded.exp) return next();
+
+    const now = Math.floor(Date.now() / 1000);
+    // If token expires in less than 5 minutes, issue a new one
+    if ((decoded.exp - now) < 300) {
+      try {
+        const newToken = jwt.sign(
+          {
+            sub: decoded.sub,
+            phone: decoded.phone,
+            auth_mode: decoded.auth_mode || 'sms',
+            role: decoded.role
+          },
+          JWT_SECRET,
+          { expiresIn: '1h' }
+        );
+        // Expose the new token to the client in a header
+        res.setHeader('X-New-Access-Token', newToken);
+        console.log('[TOKEN-REFRESH] Issued new JWT for sub:', decoded.sub);
+      } catch (e) {
+        console.warn('[TOKEN-REFRESH] failed to sign new token:', e?.message || e);
+      }
+    }
+
+    return next();
+  } catch (err) {
+    console.error('❌ refreshTokenIfNeeded error:', err);
+    return next();
+  }
+};
+
+// Appliquer le middleware aux routes API critiques
+app.use('/api/vendor', refreshTokenIfNeeded);
+app.use('/api/delivery', refreshTokenIfNeeded);
+app.use('/api/buyer', refreshTokenIfNeeded);
+
+// Debug: token info endpoint for diagnosing session vs JWT issues
+app.get('/api/debug/token-info', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    const tokenInfo = { hasHeader: !!authHeader, headerLength: authHeader?.length || 0, isBearer: !!(authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) };
+    if (tokenInfo.isBearer) {
+      const token = authHeader.split(' ')[1];
+      tokenInfo.token = 'present';
+      try {
+        const decoded = jwt.decode(token, { complete: true });
+        tokenInfo.jwtDecoded = { header: decoded?.header || null, payload: decoded?.payload || null };
+      } catch (e) { tokenInfo.jwtError = String(e.message || e); }
+
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        tokenInfo.supabaseAuth = { hasUser: !!user, userId: user?.id || null, error: error?.message || null };
+      } catch (e) { tokenInfo.supabaseError = String(e.message || e); }
+
+      try {
+        const verified = jwt.verify(token, JWT_SECRET);
+        tokenInfo.customJwtValid = true;
+        tokenInfo.customJwtExp = verified.exp;
+        tokenInfo.customJwtExpired = verified.exp < Math.floor(Date.now() / 1000);
+      } catch (e) { tokenInfo.customJwtInvalid = String(e.message || e); }
+    }
+
+    return res.json({ success: true, tokenInfo });
+  } catch (err) {
+    console.error('[DEBUG] token-info error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // ==========================================
 // ICI : place ta route add-product
 // ==========================================
@@ -406,41 +490,8 @@ app.post('/api/vendor/orders', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
-      // Fallback avec le client normal
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`
-          id,
-          order_code,
-          total_amount,
-          status,
-          buyer_id,
-          product_id,
-          delivery_person_id,
-          created_at,
-          updated_at,
-          products(*),
-          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
-          delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
-          qr_code
-        `)
-        .eq('vendor_id', vendor_id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('[API] /api/vendor/orders supabase error', error);
-        return res.status(500).json({ 
-          success: false, 
-          error: error.message || 'Erreur DB',
-          hint: 'Vérifiez les permissions RLS ou configurez SUPABASE_SERVICE_ROLE_KEY'
-        });
-      }
-
-      return res.json({ 
-        success: true, 
-        orders: data || [],
-        count: data?.length || 0
-      });
+      console.error('[API] /api/vendor/orders missing SUPABASE_SERVICE_ROLE_KEY - refusing to fall back to RLS-bound client');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required for this endpoint' });
     }
   } catch (err) {
     console.error('[API] /api/vendor/orders error', err);
@@ -522,80 +573,50 @@ app.get('/api/vendor/transactions', async (req, res) => {
     console.log('[VENDOR] fetching transactions for vendor:', userId);
 
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-      try {
-        const { createClient } = require('@supabase/supabase-js');
-        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    if (!serviceRoleKey) {
+      console.error('[VENDOR] SUPABASE_SERVICE_ROLE_KEY not configured - refusing to run RLS-bound queries');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+    }
 
-        const { data: orderRows, error: ordersError } = await supabaseAdmin
-          .from('orders')
-          .select('id')
-          .eq('vendor_id', userId);
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-        if (ordersError) {
-          console.error('[VENDOR] admin Error fetching orders for vendor transactions:', ordersError);
-          return res.status(500).json({ success: false, error: 'Erreur serveur' });
-        }
+      const { data: orderRows, error: ordersError } = await supabaseAdmin
+        .from('orders')
+        .select('id')
+        .eq('vendor_id', userId);
 
-        const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
-        if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
-
-        const { data, error } = await supabaseAdmin
-          .from('payment_transactions')
-          .select('*')
-          .in('order_id', orderIds)
-          .in('transaction_type', ['payout','vendor_payout'])
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('[VENDOR] Error fetching transactions (admin):', error);
-          return res.status(500).json({ success: false, error: 'Erreur serveur' });
-        }
-
-        if (process.env.DEBUG === 'true') {
-          console.log('[VENDOR] /api/vendor/transactions count (admin):', Array.isArray(data) ? data.length : 0);
-          return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) }, usingServiceRole: true, timestamp: new Date().toISOString() });
-        }
-
-        return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
-      } catch (e) {
-        console.error('[VENDOR] admin client failed:', e);
-        // fallback to normal flow
+      if (ordersError) {
+        console.error('[VENDOR] admin Error fetching orders for vendor transactions:', ordersError);
+        return res.status(500).json({ success: false, error: 'Erreur serveur' });
       }
+
+      const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+      if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
+
+      const { data, error } = await supabaseAdmin
+        .from('payment_transactions')
+        .select('*')
+        .in('order_id', orderIds)
+        .in('transaction_type', ['payout','vendor_payout'])
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[VENDOR] Error fetching transactions (admin):', error);
+        return res.status(500).json({ success: false, error: 'Erreur serveur' });
+      }
+
+      if (process.env.DEBUG === 'true') {
+        console.log('[VENDOR] /api/vendor/transactions count (admin):', Array.isArray(data) ? data.length : 0);
+        return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) }, usingServiceRole: true, timestamp: new Date().toISOString() });
+      }
+
+      return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[VENDOR] admin client failed:', e);
+      return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
     }
-
-    // Récupérer les commandes du vendeur (fallback)
-    const { data: orderRows, error: ordersError } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('vendor_id', userId);
-
-    if (ordersError) {
-      console.error('[VENDOR] Error fetching orders for vendor transactions:', ordersError);
-      return res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-
-    const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
-    if (orderIds.length === 0) return res.json({ success: true, transactions: [] });
-
-    const { data, error } = await supabase
-      .from('payment_transactions')
-      .select('*')
-      .in('order_id', orderIds)
-      .in('transaction_type', ['payout','vendor_payout'])
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('[VENDOR] Error fetching transactions:', error);
-      return res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-
-    if (process.env.DEBUG === 'true') {
-      console.log('[VENDOR] /api/vendor/transactions count:', Array.isArray(data) ? data.length : 0);
-      return res.json({ success: true, transactions: data || [], debug: { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) } });
-    }
-
-    return res.json({ success: true, transactions: data || [], count: data?.length || 0 });
   } catch (err) {
     console.error('[VENDOR] /api/vendor/transactions error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -668,51 +689,32 @@ app.post('/api/delivery/my-orders', async (req, res) => {
 
     console.log('[API/delivery/my-orders] Request for deliveryPersonId:', deliveryPersonId);
 
-    // Use service role client when available for deterministic visibility
+    // Use service role client (required) for deterministic visibility
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-      try {
-        const { createClient } = require('@supabase/supabase-js');
-        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-        const { data, error } = await supabaseAdmin
-          .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
-          .eq('delivery_person_id', deliveryPersonId)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('[API/delivery/my-orders] admin query error:', error);
-          return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
-        }
-
-        console.log('[API/delivery/my-orders] admin query returned', Array.isArray(data) ? data.length : 0, 'orders');
-        return res.json({ success: true, orders: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
-      } catch (e) {
-        console.error('[API/delivery/my-orders] admin client failed:', e);
-        // fallback to normal flow below
-      }
+    if (!serviceRoleKey) {
+      console.error('[API/delivery/my-orders] SUPABASE_SERVICE_ROLE_KEY not configured - refusing to run RLS-bound query');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
     }
 
-    // Fallback: regular server client (may be subject to RLS depending on config)
     try {
-      const q = supabase
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data, error } = await supabaseAdmin
         .from('orders')
         .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
         .eq('delivery_person_id', deliveryPersonId)
-        .in('status', ['assigned', 'in_delivery', 'delivered'])
         .order('created_at', { ascending: false });
 
-      const result = await q;
-      const data = result.data;
-      if (result.error) {
-        console.error('[API/delivery/my-orders] Supabase query returned error:', result.error);
-        return res.status(500).json({ success: false, error: 'Erreur DB', details: result.error.message });
+      if (error) {
+        console.error('[API/delivery/my-orders] admin query error:', error);
+        return res.status(500).json({ success: false, error: 'Erreur DB', details: error.message });
       }
-      console.log('[API/delivery/my-orders] query returned', Array.isArray(data) ? data.length : 0, 'orders');
-      return res.json({ success: true, orders: data || [], count: data?.length || 0 });
-    } catch (queryEx) {
-      console.error('[API/delivery/my-orders] Exception during Supabase query:', queryEx);
-      return res.status(500).json({ success: false, error: 'Erreur DB (exception)', details: String(queryEx) });
+
+      console.log('[API/delivery/my-orders] admin query returned', Array.isArray(data) ? data.length : 0, 'orders');
+      return res.json({ success: true, orders: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[API/delivery/my-orders] admin client failed:', e);
+      return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
     }
   } catch (err) {
     console.error('[API/delivery/my-orders] Exception:', err);
@@ -753,51 +755,46 @@ app.get('/api/delivery/transactions', async (req, res) => {
 
     console.log('[DELIVERY] fetching transactions for deliveryPerson:', userId);
 
-    // Use service role client when available for deterministic visibility
+    // Use service role client (required) for deterministic visibility
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let orderIds = [];
-    if (serviceRoleKey) {
-      try {
-        const { createClient } = require('@supabase/supabase-js');
-        const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-        const { data: orderRows, error: ordersError } = await supabaseAdmin
-          .from('orders')
-          .select('id')
-          .eq('delivery_person_id', userId);
-
-        if (ordersError) {
-          console.error('[DELIVERY] admin Error fetching orders for delivery person transactions:', ordersError);
-          return res.status(500).json({ success: false, error: 'Erreur serveur' });
-        }
-
-        orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
-        if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
-
-        const { data, error } = await supabaseAdmin
-          .from('payment_transactions')
-          .select('*')
-          .in('order_id', orderIds)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('[DELIVERY] Error fetching transactions (admin):', error);
-          return res.status(500).json({ success: false, error: 'Erreur serveur' });
-        }
-
-        console.log('[DELIVERY] /api/delivery/transactions count (admin):', Array.isArray(data) ? data.length : 0);
-        return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
-      } catch (e) {
-        console.error('[DELIVERY] admin client failed:', e);
-        // fallback to normal flow below
-      }
+    if (!serviceRoleKey) {
+      console.error('[DELIVERY] SUPABASE_SERVICE_ROLE_KEY not configured - refusing to run RLS-bound queries');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
     }
 
-    // Get order ids assigned to this delivery person (fallback)
-    const { data: orderRows, error: ordersError } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('delivery_person_id', userId);
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: orderRows, error: ordersError } = await supabaseAdmin
+        .from('orders')
+        .select('id')
+        .eq('delivery_person_id', userId);
 
+      if (ordersError) {
+        console.error('[DELIVERY] admin Error fetching orders for delivery person transactions:', ordersError);
+        return res.status(500).json({ success: false, error: 'Erreur serveur' });
+      }
+
+      const orderIds = (orderRows || []).map(r => r.id).filter(Boolean);
+      if (orderIds.length === 0) return res.json({ success: true, transactions: [], count: 0, usingServiceRole: true });
+
+      const { data, error } = await supabaseAdmin
+        .from('payment_transactions')
+        .select('*')
+        .in('order_id', orderIds)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[DELIVERY] Error fetching transactions (admin):', error);
+        return res.status(500).json({ success: false, error: 'Erreur serveur' });
+      }
+
+      console.log('[DELIVERY] /api/delivery/transactions count (admin):', Array.isArray(data) ? data.length : 0);
+      return res.json({ success: true, transactions: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      console.error('[DELIVERY] admin client failed:', e);
+      return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
+    }
     if (ordersError) {
       console.error('[DELIVERY] Error fetching orders for delivery person transactions:', ordersError);
       return res.status(500).json({ success: false, error: 'Erreur serveur' });
