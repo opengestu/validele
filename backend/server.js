@@ -516,7 +516,7 @@ app.get('/api/debug/egress-ip', async (req, res) => {
   }
 });
 
-// Debug: verify orders visibility with/without auth token (use to diagnose RLS problems)
+// Debug: verify orders visibility with/without,  auth token (use to diagnose RLS problems)
 app.get('/api/debug/orders-visibility', async (req, res) => {
   try {
     const SUPABASE_URL = process.env.SUPABASE_URL;
