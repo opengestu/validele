@@ -172,6 +172,46 @@ const VendorDashboard = () => {
       toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
     }
   }
+
+  // Vendor payout batches modal & helpers
+  const [batchesModalOpen, setBatchesModalOpen] = useState(false);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [vendorBatches, setVendorBatches] = useState<Array<{id: string; created_at?: string; total_amount?: number; status?: string; item_count?: number; total_net?: number}>>([]);
+
+  async function fetchVendorBatches() {
+    try {
+      setBatchesLoading(true);
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
+      const headers: Record<string,string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        throw new Error(json?.error || `Backend returned ${resp.status}`);
+      }
+      setVendorBatches(json.batches || []);
+    } catch (err) {
+      console.error('[VendorDashboard] fetchVendorBatches error', err);
+      toast({ title: 'Erreur', description: 'Impossible de charger les factures de batch', variant: 'destructive' });
+    } finally {
+      setBatchesLoading(false);
+    }
+  }
+
+  async function showVendorBatches() {
+    try {
+      setBatchesModalOpen(true);
+      if (!vendorBatches || vendorBatches.length === 0) {
+        await fetchVendorBatches();
+      }
+    } catch (err) {
+      console.error('[VendorDashboard] showVendorBatches error', err);
+      toast({ title: 'Erreur', description: 'Impossible d\'afficher les factures de paiement', variant: 'destructive' });
+    }
+  }
   // Form states
   const [newProduct, setNewProduct] = useState({
     name: '',
@@ -1196,7 +1236,7 @@ const VendorDashboard = () => {
               <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
             </div>
             <div>
-              <Button size="sm" onClick={handleDownloadLatestBatchInvoice} className="bg-yellow-100 text-yellow-800 text-[11px] px-2 py-0.5 rounded-md h-7">
+              <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-[11px] px-2 py-0.5 rounded-md h-7">
                 Facture paiement
               </Button>
             </div>
@@ -1566,7 +1606,7 @@ const VendorDashboard = () => {
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
                     <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
                   </div>
-                  <Button size="sm" onClick={handleDownloadLatestBatchInvoice} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7">
+                  <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7">
                     Facture paiement
                   </Button>
                 </div>
@@ -1628,16 +1668,7 @@ const VendorDashboard = () => {
                             Voir facture
                           </Button>
 
-                          {/* Payout / batch invoice (vendor-facing) if present on the order */}
-                          {order.payout_invoice_urls && Array.isArray(order.payout_invoice_urls) && order.payout_invoice_urls.length > 0 && (
-                            <Button
-                              size="sm"
-                              onClick={() => openInvoiceInModal(order.payout_invoice_urls[0], 'Facture paiement', true)}
-                              className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7"
-                            >
-                              Voir facture paiement
-                            </Button>
-                          )}
+
 
                         </div>
                       </CardContent>
@@ -1792,28 +1823,82 @@ const VendorDashboard = () => {
       </main>
       {/* Invoice Viewer Modal (in-app) */}
       <Dialog open={invoiceViewerOpen} onOpenChange={setInvoiceViewerOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>{invoiceViewerTitle}</DialogTitle>
-          </DialogHeader>
-
-          <div className="py-2">
-            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner /></div>}
-            {!invoiceViewerLoading && invoiceViewerHtml && (
-              <div>
-                <div className="flex justify-end gap-2 mb-2">
+        <DialogContent className={`max-w-4xl ${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'max-w-full w-full h-screen p-0' : ''}`}>
+          {/* Mobile layout: make modal fullscreen with stacked header + iframe */}
+          <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'h-full flex flex-col' : ''}`}>
+            <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex items-center justify-between p-4 border-b' : ''}`}>
+              <DialogHeader className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'p-0 m-0' : ''}`}>
+                <DialogTitle className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'text-lg' : ''}`}>{invoiceViewerTitle}</DialogTitle>
+              </DialogHeader>
+              {typeof window !== 'undefined' && window.innerWidth <= 640 && (
+                <div className="flex gap-2 ml-2">
                   <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
-                  <Button size="sm" variant="outline" onClick={() => window.open(URL.createObjectURL(new Blob([invoiceViewerHtml], { type: 'text/html' })), '_blank')}>Ouvrir dans un onglet</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
-                  <iframe title="invoice-preview" srcDoc={invoiceViewerHtml} style={{ width: '100%', height: '70vh', border: 0 }} />
+              )}
+            </div>
+
+            <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex-1 overflow-auto p-3' : 'py-2'}`}>
+              {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner /></div>}
+              {!invoiceViewerLoading && invoiceViewerHtml && (
+                <div>
+                  {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
+                  {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
+                    <div className="flex justify-end gap-2 mb-2">
+                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
+                      <Button size="sm" variant="outline" onClick={() => window.open(URL.createObjectURL(new Blob([invoiceViewerHtml], { type: 'text/html' })), '_blank')}>Ouvrir dans un onglet</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
+                    </div>
+                  )}
+
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                    <iframe
+                      title="invoice-preview"
+                      srcDoc={invoiceViewerHtml}
+                      style={{ width: '100%', height: (typeof window !== 'undefined' && window.innerWidth <= 640) ? 'calc(100vh - 140px)' : '70vh', border: 0 }}
+                    />
+                  </div>
                 </div>
+              )}
+              {!invoiceViewerLoading && !invoiceViewerHtml && (
+                <div className="text-center py-8 text-gray-500">Aucune facture à afficher</div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vendor payout batches modal (list & open) */}
+      <Dialog open={batchesModalOpen} onOpenChange={setBatchesModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Factures de paiement</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            {batchesLoading && <div className="flex justify-center py-6"><Spinner /></div>}
+            {!batchesLoading && vendorBatches && vendorBatches.length === 0 && (
+              <div className="text-center py-6 text-gray-500">Aucune facture de batch disponible</div>
+            )}
+            {!batchesLoading && vendorBatches && vendorBatches.length > 0 && (
+              <div className="space-y-3">
+                {vendorBatches.map(b => (
+                  <div key={b.id} className="flex items-center justify-between border p-2 rounded">
+                    <div className="text-sm">
+                      <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
+                      <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
+                      <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
+                      <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-green-500 text-white">Télécharger</Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-            {!invoiceViewerLoading && !invoiceViewerHtml && (
-              <div className="text-center py-8 text-gray-500">Aucune facture à afficher</div>
-            )}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button variant="outline" onClick={() => setBatchesModalOpen(false)}>Fermer</Button>
           </div>
         </DialogContent>
       </Dialog>
