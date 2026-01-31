@@ -252,12 +252,17 @@ app.post('/api/vendor/add-product', async (req, res) => {
     }
     // 2. Sinon, essayer comme token Supabase
     if (!userId) {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-      console.log('[DEBUG] supabase.auth.getUser result:', { user: user ? { id: user.id, email: user.email } : null, authErr });
-      if (authErr || !user) {
-        return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        console.log('[DEBUG] supabase.auth.getUser result:', { user: user ? { id: user.id, email: user.email } : null, authErr });
+        if (authErr || !user) {
+          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+        }
+        userId = user.id;
+      } catch (e) {
+        console.error('[DEBUG] supabase.auth.getUser threw for add-product:', e);
+        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
       }
-      userId = user.id;
     }
     // Debug log détaillé pour diagnostiquer le mismatch d'identifiants et de types
     console.log('[DEBUG] userId:', userId, typeof userId, '| vendor_id:', vendor_id, typeof vendor_id, '| ==', userId == vendor_id, '| ===', userId === vendor_id);
@@ -353,10 +358,17 @@ async function deleteProductHandler(req, res) {
     }
 
     if (!userId) {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-      console.log('[DEBUG] supabase.auth.getUser for delete:', { user: user ? { id: user.id } : null, authErr });
-      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
-      userId = user.id;
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        console.log('[DEBUG] supabase.auth.getUser for delete:', { user: user ? { id: user.id } : null, authErr });
+        if (authErr || !user) {
+          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+        }
+        userId = user.id;
+      } catch (e) {
+        console.error('[DEBUG] supabase.auth.getUser threw for delete-product:', e);
+        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+      }
     }
 
     if (String(userId) !== String(vendor_id)) {
@@ -413,10 +425,17 @@ app.post('/api/vendor/update-product', async (req, res) => {
     }
 
     if (!userId) {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-      console.log('[DEBUG] supabase.auth.getUser for update:', { user: user ? { id: user.id } : null, authErr });
-      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
-      userId = user.id;
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        console.log('[DEBUG] supabase.auth.getUser for update:', { user: user ? { id: user.id } : null, authErr });
+        if (authErr || !user) {
+          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+        }
+        userId = user.id;
+      } catch (e) {
+        console.error('[DEBUG] supabase.auth.getUser threw for update-product:', e);
+        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+      }
     }
 
     if (String(userId) !== String(vendor_id)) {

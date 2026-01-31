@@ -856,6 +856,13 @@ const VendorDashboard = () => {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({ vendor_id: sms.profileId, product_id: editProduct.id, updates })
         });
+        // If the server returns 401, surface a clear message and force re-login
+        if (resp.status === 401) {
+          let errJson = null;
+          try { errJson = await resp.json(); } catch (e) { /* ignore */ }
+          const msg = (errJson && errJson.error) ? errJson.error : 'Session invalide ou expirée. Veuillez vous reconnecter.';
+          throw new Error(msg);
+        }
         const json = await resp.json().catch(() => null);
         if (!resp.ok || !json || !json.success) {
           const errMsg = json?.error || 'Erreur lors de la modification du produit (backend)';
@@ -881,7 +888,14 @@ const VendorDashboard = () => {
       fetchProducts();
     } catch (error) {
       console.error('handleEditProduct error:', error);
-      toast({ title: 'Erreur', description: (error as any)?.message || 'Impossible de modifier le produit', variant: 'destructive' });
+      const message = (error as any)?.message || 'Impossible de modifier le produit';
+      // If it's a session issue, suggest reconnect and sign out the user
+      if (message.toLowerCase().includes('session invalide') || message.toLowerCase().includes('session expir')) {
+        toast({ title: 'Session invalide', description: 'Votre session est invalide. Veuillez vous reconnecter.', variant: 'destructive' });
+        try { await signOut(); } catch (e) { /* ignore */ }
+      } else {
+        toast({ title: 'Erreur', description: message, variant: 'destructive' });
+      }
     } finally {
       setEditing(false);
     }
@@ -1846,7 +1860,6 @@ const VendorDashboard = () => {
                   {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
                     <div className="flex justify-end gap-2 mb-2">
                       <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
-                      <Button size="sm" variant="outline" onClick={() => window.open(URL.createObjectURL(new Blob([invoiceViewerHtml], { type: 'text/html' })), '_blank')}>Ouvrir dans un onglet</Button>
                       <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                     </div>
                   )}

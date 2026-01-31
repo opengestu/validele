@@ -1387,14 +1387,7 @@ const BuyerDashboard = () => {
         </div>
       </header>
 
-      {/* Banniere hors-ligne */}
-      {!isOnline && (
-        <div className="mx-auto max-w-5xl px-4">
-          <div className="bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 p-3 text-center mb-4">
-            Vous êtes hors‑ligne — l'affichage provient du cache local. Certaines actions peuvent être limitées.
-          </div>
-        </div>
-      )}
+
 
       {/* Debug panel (visible when ?debug=1) */}
       {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1' && (
@@ -1686,12 +1679,12 @@ const BuyerDashboard = () => {
                         };
                         
                         return (
-                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[480px] min-w-[260px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[480px]" style={{marginLeft: 0, marginRight: 0}}>
+                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[calc(100vw-32px)] min-w-[240px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[520px]" style={{marginLeft: 0, marginRight: 0}}>
                           <div className="flex flex-col gap-4">
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 w-full">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-3">
-                                  <p className="font-bold text-gray-900 break-words text-lg max-w-[260px] sm:max-w-none truncate">
+                                  <p className="font-bold text-gray-900 break-words text-lg sm:truncate">
                                     {order.products?.name || 'Commande'}
                                   </p>
                                   <div className="flex items-center gap-3">
@@ -1704,7 +1697,7 @@ const BuyerDashboard = () => {
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 truncate text-base">{order.profiles?.full_name || 'N/A'}</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.full_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">
@@ -1814,15 +1807,13 @@ const BuyerDashboard = () => {
                               </div>
                             )}
 
-                            <div className="text-sm flex items-center gap-2">
-                              {renderStatusBadge(order.status)}
-                            </div>
+
 
                             {/* Boutons d'action */}
                             <div className="flex flex-wrap gap-2 mt-2">
                               {order.qr_code ? (
                                 <button
-                                  className="rounded-md border border-orange-400 px-3 py-1.5 text-sm font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                  className="rounded-md border border-orange-400 px-3 py-2 text-sm font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 shadow-sm transition-all w-full sm:w-auto min-h-[44px]"
                                   style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                   onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
                                 >
@@ -1833,7 +1824,7 @@ const BuyerDashboard = () => {
                               )}
 
                               <button
-                                className="rounded-md border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                className="rounded-md border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                 onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                               >
@@ -1841,7 +1832,7 @@ const BuyerDashboard = () => {
                               </button>
 
                               <button
-                                className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                 onClick={toggleDetails}
                               >
@@ -1865,6 +1856,13 @@ const BuyerDashboard = () => {
                             )}
 
                             {/* Suppression du doublon prix/statut */}
+
+                            {/* Statut (déplacé en bas de la carte) */}
+                            <div className="mt-4">
+                              <div className="text-sm flex items-center gap-2">
+                                {renderStatusBadge(order.status)}
+                              </div>
+                            </div>
                           </div>
                         </div>
                         );
@@ -1919,7 +1917,6 @@ const BuyerDashboard = () => {
               <div>
                 <div className="flex justify-end gap-2 mb-2">
                   <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
-                  <Button size="sm" variant="outline" onClick={() => window.open(URL.createObjectURL(new Blob([invoiceViewerHtml], { type: 'text/html' })), '_blank')}>Ouvrir dans un onglet</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
                 <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>

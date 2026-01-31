@@ -3,6 +3,8 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
+import { useToast } from '@/hooks/use-toast';
+import { apiUrl } from '@/lib/api';
 
 
 interface ProtectedRouteProps {
@@ -12,32 +14,101 @@ interface ProtectedRouteProps {
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, userProfile, loading, isOnline, refreshProfile } = useAuth();
+  const { toast } = useToast();
+  const [retrying, setRetrying] = React.useState(false);
 
-  // Affichage de chargement - attendre que l'authentification soit prête
-  if (loading) {
-    // During auth bootstrap we do not show a large overlay spinner; show a simple lightweight text
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center text-gray-600">Chargement...</div>
-      </div>
-    );
+  async function handleRetry() {
+    try {
+      setRetrying(true);
+      // Quick offline check
+      if (typeof window !== 'undefined' && !window.navigator.onLine) {
+        toast({ title: 'Toujours hors-ligne', description: "Vérifiez votre connexion Internet et réessayez.", variant: 'destructive' });
+        return;
+      }
+
+      // Try to refresh profile (works for SMS or Supabase sessions)
+      try {
+        await refreshProfile();
+      } catch (e) {
+        // ignore, we still attempt ping
+      }
+
+      // Ping server /api/test with timeout
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const resp = await fetch(apiUrl('/api/test'), { method: 'GET', signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (resp.ok) {
+          toast({ title: 'Connexion rétablie', description: 'La connexion au serveur est fonctionnelle.', variant: 'success' });
+          // Dispatch a synthetic online event to allow listeners to update
+          if (typeof window !== 'undefined') window.dispatchEvent(new Event('online'));
+        } else {
+          toast({ title: 'Problème serveur', description: 'Impossible d\'atteindre le serveur. Réessayez plus tard.', variant: 'destructive' });
+        }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        if (err && err.name === 'AbortError') {
+          toast({ title: 'Délai dépassé', description: 'La vérification a pris trop de temps. Vérifiez votre connexion et réessayez.', variant: 'destructive' });
+        } else {
+          toast({ title: 'Échec', description: `Impossible de contacter le serveur (${String(err?.message || err)}).`, variant: 'destructive' });
+        }
+      }
+    } finally {
+      setRetrying(false);
+    }
   }
 
-  // Hors connexion: afficher un message avant d'entrer dans les dashboards
+  // // Affichage de chargement - attendre que l'authentification soit prête
+  // if (loading) {
+  //   // During auth bootstrap we do not show a large overlay spinner; show a simple lightweight text
+  //   return (
+  //     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+  //       <div className="text-center text-gray-600">Chargement...</div>
+  //     </div>
+  //   );
+  // }
+
+  // Hors connexion
   if (!isOnline) {
+    // Si on a déjà un user ou userProfile, afficher l'app en mode limité + bannière non bloquante
+    if (user || userProfile) {
+      return (
+        <>
+          <div className="fixed inset-x-0 top-0 z-50 bg-yellow-50 border-b border-yellow-200 p-3">
+            <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+              <div className="text-yellow-900">Hors‑ligne. Certaines actions nécessitent une connexion.</div>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  disabled={retrying}
+                  className="inline-flex items-center justify-center rounded-md border border-yellow-300 bg-yellow-100 px-3 py-1 text-sm font-medium"
+                >
+                  {retrying ? 'Vérification…' : 'Réessayer'}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div style={{ paddingTop: 64 }}>
+            {children}
+          </div>
+        </>
+      );
+    }
+
+    // Sinon, afficher le message plein écran (utilisateur non authentifié)
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-sm px-6">
           <p className="text-gray-900 font-medium">Pas de connexion</p>
-          <p className="text-gray-600 mt-2">
-            Vérifiez votre connexion Internet puis réessayez.
-          </p>
+          <p className="text-gray-600 mt-2">Vérifiez votre connexion Internet puis réessayez.</p>
           <button
             type="button"
-            onClick={() => refreshProfile()}
+            onClick={handleRetry}
             className="mt-4 inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium"
           >
-            Réessayer
+            {retrying ? 'Vérification…' : 'Réessayer'}
           </button>
         </div>
       </div>
