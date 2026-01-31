@@ -2666,7 +2666,8 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
 
     // Try to fetch the batch and vendor-specific items using the chosen client
     let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    // Include product info from the order (if available) so we can show product names in the invoice
+    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
     let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     // Fallback: if batch not found, try to find latest batch that contains vendor items
@@ -2701,12 +2702,31 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       return res.status(404).send('No payout items found for this vendor in the specified batch');
     }
 
-    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    // Map rows and extract product name (if present on order.products.name)
+    const rows = (items || []).map(i => {
+      const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
+      return {
+        order_code: i.order?.order_code || '-',
+        product_name: productName || '-',
+        gross: Number(i.amount || 0),
+        commission: Number(i.commission_amount || 0),
+        net: Number(i.net_amount || 0)
+      };
+    });
+
+    // Compute how many times each product appears in this batch (sales count)
+    const productCounts = {};
+    for (const r of rows) {
+      const key = r.product_name || '-';
+      productCounts[key] = (productCounts[key] || 0) + 1;
+    }
+
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
     const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    const totalQty = rows.length;
 
-    // Simple HTML invoice
+    // Simple HTML invoice (Commande now shows product in parens, and a 'Ventes' column shows sales count per product)
     const html = `<!doctype html>
       <html>
         <head>
@@ -2720,12 +2740,12 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
           <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
           <h3>Détails</h3>
           <table>
-            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Commande (Produit)</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${rows.map(r => `<tr><td>${r.order_code} (${r.product_name})</td><td style="text-align:center">${productCounts[r.product_name] || 0}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
             </tfoot>
           </table>
           <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
@@ -2824,17 +2844,32 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     if (!batchId) return res.status(400).send('batch id required');
 
     const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
+    // Include product info from order.products to show product names
+    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
     const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     if (!batch) return res.status(404).send('batch_not_found');
     if (!vendor) return res.status(404).send('vendor_not_found');
     if (!items || items.length === 0) return res.status(404).send('No payout items found for this vendor in the specified batch');
 
-    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    const rows = (items || []).map(i => {
+      const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
+      return {
+        order_code: i.order?.order_code || '-',
+        product_name: productName || '-',
+        gross: Number(i.amount || 0),
+        commission: Number(i.commission_amount || 0),
+        net: Number(i.net_amount || 0)
+      };
+    });
+
+    const productCounts = {};
+    for (const r of rows) productCounts[r.product_name] = (productCounts[r.product_name] || 0) + 1;
+
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
     const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    const totalQty = rows.length;
 
     const html = `<!doctype html>
       <html>
@@ -2849,12 +2884,12 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
           <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
           <h3>Détails</h3>
           <table>
-            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Commande (Produit)</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${rows.map(r => `<tr><td>${r.order_code} (${r.product_name})</td><td style="text-align:center">${productCounts[r.product_name] || 0}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
             </tfoot>
           </table>
           <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>

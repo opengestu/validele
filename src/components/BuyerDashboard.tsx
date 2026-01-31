@@ -120,6 +120,79 @@ const BuyerDashboard = () => {
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   // Ajout d'un état pour stocker l'order_id
   const [orderId, setOrderId] = useState<string | null>(null);
+
+  // Invoice viewer modal states (buyer)
+  const [invoiceViewerOpen, setInvoiceViewerOpen] = useState(false);
+  const [invoiceViewerHtml, setInvoiceViewerHtml] = useState<string | null>(null);
+  const [invoiceViewerTitle, setInvoiceViewerTitle] = useState<string>('Facture');
+  const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
+  const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
+
+  async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
+    try {
+      setInvoiceViewerLoading(true);
+      setInvoiceViewerTitle(title);
+      setInvoiceViewerHtml(null);
+      setInvoiceViewerFilename(null);
+
+      // Try SMS session token first
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      let token = smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.access_token || JSON.parse(smsSessionStr || '{}')?.token || '') : '';
+
+      if (requiresAuth && !token) {
+        try {
+          const s = await supabase.auth.getSession();
+          token = s?.data?.session?.access_token || '';
+        } catch (e) { token = ''; }
+      }
+
+      const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
+      if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
+
+      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      const resp = await fetch(fullUrl, { method: 'GET', headers });
+
+      if (!resp.ok) {
+        if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
+        if (resp.status === 404) { toast({ title: 'Introuvable', description: 'Facture introuvable', variant: 'warning' }); return; }
+        throw new Error(`Backend returned ${resp.status}`);
+      }
+
+      const cd = resp.headers.get('content-disposition') || '';
+      const m = /filename\s*=\s*"?([^;"]+)"?/i.exec(cd);
+      const filename = (m && m[1]) ? m[1] : (title.replace(/\s+/g,'-').toLowerCase() + '.html');
+      const text = await resp.text();
+
+      setInvoiceViewerFilename(filename);
+      setInvoiceViewerHtml(text);
+      setInvoiceViewerOpen(true);
+    } catch (err) {
+      console.error('[BuyerDashboard] openInvoiceInModal error', err);
+      toast({ title: 'Erreur', description: 'Impossible d\'ouvrir la facture', variant: 'destructive' });
+    } finally {
+      setInvoiceViewerLoading(false);
+    }
+  }
+
+  function downloadVisibleInvoice() {
+    try {
+      if (!invoiceViewerHtml) return;
+      const blob = new Blob([invoiceViewerHtml], { type: 'text/html' });
+      const urlObj = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = urlObj;
+      a.download = invoiceViewerFilename || 'invoice.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(urlObj);
+      toast({ title: 'Téléchargé', description: 'Facture prête en téléchargement' });
+    } catch (err) {
+      console.error('[BuyerDashboard] downloadVisibleInvoice error', err);
+      toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
+    }
+  }
+
   // Ajout d'un état pour afficher le modal SoftPay
   const [showSoftPayModal, setShowSoftPayModal] = useState(false);
   const [softPayType, setSoftPayType] = useState<'wave' | 'orange_qr' | 'orange_otp' | null>(null);
@@ -1758,6 +1831,15 @@ const BuyerDashboard = () => {
                               ) : (
                                 <span className="text-sm text-gray-400">QR code indisponible</span>
                               )}
+
+                              <button
+                                className="rounded-md border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
+                                onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
+                              >
+                                Voir facture
+                              </button>
+
                               <button
                                 className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
@@ -1824,6 +1906,34 @@ const BuyerDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* Modal facture */}
+      <Dialog open={invoiceViewerOpen} onOpenChange={setInvoiceViewerOpen}>
+        <DialogContent className="w-full max-w-4xl mx-4 sm:mx-auto max-h-[90vh] overflow-auto p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>{invoiceViewerTitle}</DialogTitle>
+          </DialogHeader>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner /></div>}
+            {!invoiceViewerLoading && invoiceViewerHtml && (
+              <div>
+                <div className="flex justify-end gap-2 mb-2">
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
+                  <Button size="sm" variant="outline" onClick={() => window.open(URL.createObjectURL(new Blob([invoiceViewerHtml], { type: 'text/html' })), '_blank')}>Ouvrir dans un onglet</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
+                </div>
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                  <iframe title="invoice-preview" srcDoc={invoiceViewerHtml} style={{ width: '100%', height: (typeof window !== 'undefined' && window.innerWidth <= 640) ? 'calc(100vh - 140px)' : '70vh', border: 0 }} />
+                </div>
+              </div>
+            )}
+            {!invoiceViewerLoading && !invoiceViewerHtml && (
+              <div className="text-center py-8 text-gray-500">Aucune facture à afficher</div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {showDirectPaymentForm && (
         <Dialog open={showDirectPaymentForm} onOpenChange={setShowDirectPaymentForm}>
           <DialogContent>
