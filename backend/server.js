@@ -1,85 +1,6 @@
-// Route de succès de paiement avec confettis et facture téléchargeable
-app.get('/paymentsuccess', (req, res) => {
-  // Récupérer l'id de commande depuis la query string si présent
-  const orderId = req.query.order_id || '';
-  // Générer le lien de facture (à adapter selon ton endpoint réel)
-  const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <title>Paiement réussi</title>
-      <style>
-        body { font-family: Arial, sans-serif; text-align: center; background: #f7fafc; margin: 0; padding: 0; }
-        h1 { color: #2ecc40; margin-top: 60px; }
-        .confetti { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
-        .btn {
-          display: inline-block;
-          margin-top: 30px;
-          padding: 15px 30px;
-          background: #2ecc40;
-          color: #fff;
-          border: none;
-          border-radius: 8px;
-          font-size: 1.2em;
-          cursor: pointer;
-          text-decoration: none;
-          transition: background 0.2s;
-        }
-        .btn:hover { background: #27ae38; }
-      </style>
-    </head>
-    <body>
-      <canvas class="confetti"></canvas>
-      <h1>🎉 Paiement réussi !</h1>
-      <p>Merci pour votre commande.</p>
-      <a href="${invoiceUrl}" class="btn" download>Télécharger la facture</a>
-      <script>
-        // Confetti animation simple
-        const canvas = document.querySelector('.confetti');
-        const ctx = canvas.getContext('2d');
-        let W = window.innerWidth, H = window.innerHeight;
-        canvas.width = W; canvas.height = H;
-        let confettis = Array.from({length: 120}, () => ({
-          x: Math.random() * W,
-          y: Math.random() * H - H,
-          r: 6 + Math.random() * 8,
-          d: 8 + Math.random() * 8,
-          color: 'hsl(' + (Math.random()*360) + ',90%,60%)',
-          tilt: Math.random() * 10 - 5
-        }));
-        function draw() {
-          ctx.clearRect(0,0,W,H);
-          confettis.forEach(c => {
-            ctx.beginPath();
-            ctx.ellipse(c.x, c.y, c.r, c.r/2, c.tilt, 0, 2*Math.PI);
-            ctx.fillStyle = c.color;
-            ctx.fill();
-          });
-          update();
-        }
-        function update() {
-          confettis.forEach(c => {
-            c.y += Math.cos(c.d) + 2 + c.r/8;
-            c.x += Math.sin(0.5) * 2;
-            if (c.y > H) {
-              c.x = Math.random() * W;
-              c.y = -10;
-            }
-          });
-        }
-        setInterval(draw, 16);
-        window.addEventListener('resize', () => {
-          W = window.innerWidth; H = window.innerHeight;
-          canvas.width = W; canvas.height = H;
-        });
-      </script>
-    </body>
-    </html>
-  `);
-});
-// ...existing code...
+// Route /paymentsuccess moved below (after app initialization) to avoid ReferenceError when loading in production.
+// (original location removed)
+
 // backend/server.js
 // INSPECT: server.js - checking DB and routes
 const express = require('express');
@@ -4623,6 +4544,48 @@ app.post('/api/paydunya/notification', async (req, res) => {
     console.error('Erreur lors du traitement de la notification paiement:', err);
     res.status(500).json({ error: err.message, details: err.response?.data });
   }
+});
+
+// Route de succès de paiement avec confettis et facture téléchargeable
+// Accessible en GET /paymentsuccess?order_id=<id>
+app.get('/paymentsuccess', (req, res) => {
+  const orderId = req.query.order_id || '';
+  const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
+  res.send(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Paiement réussi</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; background: #f7fafc; margin: 0; padding: 0; }
+    h1 { color: #2ecc40; margin-top: 60px; }
+    .confetti { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
+    .btn { display: inline-block; margin-top: 30px; padding: 15px 30px; background: #2ecc40; color: #fff; border: none; border-radius: 8px; font-size: 1.2em; cursor: pointer; text-decoration: none; transition: background 0.2s; }
+    .btn:hover { background: #27ae38; }
+  </style>
+</head>
+<body>
+  <canvas class="confetti"></canvas>
+  <h1>🎉 Paiement réussi !</h1>
+  <p>Merci pour votre commande.</p>
+  <a href="${invoiceUrl}" class="btn" download>Télécharger la facture</a>
+  <script>
+    (function(){
+      const canvas = document.querySelector('.confetti');
+      const ctx = canvas.getContext && canvas.getContext('2d');
+      if (!ctx) return; // defensive
+      let W = window.innerWidth, H = window.innerHeight;
+      canvas.width = W; canvas.height = H;
+      function rand(min, max){ return Math.random()*(max-min)+min; }
+      let confettis = Array.from({length:120}, () => ({ x: rand(0,W), y: rand(-H,0), r: 6 + Math.random()*8, d: 8 + Math.random()*8, color: 'hsl(' + (Math.random()*360) + ',90%,60%)', tilt: Math.random()*10 - 5 }));
+      function draw(){ ctx.clearRect(0,0,W,H); confettis.forEach(c => { ctx.beginPath(); ctx.ellipse(c.x, c.y, c.r, c.r/2, c.tilt, 0, 2*Math.PI); ctx.fillStyle = c.color; ctx.fill(); }); update(); }
+      function update(){ confettis.forEach(c => { c.y += Math.cos(c.d) + 2 + c.r/8; c.x += Math.sin(0.5) * 2; if (c.y > H) { c.x = Math.random() * W; c.y = -10; } }); }
+      setInterval(draw, 16);
+      window.addEventListener('resize', () => { W = window.innerWidth; H = window.innerHeight; canvas.width = W; canvas.height = H; });
+    })();
+  </script>
+</body>
+</html>`);
 });
 
 const PORT = process.env.PORT || 5000;
