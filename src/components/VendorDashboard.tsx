@@ -896,14 +896,9 @@ const VendorDashboard = () => {
   };
 
   // (Global overlay spinner removed)
+  // Suppression du rendu conditionnel de chargement (plus d'overlay, plus de texte 'Chargement...')
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
-      {/* Harmonized Spinner for all main loading states */}
-      {isPageLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
-          <Spinner size="xl" className="" hideWhenGlobal={false} />
-        </div>
-      )}
       {/* Header Moderne - Style similaire à BuyerDashboard */}
       <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">

@@ -1515,20 +1515,20 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     // Mettre à jour la transaction dans Supabase
     if (transaction_id) {
       try {
-        const { error: updateError } = await supabase
-          .from('payment_transactions')
-          .update({
-            status: state,
-            provider_response: response || null,
-            provider_error: error || null,
-            provider_transaction_id: provider_id || null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('transaction_id', transaction_id);
+          const { error: updateError } = await supabase
+            .from('payment_transactions')
+            .update({
+              status: state,
+              provider_response: normalizeJsonField(response),
+              provider_error: error || null,
+              provider_transaction_id: provider_id || null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('transaction_id', transaction_id);
 
-        if (updateError) {
-          console.error('[PIXPAY] Erreur update DB:', updateError);
-        }
+          if (updateError) {
+            console.error('[PIXPAY] Erreur update DB:', updateError);
+          }
       } catch (e) {
         console.error('[PIXPAY] defensive DB update failed (missing columns?), continue processing:', e?.message || e);
       }

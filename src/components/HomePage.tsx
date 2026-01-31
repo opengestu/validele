@@ -86,12 +86,6 @@ export default function HomePage() {
 
   return (
     <div className="relative min-h-[100svh] overflow-hidden bg-white text-foreground">
-      {/* Spinner overlay for all main loading states and 'Continuer' click */}
-      {(authLoading || continueLoading) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
-          <Spinner size="xl" className="" hideWhenGlobal={false} />
-        </div>
-      )}
       {/* Fond animé selon la slide active */}
       {/* Fond animé supprimé pour fond uni */}
 

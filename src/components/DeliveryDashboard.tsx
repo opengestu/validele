@@ -735,19 +735,11 @@ const DeliveryDashboard = () => {
 
 
   // Harmonized Spinner for all main loading states
-  const isPageLoading = loading || savingProfile || !!takingOrderId;
+  // Suppression de l'overlay et du spinner de chargement (plus d'affichage pendant le chargement)
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
       {/* Dev diagnostics banner (only in development) */}
-
-
-      {/* Harmonized Spinner for all main loading states */}
-      {isPageLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
-          <Spinner size="xl" className="" hideWhenGlobal={false} />
-        </div>
-      )}
 
       {/* Header Moderne - Style similaire à VendorDashboard */}
       <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">

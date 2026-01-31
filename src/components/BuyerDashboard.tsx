@@ -1273,10 +1273,15 @@ const BuyerDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Overlay plein écran pendant le paiement, le remboursement, ou chargement initial */}
-      {(processingPayment || softPayLoading || otpLoading || refundLoading || ordersLoading || !backendReady) && (
-        <div className="fixed inset-0 z-[100] bg-white bg-opacity-95 flex items-center justify-center">
-          <Spinner size="xl" />
+
+
+      {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
+      {processingPayment && (
+        <div className="fixed inset-0 z-[100] bg-white bg-opacity-90 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner size="xl" />
+            <span className="text-lg font-semibold text-gray-700">Paiement en cours...</span>
+          </div>
         </div>
       )}
 

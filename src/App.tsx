@@ -53,6 +53,7 @@ const App = () => (
               <Route path="/" element={<HomePage />} />
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/colors" element={<ColorDemo />} />
+              <Route path="/payment-success" element={<PaymentSuccess />} />
               {/* Protected Routes for Vendors */}
               <Route 
                 path="/vendor" 
