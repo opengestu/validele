@@ -7,6 +7,7 @@ const axios = require('axios');
 require('dotenv').config();
 // Support both SUPABASE_ANON_KEY and VITE_SUPABASE_ANON_KEY used on Render
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_ANON_KEY_SOURCE = process.env.SUPABASE_ANON_KEY ? 'SUPABASE_ANON_KEY' : (process.env.VITE_SUPABASE_ANON_KEY ? 'VITE_SUPABASE_ANON_KEY' : (process.env.SUPABASE_KEY ? 'SUPABASE_KEY' : (process.env.SUPABASE_CLIENT_KEY ? 'SUPABASE_CLIENT_KEY' : null)));
 if (SUPABASE_ANON_KEY_SOURCE) {
   console.log('[ADMIN] Supabase anon key source:', SUPABASE_ANON_KEY_SOURCE);
