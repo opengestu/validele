@@ -17,6 +17,17 @@ const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+// Supabase helper: createClient may be needed in some routes; also expose global `supabase`
+const { createClient } = require('@supabase/supabase-js');
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+let supabase;
+try {
+  const sb = require('./supabase');
+  supabase = sb.supabase;
+} catch (e) {
+  // fail gracefully - some routes create a client on demand using createClient
+  console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
