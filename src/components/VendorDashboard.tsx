@@ -1505,16 +1505,7 @@ const VendorDashboard = () => {
                             Facture commande
                           </Button>
 
-                          {/* Payout batch invoices (if any) */}
-                          {(order.payout_invoice_urls && order.payout_invoice_urls.length > 0) && (
-                            <Button
-                              size="sm"
-                              onClick={() => handleDownloadInvoice(order.payout_invoice_urls[0])}
-                              className="bg-yellow-100 text-yellow-800"
-                            >
-                              Facture paiement vendeur
-                            </Button>
-                          )}
+
                         </div>
                       </CardContent>
                     </Card>

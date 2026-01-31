@@ -4680,14 +4680,38 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     const orderId = req.params.id;
     if (!orderId) return res.status(400).send('order id required');
 
-    const { data: order, error } = await supabase
+    // Ensure we have a supabase client (lazy-require if global not set)
+    let sb = supabase;
+    try {
+      if (!sb) {
+        const sbModule = require('./supabase');
+        sb = sbModule && sbModule.supabase ? sbModule.supabase : sbModule;
+        console.log('[INVOICE] Using lazy-loaded supabase client');
+      }
+    } catch (e) {
+      console.error('[INVOICE] Failed to load supabase client:', e?.message || e);
+      const accept = req.headers.accept || '';
+      if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'Invoice service unavailable (DB client missing)' });
+      return res.status(500).send('Invoice service unavailable (DB client missing)');
+    }
+
+    const { data: order, error } = await sb
       .from('orders')
       .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone), vendor:profiles!orders_vendor_id_fkey(full_name, phone), delivery_address`)
       .eq('id', orderId)
       .maybeSingle();
 
-    if (error || !order) {
-      console.error('[INVOICE] Order not found:', error);
+    if (error) {
+      console.error('[INVOICE] DB error when fetching order:', error);
+      const accept = req.headers.accept || '';
+      if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'DB error' });
+      return res.status(500).send('Database error');
+    }
+
+    if (!order) {
+      console.warn('[INVOICE] Order not found for id:', orderId);
+      const accept = req.headers.accept || '';
+      if (accept.includes('application/json')) return res.status(404).json({ success: false, error: 'Order not found' });
       return res.status(404).send('Order not found');
     }
 
@@ -4726,8 +4750,10 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
   } catch (err) {
-    console.error('[INVOICE] Error generating invoice:', err);
-    return res.status(500).send('Internal server error');
+    console.error('[INVOICE] Error generating invoice:', err?.stack || err);
+    const accept = req.headers.accept || '';
+    if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'Internal server error generating invoice' });
+    return res.status(500).send('Internal server error generating invoice');
   }
 });
 
