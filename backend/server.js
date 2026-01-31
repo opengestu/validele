@@ -442,24 +442,69 @@ app.post('/api/vendor/update-product', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
 
-    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } }
-    });
-    const { data, error } = await supabase
-      .from('products')
-      .update(updates)
-      .eq('id', product_id)
-      .select();
+    // Si le token est un JWT SMS (vérifié par jwt.verify précédemment),
+    // **N'ENVOYONS PAS** ce token à PostgREST (il provoque JWSInvalidSignature).
+    // Au lieu de cela, utilisez le client service-role pour effectuer l'opération en toute sécurité
+    // après avoir validé que le vendor_id correspond bien à l'émetteur du token.
+    let data, error;
+    if (typeof token === 'string') {
+      // Est-ce que nous avons pu décoder le token avec JWT_SECRET ? Si oui, c'est un SMS token
+      let isSmsToken = false;
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) {
+          isSmsToken = true;
+        }
+      } catch (e) {
+        // token non signé par notre secret (probablement un token Supabase) -> continuer normalement
+        isSmsToken = false;
+      }
+
+      if (isSmsToken) {
+        // Use service role client to bypass RLS safely for sms sessions
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (!serviceRoleKey) {
+          console.error('[API] update-product: SUPABASE_SERVICE_ROLE_KEY missing for SMS session');
+          return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+        }
+        const { createClient: createAdminClient } = require('@supabase/supabase-js');
+        const supabaseAdmin = createAdminClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        // Protect: ensure we only update products belonging to this vendor
+        ({ data, error } = await supabaseAdmin
+          .from('products')
+          .update(updates)
+          .eq('id', product_id)
+          .eq('vendor_id', vendor_id)
+          .select());
+      } else {
+        // Token Supabase (ou autre) : créer un client utilisateur ordinaire avec ce token
+        const supaClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          global: { headers: { Authorization: `Bearer ${token}` } }
+        });
+        ({ data, error } = await supaClient
+          .from('products')
+          .update(updates)
+          .eq('id', product_id)
+          .select());
+      }
+    } else {
+      // Pas de token (devrait être impossible) : fallback error
+      return res.status(401).json({ success: false, error: 'Authentification requise' });
+    }
 
     console.log('[DEBUG] update result:', { data, error });
     if (error) {
       console.error('[API] Erreur modification produit:', error);
+      // Si l'erreur provient de PostgREST JWSInvalidSignature, donner un message plus lisible
+      if (error && error.code === 'PGRST301' && String(error.message || '').includes('JWS')) {
+        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+      }
       return res.status(500).json({ success: false, error: error.message || 'Erreur modification produit' });
     }
     if (!data || data.length === 0) {
       return res.status(404).json({ success: false, error: 'Produit introuvable ou non modifié' });
     }
+
     return res.json({ success: true, product: data[0] });
   } catch (err) {
     console.error('[API] /api/vendor/update-product error:', err);
