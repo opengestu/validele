@@ -15,6 +15,7 @@ interface RoleSpecificFieldsProps {
   onVehicleInfoChange: (value: string) => void;
   onWalletTypeChange?: (value: string) => void;
   disabled?: boolean;
+  companyNamePlaceholder?: string;
 }
 
 const RoleSpecificFields = ({
@@ -25,18 +26,19 @@ const RoleSpecificFields = ({
   onCompanyNameChange,
   onVehicleInfoChange,
   onWalletTypeChange,
-  disabled = false
+  disabled = false,
+  companyNamePlaceholder = "Nom de votre entreprise"
 }: RoleSpecificFieldsProps) => {
   if (role === 'vendor') {
     return (
       <div className="space-y-3">
         <div>
-          <Label htmlFor="companyName">Nom de l'entreprise</Label>
+          <Label htmlFor="companyName">Nom de votre boutique/entreprise</Label>
           <Input
             id="companyName"
             value={companyName}
             onChange={(e) => onCompanyNameChange(e.target.value)}
-            placeholder="Nom de votre entreprise"
+            placeholder={companyNamePlaceholder}
             disabled={disabled}
           />
         </div>

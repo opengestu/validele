@@ -15,7 +15,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { sendOTP, verifyOTP as verifyOTPService } from '@/services/otp';
 import { apiUrl } from '@/lib/api';
 import RoleSpecificFields from './RoleSpecificFields';
+
 import validelLogo from '@/assets/validel-logo.png';
+// Ajout: import du composant QRCode
+import SimpleQRCode from '@/components/ui/SimpleQRCode';
 
 interface PhoneAuthFormProps {
   initialPhone?: string;
@@ -39,10 +42,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     confirmPin: '',
     fullName: '',
     role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
-   
     companyName: '',
     vehicleInfo: '',
     address: '',
+    customAddress: '',
     walletType: 'wave-senegal'
   });
   const [isNewUser, setIsNewUser] = useState(false);
@@ -639,6 +642,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           company_name: formData.companyName,
           vehicle_info: formData.vehicleInfo,
           wallet_type: formData.role === 'vendor' ? formData.walletType : null,
+          address: formData.address,
           pin: formData.pin,
         }),
       });
@@ -1005,6 +1009,20 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   </button>
                 </div>
               )}
+              {/* Bouton PIN oublié visible tout en bas à l'étape login-pin */}
+              {step === 'login-pin' && (
+                <div className="mt-3 mb-1 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => handleForgotPin()}
+                    disabled={!formData.phone || loading}
+                    className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
+                    style={{ minWidth: 120 }}
+                  >
+                    PIN oublié ?
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1111,12 +1129,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             </div>
             <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
             {renderNumericKeypad()}
-            <div className="text-center mt-3">
+            {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
+            {/* Desktop: bouton normal */}
+            <div className="hidden sm:block text-center mt-6">
               <button
                 type="button"
                 onClick={() => handleForgotPin()}
                 disabled={!formData.phone || loading}
-                className="text-sm text-primary hover:underline"
+                className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
               >
                 PIN oublié ?
               </button>
@@ -1180,6 +1200,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 {formData.role === 'delivery' && 'Profil Livreur'}
               </h2>
             </div>
+            {/* QR Code supprimé à la demande */}
             <div>
               <Input
                 value={formData.fullName}
@@ -1231,14 +1252,105 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
                   onWalletTypeChange={(value) => handleInputChange('walletType', value)}
                   disabled={loading}
+                  companyNamePlaceholder="Nom de votre boutique/entreprise"
                 />
-                <Input
+                {/* Adresse: Select Senegal regions/quartiers + Autre */}
+                <Label className="text-sm font-medium mb-2 block">Adresse</Label>
+                <Select
                   value={formData.address}
-                  onChange={(e) => handleInputChange('address', e.target.value)}
-                  placeholder={formData.role === 'buyer' ? 'Adresse (obligatoire)' : 'Adresse de la boutique (obligatoire)'}
-                  className="h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+                  onValueChange={(value) => handleInputChange('address', value)}
                   required
-                />
+                >
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
+                    <SelectValue placeholder={formData.role === 'buyer' ? 'Adresse (obligatoire)' : 'Adresse de la boutique (obligatoire)'} />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                    <SelectItem value="Dakar - Plateau">Dakar - Plateau</SelectItem>
+                    <SelectItem value="Dakar - Médina">Dakar - Médina</SelectItem>
+                    <SelectItem value="Dakar - Parcelles Assainies">Dakar - Parcelles Assainies</SelectItem>
+                    <SelectItem value="Dakar - Grand Yoff">Dakar - Grand Yoff</SelectItem>
+                    <SelectItem value="Dakar - Yoff">Dakar - Yoff</SelectItem>
+                    <SelectItem value="Dakar - Ouakam">Dakar - Ouakam</SelectItem>
+                    <SelectItem value="Dakar - Liberté">Dakar - Liberté</SelectItem>
+                    <SelectItem value="Dakar - HLM">Dakar - HLM</SelectItem>
+                    <SelectItem value="Dakar - Fass">Dakar - Fass</SelectItem>
+                    <SelectItem value="Dakar - Grand Dakar">Dakar - Grand Dakar</SelectItem>
+                    <SelectItem value="Dakar - Hann Bel Air">Dakar - Hann Bel Air</SelectItem>
+                    <SelectItem value="Dakar - Maristes">Dakar - Maristes</SelectItem>
+                    <SelectItem value="Dakar - Mermoz">Dakar - Mermoz</SelectItem>
+                    <SelectItem value="Dakar - Sacré-Cœur">Dakar - Sacré-Cœur</SelectItem>
+                    <SelectItem value="Dakar - Almadies">Dakar - Almadies</SelectItem>
+                    <SelectItem value="Dakar - Ngor">Dakar - Ngor</SelectItem>
+                    <SelectItem value="Dakar - Patte d'Oie">Dakar - Patte d'Oie</SelectItem>
+                    <SelectItem value="Dakar - Dieuppeul">Dakar - Dieuppeul</SelectItem>
+                    <SelectItem value="Dakar - Biscuiterie">Dakar - Biscuiterie</SelectItem>
+                    <SelectItem value="Guédiawaye - Golf Sud">Guédiawaye - Golf Sud</SelectItem>
+                    <SelectItem value="Guédiawaye - Sam Notaire">Guédiawaye - Sam Notaire</SelectItem>
+                    <SelectItem value="Guédiawaye - Wakhinane Nimzatt">Guédiawaye - Wakhinane Nimzatt</SelectItem>
+                    <SelectItem value="Guédiawaye - Médina Gounass">Guédiawaye - Médina Gounass</SelectItem>
+                    <SelectItem value="Guédiawaye - Ndiarème Limamoulaye">Guédiawaye - Ndiarème Limamoulaye</SelectItem>
+                    <SelectItem value="Pikine - Pikine Nord">Pikine - Pikine Nord</SelectItem>
+                    <SelectItem value="Pikine - Pikine Est">Pikine - Pikine Est</SelectItem>
+                    <SelectItem value="Pikine - Pikine Ouest">Pikine - Pikine Ouest</SelectItem>
+                    <SelectItem value="Pikine - Thiaroye">Pikine - Thiaroye</SelectItem>
+                    <SelectItem value="Pikine - Guinaw Rail">Pikine - Guinaw Rail</SelectItem>
+                    <SelectItem value="Pikine - Dalifort">Pikine - Dalifort</SelectItem>
+                    <SelectItem value="Rufisque - Rufisque Ville">Rufisque - Rufisque Ville</SelectItem>
+                    <SelectItem value="Rufisque - Bargny">Rufisque - Bargny</SelectItem>
+                    <SelectItem value="Rufisque - Diamniadio">Rufisque - Diamniadio</SelectItem>
+                    <SelectItem value="Thiès - Thiès Ville">Thiès - Thiès Ville</SelectItem>
+                    <SelectItem value="Thiès - Tivaouane">Thiès - Tivaouane</SelectItem>
+                    <SelectItem value="Thiès - Mbour">Thiès - Mbour</SelectItem>
+                    <SelectItem value="Saint-Louis - Saint-Louis Ville">Saint-Louis - Saint-Louis Ville</SelectItem>
+                    <SelectItem value="Saint-Louis - Richard Toll">Saint-Louis - Richard Toll</SelectItem>
+                    <SelectItem value="Saint-Louis - Dagana">Saint-Louis - Dagana</SelectItem>
+                    <SelectItem value="Kaolack - Kaolack Ville">Kaolack - Kaolack Ville</SelectItem>
+                    <SelectItem value="Kaolack - Nioro">Kaolack - Nioro</SelectItem>
+                    <SelectItem value="Kaolack - Guinguinéo">Kaolack - Guinguinéo</SelectItem>
+                    <SelectItem value="Ziguinchor - Ziguinchor Ville">Ziguinchor - Ziguinchor Ville</SelectItem>
+                    <SelectItem value="Ziguinchor - Bignona">Ziguinchor - Bignona</SelectItem>
+                    <SelectItem value="Ziguinchor - Oussouye">Ziguinchor - Oussouye</SelectItem>
+                    <SelectItem value="Diourbel - Diourbel Ville">Diourbel - Diourbel Ville</SelectItem>
+                    <SelectItem value="Diourbel - Bambey">Diourbel - Bambey</SelectItem>
+                    <SelectItem value="Diourbel - Mbacké">Diourbel - Mbacké</SelectItem>
+                    <SelectItem value="Louga - Louga Ville">Louga - Louga Ville</SelectItem>
+                    <SelectItem value="Louga - Kébémer">Louga - Kébémer</SelectItem>
+                    <SelectItem value="Louga - Linguère">Louga - Linguère</SelectItem>
+                    <SelectItem value="Fatick - Fatick Ville">Fatick - Fatick Ville</SelectItem>
+                    <SelectItem value="Fatick - Foundiougne">Fatick - Foundiougne</SelectItem>
+                    <SelectItem value="Fatick - Gossas">Fatick - Gossas</SelectItem>
+                    <SelectItem value="Kaffrine - Kaffrine Ville">Kaffrine - Kaffrine Ville</SelectItem>
+                    <SelectItem value="Kaffrine - Koungheul">Kaffrine - Koungheul</SelectItem>
+                    <SelectItem value="Kaffrine - Malem Hodar">Kaffrine - Malem Hodar</SelectItem>
+                    <SelectItem value="Kédougou - Kédougou Ville">Kédougou - Kédougou Ville</SelectItem>
+                    <SelectItem value="Kédougou - Salémata">Kédougou - Salémata</SelectItem>
+                    <SelectItem value="Kédougou - Saraya">Kédougou - Saraya</SelectItem>
+                    <SelectItem value="Kolda - Kolda Ville">Kolda - Kolda Ville</SelectItem>
+                    <SelectItem value="Kolda - Vélingara">Kolda - Vélingara</SelectItem>
+                    <SelectItem value="Kolda - Médina Yoro Foulah">Kolda - Médina Yoro Foulah</SelectItem>
+                    <SelectItem value="Matam - Matam Ville">Matam - Matam Ville</SelectItem>
+                    <SelectItem value="Matam - Kanel">Matam - Kanel</SelectItem>
+                    <SelectItem value="Matam - Ranérou">Matam - Ranérou</SelectItem>
+                    <SelectItem value="Sédhiou - Sédhiou Ville">Sédhiou - Sédhiou Ville</SelectItem>
+                    <SelectItem value="Sédhiou - Bounkiling">Sédhiou - Bounkiling</SelectItem>
+                    <SelectItem value="Sédhiou - Goudomp">Sédhiou - Goudomp</SelectItem>
+                    <SelectItem value="Tambacounda - Tambacounda Ville">Tambacounda - Tambacounda Ville</SelectItem>
+                    <SelectItem value="Tambacounda - Bakel">Tambacounda - Bakel</SelectItem>
+                    <SelectItem value="Tambacounda - Goudiry">Tambacounda - Goudiry</SelectItem>
+                    <SelectItem value="Tambacounda - Koumpentoum">Tambacounda - Koumpentoum</SelectItem>
+                    <SelectItem value="Autre">Autre</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Champ texte si "Autre" sélectionné */}
+                {formData.address === 'Autre' && (
+                  <Input
+                    className="mt-2 h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+                    placeholder="Entrez votre adresse exacte"
+                    value={formData.customAddress || ''}
+                    onChange={e => handleInputChange('customAddress', e.target.value)}
+                    required
+                  />
+                )}
               </>
             )}
             <Button

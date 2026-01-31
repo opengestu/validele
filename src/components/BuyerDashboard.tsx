@@ -1588,7 +1588,7 @@ const BuyerDashboard = () => {
                   }
 
                   return (
-                    <div className="space-y-3">
+                    <div className="space-y-3 flex flex-col items-center justify-center">
                       {displayedOrders.map((order) => {
                         // Trouver les transactions associées à cette commande
                         const orderTransactions = transactions.filter(t => t.order_id === order.id);
@@ -1608,77 +1608,73 @@ const BuyerDashboard = () => {
                         };
                         
                         return (
-                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md w-full">
-                          <div className="flex flex-col gap-3">
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
+                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[480px] min-w-[260px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[480px]" style={{marginLeft: 0, marginRight: 0}}>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 w-full">
                               <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="font-semibold text-gray-900 break-words text-sm max-w-[220px] xs:max-w-[260px] sm:max-w-none truncate">
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <p className="font-bold text-gray-900 break-words text-lg max-w-[260px] sm:max-w-none truncate">
                                     {order.products?.name || 'Commande'}
                                   </p>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-green-600">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-lg font-bold text-green-700">
                                       {order.total_amount?.toLocaleString()} FCFA
                                     </span>
                                   </div>
                                 </div>
-                                <div className="mt-2 space-y-1 text-sm text-gray-600">
+                                <div className="mt-3 space-y-2 text-base text-gray-700">
                                   <div className="flex flex-col gap-2 pb-2">
-                                    <div className="flex items-center gap-3">
-                                      <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 truncate text-xs">{order.profiles?.full_name || 'N/A'}</span>
+                                    <div className="flex items-center gap-4">
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
+                                      <span className="flex-1 min-w-0 truncate text-base">{order.profiles?.full_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
-                                      <div className="flex items-center gap-3 text-sm">
-                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
-                                        <div className="flex items-center gap-2">
-                                          <Tooltip>
+                                      <div className="flex items-center gap-3 text-base">
+                                        <Tooltip>
                                             <TooltipTrigger asChild>
                                               <a
                                                 href={`tel:${order.profiles.phone}`}
-                                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
                                                 aria-label="Appeler le vendeur(se)"
                                               >
-                                                <PhoneIcon className="h-4 w-4" size={14} />
-                                                <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                                <PhoneIcon className="h-5 w-5" size={18} />
+                                                <span className="ml-1 text-base leading-tight">Appeler</span>
                                               </a>
                                             </TooltipTrigger>
                                             <TooltipContent>Appeler le vendeur(se)</TooltipContent>
-                                          </Tooltip>
-
-                                          <a
+                                        </Tooltip>
+                                        <a
                                             href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 text-green-700 text-[11px] font-medium hover:bg-green-100 transition min-w-[56px]"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-green-50 text-green-700 text-sm font-semibold hover:bg-green-100 transition min-w-[40px]"
                                             title="Contacter sur WhatsApp"
                                           >
-                                            <WhatsAppIcon className="h-4 w-4" size={14} />
-                                            <span className="ml-1 text-[11px] leading-tight">WhatsApp</span>
-                                          </a>
-                                        </div>
+                                            <WhatsAppIcon className="h-5 w-5" size={18} />
+                                            <span className="ml-1 text-base leading-tight">WhatsApp</span>
+                                        </a>
                                       </div>
                                     )}
                                   </div>
                                   {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
-                                    <div className="flex flex-col gap-1 mt-3">
-                                      <div className="flex items-center gap-3">
-                                        <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Livreur:</span>
-                                        <span className="flex-1 min-w-0 truncate text-xs">{order.delivery_person?.full_name || (order.status === 'in_delivery' ? "En cours d'affectation" : 'N/A')}</span>
+                                    <div className="flex flex-col gap-2 mt-4">
+                                      <div className="flex items-center gap-4">
+                                        <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
+                                        <span className="flex-1 min-w-0 truncate text-base">{order.delivery_person?.full_name || (order.status === 'in_delivery' ? "En cours d'affectation" : 'N/A')}</span>
                                       </div>
                                       {order.delivery_person?.phone ? (
-                                        <div className="flex items-center gap-3 text-sm">
-                                          <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contacts:</span>
-                                          <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-4 text-base">
+                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Contacts:</span>
+                                          <div className="flex items-center gap-3">
                                             <Tooltip>
                                               <TooltipTrigger asChild>
                                                 <a
                                                   href={`tel:${order.delivery_person.phone}`}
-                                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
                                                   aria-label="Appeler le livreur"
                                                 >
-                                                  <PhoneIcon className="h-4 w-4" size={14} />
-                                                  <span className="ml-1 text-[11px] leading-tight">Appeler</span>
+                                                  <PhoneIcon className="h-5 w-5" size={18} />
+                                                  <span className="ml-1 text-base leading-tight">Appeler</span>
                                                 </a>
                                               </TooltipTrigger>
                                               <TooltipContent>Appeler le livreur</TooltipContent>
@@ -1745,19 +1741,21 @@ const BuyerDashboard = () => {
                             </div>
 
                             {/* Boutons d'action */}
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-2 mt-2">
                               {order.qr_code ? (
                                 <button
-                                  className="rounded-md border border-orange-400 px-3 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
+                                  className="rounded-md border border-orange-400 px-3 py-1.5 text-sm font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                  style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                   onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
                                 >
                                   Voir QR code
                                 </button>
                               ) : (
-                                <span className="text-xs text-gray-400">QR code indisponible</span>
+                                <span className="text-sm text-gray-400">QR code indisponible</span>
                               )}
                               <button
-                                className="rounded-md border border-blue-500 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50"
+                                className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm transition-all min-w-[72px] min-h-[32px]"
+                                style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                 onClick={toggleDetails}
                               >
                                 {isExpanded ? 'Masquer les détails' : 'Détails'}
@@ -1769,7 +1767,7 @@ const BuyerDashboard = () => {
                                 {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
                                 {(order.status === 'paid' || order.status === 'in_delivery') && (
                                   <button
-                                    className="flex items-center gap-1 rounded-md border border-red-500 px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50"
+                                    className="flex items-center gap-1 rounded-md border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 min-w-[32px]"
                                     onClick={() => openRefundModal(order)}
                                   >
                                     <XCircle size={14} />
@@ -1811,12 +1809,6 @@ const BuyerDashboard = () => {
 
             {/* Boutons: Partager et Fermer (tailles réduites) */}
             <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
-              <button
-                onClick={handleShareQr}
-                style={{ padding: '8px 12px', borderRadius: 6, background: '#16a34a', color: 'white', border: 'none', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
-              >
-                Partager
-              </button>
               <button
                 onClick={() => setQrModalOpen(false)}
                 style={{ padding: '8px 12px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}

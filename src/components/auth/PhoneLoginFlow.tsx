@@ -65,12 +65,30 @@ const PhoneLoginFlow: React.FC = () => {
       )}
 
       {stage === 'enter-pin' && (
-        <div>
+        <div style={{ position: 'relative', minHeight: 220 }}>
           <h2>Entrez votre code PIN</h2>
           <PinInput onComplete={onPinComplete} />
           <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <button onClick={() => setStage('enter-phone')}>Retour</button>
-            <button onClick={() => { setForgotReset(true); setStage('signup'); }} style={{ background: 'none', border: 'none', color: '#0b74de', textDecoration: 'underline', cursor: 'pointer' }}>PIN oublié ?</button>
+          </div>
+          <div style={{ textAlign: 'center', marginTop: 24 }}>
+            <button
+              onClick={() => { setForgotReset(true); setStage('signup'); }}
+              style={{
+                background: 'white',
+                color: '#0b74de',
+                border: 'none',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                borderRadius: 8,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                padding: '8px 18px',
+                fontSize: 15,
+                marginTop: 8
+              }}
+            >
+              PIN oublié ?
+            </button>
           </div>
         </div>
       )}

@@ -1,202 +1,4 @@
 // ...existing code...
-// backend/server.js
-// INSPECT: server.js - checking DB and routes
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-require('dotenv').config();
-// Support both SUPABASE_ANON_KEY and VITE_SUPABASE_ANON_KEY used on Render
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
-const SUPABASE_ANON_KEY_SOURCE = process.env.SUPABASE_ANON_KEY ? 'SUPABASE_ANON_KEY' : (process.env.VITE_SUPABASE_ANON_KEY ? 'VITE_SUPABASE_ANON_KEY' : (process.env.SUPABASE_KEY ? 'SUPABASE_KEY' : (process.env.SUPABASE_CLIENT_KEY ? 'SUPABASE_CLIENT_KEY' : null)));
-if (SUPABASE_ANON_KEY_SOURCE) {
-  console.log('[ADMIN] Supabase anon key source:', SUPABASE_ANON_KEY_SOURCE);
-} else {
-  console.warn('[ADMIN] Supabase anon key not found in environment (SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY)');
-}
-const fs = require('fs');
-const https = require('https');
-const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
-const cookieParser = require('cookie-parser');
-const { sendOTP, verifyOTP } = require('./direct7');
-const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
-const notificationService = require('./notification-service');
-const { supabase } = require('./supabase');
-const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
-
-
-const app = express();
-
-// CORS global, avant toute route
-const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow non-browser (curl) or same-origin server requests
-    if (!origin) return callback(null, true);
-    // Allow explicit VITE_DEV_ORIGIN
-    if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return callback(null, true);
-    // Allow any localhost or 127.0.0.1 on any port (dev convenience)
-    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'), false);
-  },
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Authorization']
-};
-app.use(cors(corsOptions));
-app.use(express.json({
-  // Capture raw body for better debugging of invalid JSON requests (kept truncated when logged)
-  verify: (req, res, buf, encoding) => {
-    try {
-      req.rawBody = buf.toString(encoding || 'utf8');
-    } catch (e) {
-      req.rawBody = '';
-    }
-  }
-}));
-app.use(cookieParser());
-
-// Helper: normalize a provider/raw response into a JSON object for DB jsonb columns
-function normalizeJsonField(val) {
-  try {
-    if (val === undefined || val === null) return null;
-    if (typeof val === 'object') return val;
-    if (typeof val === 'string') {
-      const trimmed = val.trim();
-      if (trimmed === '') return null;
-      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-        try { return JSON.parse(trimmed); } catch (e) { return { message: trimmed }; }
-      }
-      return { message: trimmed };
-    }
-    // numbers/booleans -> wrap
-    return { value: val };
-  } catch (e) {
-    return { message: String(val) };
-  }
-}
-
-// Mount auth routes (added for phone existence check and PIN login)
-try {
-  const authRoutes = require('./routes/auth');
-  app.use('/auth', authRoutes);
-} catch (e) {
-  console.warn('Auth routes module not found or failed to load:', e.message);
-}
-
-process.on('uncaughtException', function (err) {
-  console.error('UNCAUGHT EXCEPTION:', err);
-});
-process.on('unhandledRejection', function (reason, p) {
-  console.error('UNHANDLED REJECTION:', reason);
-});
-
-// Force le parsing URL-encoded pour les formulaires
-app.use(express.urlencoded({ extended: true }));
-
-// Middleware de gestion d'erreur globale pour attraper les erreurs de parsing JSON
-app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    const raw = String(req.rawBody || '');
-    // Mask password values to avoid logging secrets
-    const masked = raw.replace(/("password"\s*:\s*)"([^"]+)"/gi, '$1"***"').replace(/('password'\s*:\s*)'([^']+)'/gi, "$1'***'");
-    console.error('Bad JSON:', err.message, 'rawSnippet:', masked.slice(0, 200));
-
-    const hint = "Vérifiez que le body est du JSON valide. PowerShell: Invoke-RestMethod -Uri 'https://<votre-backend>/api/admin/login' -Method Post -ContentType 'application/json' -Body (@{ email='..'; password='..' } | ConvertTo-Json). Avec curl sur Windows, préférez 'curl.exe' ou utilisez un fichier payload.json et 'curl -d @payload.json'.";
-
-    return res.status(400).json({ success: false, message: 'Requête JSON invalide.', hint });
-  }
-  next();
-});
-
-// Middleware: rafraîchissement automatique des tokens JWT personnalisés (SMS tokens)
-const refreshTokenIfNeeded = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) return next();
-
-    const token = authHeader.split(' ')[1];
-    let decoded = null;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (e) {
-      // invalid or expired - attempt to decode without verify
-      try { decoded = jwt.decode(token); } catch (e2) { decoded = null; }
-    }
-
-    if (!decoded || !decoded.exp) return next();
-
-    const now = Math.floor(Date.now() / 1000);
-    // If token expires in less than 5 minutes, issue a new one
-    if ((decoded.exp - now) < 300) {
-      try {
-        const newToken = jwt.sign(
-          {
-            sub: decoded.sub,
-            phone: decoded.phone,
-            auth_mode: decoded.auth_mode || 'sms',
-            role: decoded.role
-          },
-          JWT_SECRET,
-          { expiresIn: '1h' }
-        );
-        // Expose the new token to the client in a header
-        res.setHeader('X-New-Access-Token', newToken);
-        console.log('[TOKEN-REFRESH] Issued new JWT for sub:', decoded.sub);
-      } catch (e) {
-        console.warn('[TOKEN-REFRESH] failed to sign new token:', e?.message || e);
-      }
-    }
-
-    return next();
-  } catch (err) {
-    console.error('❌ refreshTokenIfNeeded error:', err);
-    return next();
-  }
-};
-
-// Appliquer le middleware aux routes API critiques
-app.use('/api/vendor', refreshTokenIfNeeded);
-app.use('/api/delivery', refreshTokenIfNeeded);
-app.use('/api/buyer', refreshTokenIfNeeded);
-
-// Debug: token info endpoint for diagnosing session vs JWT issues
-app.get('/api/debug/token-info', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization || req.headers.Authorization || null;
-    const tokenInfo = { hasHeader: !!authHeader, headerLength: authHeader?.length || 0, isBearer: !!(authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) };
-    if (tokenInfo.isBearer) {
-      const token = authHeader.split(' ')[1];
-      tokenInfo.token = 'present';
-      try {
-        const decoded = jwt.decode(token, { complete: true });
-        tokenInfo.jwtDecoded = { header: decoded?.header || null, payload: decoded?.payload || null };
-      } catch (e) { tokenInfo.jwtError = String(e.message || e); }
-
-      try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        tokenInfo.supabaseAuth = { hasUser: !!user, userId: user?.id || null, error: error?.message || null };
-      } catch (e) { tokenInfo.supabaseError = String(e.message || e); }
-
-      try {
-        const verified = jwt.verify(token, JWT_SECRET);
-        tokenInfo.customJwtValid = true;
-        tokenInfo.customJwtExp = verified.exp;
-        tokenInfo.customJwtExpired = verified.exp < Math.floor(Date.now() / 1000);
-      } catch (e) { tokenInfo.customJwtInvalid = String(e.message || e); }
-    }
-
-    return res.json({ success: true, tokenInfo });
-  } catch (err) {
-    console.error('[DEBUG] token-info error:', err);
-    return res.status(500).json({ success: false, error: String(err) });
-  }
-});
-
-// ==========================================
-// ICI : place ta route add-product
-// ==========================================
 // Endpoint sécurisé pour ajout produit par un vendeur (bypass RLS pour session SMS)
 app.post('/api/vendor/add-product', async (req, res) => {
   try {
@@ -253,8 +55,13 @@ app.post('/api/vendor/add-product', async (req, res) => {
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
-    // Insert via service key (bypass RLS)
-    const { data, error } = await supabase
+    // Utilise un client Supabase initialisé avec le JWT utilisateur pour respecter RLS
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseJwt = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+    // Insert via ce client (RLS respectée)
+    const { data, error } = await supabaseJwt
       .from('products')
       .insert({
         vendor_id,
@@ -558,11 +365,13 @@ app.get('/api/vendor/transactions', async (req, res) => {
       const token = authHeader.split(' ')[1];
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) userId = decoded.sub;
+        if (decoded && decoded.sub) {
+          userId = decoded.sub;
+        }
       } catch (e) {
         try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) userId = user.id;
+          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+          if (!authErr && user) userId = user.id;
         } catch (e2) { /* ignore */ }
       }
     }
@@ -599,7 +408,6 @@ app.get('/api/vendor/transactions', async (req, res) => {
         .from('payment_transactions')
         .select('*')
         .in('order_id', orderIds)
-        .in('transaction_type', ['payout','vendor_payout'])
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -643,7 +451,7 @@ app.post('/api/orders/search', async (req, res) => {
     // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
     const { data, error } = await supabase
       .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
       .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
       .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
@@ -2985,7 +2793,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       });
     }
 
-    // 2) Vérifier que la commande peut être remboursée (status = paid ou in_delivery)
+    // 2) Vérifier que la commande peut être remboursement (status = paid ou in_delivery)
     if (!['paid', 'in_delivery'].includes(order.status)) {
       return res.status(400).json({
         success: false,
@@ -3405,7 +3213,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       .from('orders')
       .select(`
         id, status, buyer_id, order_code, delivery_person_id,
-        buyer:profiles!orders_buyer_id_fkey(phone),
+        buyer:profiles!orders_buyer_id_fkey(phone, wallet_type, full_name),
         delivery_person:profiles!orders_delivery_person_id_fkey(phone),
         product:products(name)
       `)
@@ -3587,7 +3395,7 @@ async function getDeliveryPersonPhone(deliveryPersonId) {
     console.error('Error getting delivery person phone:', e);
     return null;
   }
-}
+})
 app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
     const { orderId, deliveredBy } = req.body || {};
@@ -4392,8 +4200,6 @@ app.post('/api/payment/webhook', async (req, res) => {
   
   // Récupère le token de la facture dans la notification
   const token = req.body?.invoice_token || req.body?.token || req.body?.data?.invoice?.token;
-
-  // Récupère le statut du paiement
   let status = req.body?.status || req.body?.data?.status || req.body?.payment_status;
 
   if (!token) {
@@ -4403,18 +4209,37 @@ app.post('/api/payment/webhook', async (req, res) => {
 
   try {
     const { supabase } = require('./supabase');
-    const { data: orders, error: fetchError } = await supabase
+    let orders = [];
+    let fetchError = null;
+    // Recherche par token
+    const res1 = await supabase
       .from('orders')
-      .select('id')
+      .select('id, status, token')
       .eq('token', token)
       .limit(1);
+    orders = res1.data;
+    fetchError = res1.error;
+    console.log('Résultat recherche commande par token:', { orders, fetchError });
+
+    // Fallback : recherche par order_id si pas trouvé
+    if ((!orders || orders.length === 0) && req.body?.order_id) {
+      console.log('Aucune commande trouvée par token, tentative par order_id:', req.body.order_id);
+      const res2 = await supabase
+        .from('orders')
+        .select('id, status, token')
+        .eq('id', req.body.order_id)
+        .limit(1);
+      orders = res2.data;
+      fetchError = res2.error;
+      console.log('Résultat recherche commande par order_id:', { orders, fetchError });
+    }
 
     if (fetchError || !orders || orders.length === 0) {
-      console.error('Commande non trouvée pour ce token', fetchError);
-      return res.status(400).json({ error: 'Commande non trouvée pour ce token' });
+      console.error('Commande non trouvée pour ce token ni order_id', fetchError);
+      return res.status(400).json({ error: 'Commande non trouvée pour ce token ni order_id' });
     }
     const orderId = orders[0].id;
-    console.log('Commande trouvée pour ce token:', orderId);
+    console.log('Commande trouvée pour ce token ou order_id:', orderId);
 
     const { error } = await supabase
       .from('orders')

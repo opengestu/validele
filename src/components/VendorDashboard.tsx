@@ -1066,27 +1066,27 @@ const VendorDashboard = () => {
                       className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
                       style={{ maxWidth: 350 }}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
-                        <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
-                      </div>
-                      <div className="flex items-center mb-1">
-                        <span className="text-sm font-semibold text-gray-800 w-40">Code commande :</span>
-                        <span className="ml-auto text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px'}}>{order.order_code || order.id}</span>
-                      </div>
-                      <div className="flex items-center mb-1">
-                        <span className="text-sm font-semibold text-gray-800 w-40">Statut commande :</span>
-                        <span className="ml-auto text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22'}}>
-                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                          <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                        </div>
+                        <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
+                          {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                         </span>
                       </div>
+                      <div className="flex items-center mb-1">
+                        <span className="text-sm font-semibold text-gray-800">Code commande :</span>
+                        <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px', marginLeft: 8}}>{order.order_code || order.id}</span>
+                      </div>
+                      {/* ...statut déplacé en bas... */}
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Client :</strong>
-                        <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>{order.profiles?.full_name || 'Client'}</span>
+                        <span className="font-semibold text-gray-900" style={{ fontSize: "14px", marginLeft: 8 }}>{order.profiles?.full_name || 'Client'}</span>
                       </div>
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Contacts :</strong>
-                        <div className="ml-auto">
+                        <div style={{ marginLeft: 8 }}>
                           <button
                             type="button"
                             onClick={() => handleCallClient(order)}
@@ -1101,12 +1101,13 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
-                        <span className="ml-auto text-gray-700">Adresse à définir</span>
+                        <span className="text-gray-700" style={{ marginLeft: 8 }}>Adresse à définir</span>
                       </div>
-                      <div className="flex items-center text-sm mb-1">
-                        <strong>Prix :</strong>
-                        <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
-                          {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+
+                      <div className="flex items-center mb-1 mt-2">
+                        <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
+                        <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
+                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                         </span>
                       </div>
                     </div>
@@ -1297,7 +1298,7 @@ const VendorDashboard = () => {
                 {/* Wallet utilisé supprimé */}
                 <div>
                   <label className="text-sm font-medium text-gray-500">Rôle</label>
-                  <p className="text-lg">Vendeur</p>
+                  <p className="text-lg">Vendeur(se)</p>
                 </div>
                 <Button
                   variant="destructive"
@@ -1415,30 +1416,27 @@ const VendorDashboard = () => {
                   {orders.map((order) => (
                     <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
                       <CardContent className="p-4">
-                        {/* Ligne 1 : Icône + nom produit en gras */}
-                        <div className="flex items-center gap-2 mb-1">
-                          <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
-                          <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                        {/* Ligne 1 : Icône + nom produit + prix à droite */}
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                            <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                          </div>
+                          <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
+                            {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+                          </span>
                         </div>
                         <div className="flex items-center mb-1">
                           <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
-                          <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px'}}>{order.order_code || order.id}</span>
+                          <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'16px', marginLeft: 8}}>{order.order_code || order.id}</span>
                         </div>
-                        {/* Ligne 4 : Client */}
-                        <div className="flex items-center text-sm text-gray-800 mb-1">
-                          <strong>Contacts :</strong>
-                        <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>
-                          {order.profiles?.full_name || 'Client'}
-                        </span>
-                      </div>
-
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Client :</strong>
-                          <span className="ml-2 font-semibold text-gray-900" style={{ fontSize: "14px" }}>{order.profiles?.full_name || 'Client'}</span>
+                          <span className="font-semibold text-gray-900" style={{ fontSize: "14px", marginLeft: 8 }}>{order.profiles?.full_name || 'Client'}</span>
                         </div>
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Contacts :</strong>
-                          <div className="ml-auto">
+                          <div style={{ marginLeft: 8 }}>
                             <button
                               type="button"
                               onClick={() => handleCallClient(order)}
@@ -1450,17 +1448,15 @@ const VendorDashboard = () => {
                             </button>
                           </div>
                         </div>
-
-                        {/* Ligne 6 : Adresse */}
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Adresse :</strong>
-                          <span className="ml-auto text-gray-700">Adresse à définir</span>
+                          <span className="text-gray-700" style={{ marginLeft: 8 }}>Adresse à définir</span>
                         </div>
-                        {/* Ligne 7 : Prix */}
-                        <div className="flex items-center text-sm mb-1">
-                          <strong>Prix :</strong>
-                          <span className="ml-auto font-bold" style={{ color: "#11B122", fontSize: 22 }}>
-                            {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+                        {/* Statut tout en bas */}
+                        <div className="flex items-center mb-1 mt-2">
+                          <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
+                          <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
+                            {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                           </span>
                         </div>
                       </CardContent>
@@ -1489,10 +1485,7 @@ const VendorDashboard = () => {
                           <label className="text-sm font-medium text-gray-500">Nom complet</label>
                           <p className="text-lg">{userProfile?.full_name || 'Non défini'}</p>
                         </div>
-                        <div>
-                          <label className="text-sm font-medium text-gray-500">Email</label>
-                          <p className="text-lg">{user?.email}</p>
-                        </div>
+
                         <div>
                           <label className="text-sm font-medium text-gray-500">Téléphone</label>
                           <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
