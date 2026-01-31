@@ -516,6 +516,7 @@ app.post('/api/vendor/orders', async (req, res) => {
 // Retourne les produits d'un vendeur (bypass RLS via service or token-aware endpoint)
 app.post('/api/vendor/products', async (req, res) => {
   try {
+    const { supabase } = require('./supabase');
     const { vendor_id } = req.body || {};
     if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
 
