@@ -504,6 +504,32 @@ app.post('/api/vendor/orders', async (req, res) => {
         }
       }
 
+      // Attach payout batch info per order so the frontend (VendorDashboard) can show invoice links in order history
+      try {
+        const orderIds = (data || []).map(o => o.id).filter(Boolean);
+        if (orderIds.length > 0) {
+          const { data: batchItems, error: batchItemsErr } = await supabaseAdmin
+            .from('payout_batch_items')
+            .select('order_id,batch_id,status,provider_response')
+            .in('order_id', orderIds);
+
+          if (!batchItemsErr && batchItems && batchItems.length > 0) {
+            const byOrder = {};
+            for (const bi of batchItems) {
+              byOrder[bi.order_id] = byOrder[bi.order_id] || [];
+              byOrder[bi.order_id].push(bi);
+            }
+
+            for (const o of data) {
+              o.payout_batches = byOrder[o.id] || [];
+              o.payout_invoice_urls = (o.payout_batches || []).map(bi => `/api/vendor/payout-batches/${bi.batch_id}/invoice`);
+            }
+          }
+        }
+      } catch (attachErr) {
+        console.warn('[VENDOR ORDERS] Failed to attach payout_batch info:', attachErr);
+      }
+
       return res.json({ 
         success: true, 
         orders: data || [],

@@ -377,7 +377,42 @@ const VendorDashboard = () => {
         }
       } catch (e) { /* ignore */ }
     }
+
   }, [user, smsUser, toast]);
+
+  // Download a vendor invoice (payout batch). Uses auth to fetch protected invoice endpoint and force download.
+  async function handleDownloadInvoice(url: string) {
+    try {
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
+      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      const resp = await fetch(fullUrl, { method: 'GET', headers: Object.assign({ 'Accept': '*/*' }, token ? { Authorization: `Bearer ${token}` } : {}) });
+      if (!resp.ok) {
+        toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
+        return;
+      }
+      const blob = await resp.blob();
+      // Try to extract filename from content-disposition
+      let filename = 'invoice.html';
+      const cd = resp.headers.get('content-disposition') || '';
+      const m = /filename\s*=\s*"?([^;"]+)"?/i.exec(cd);
+      if (m && m[1]) filename = m[1];
+      const urlObj = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = urlObj;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(urlObj);
+      toast({ title: 'Téléchargé', description: 'Facture prête en téléchargement' });
+    } catch (err) {
+      console.error('[VendorDashboard] download invoice error', err);
+      toast({ title: 'Erreur', description: 'Erreur téléchargement facture', variant: 'destructive' });
+    }
+  }
 
   // Fetch profile (keeps parity with BuyerDashboard)
   const fetchProfile = useCallback(async () => {
@@ -1453,6 +1488,33 @@ const VendorDashboard = () => {
                           <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
                             {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                           </span>
+                        </div>
+                        {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
+                        <div className="flex items-center mt-2 space-x-2">
+                          {/* Order invoice (public endpoint) */}
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              // download public order invoice
+                              const url = `/api/orders/${order.id}/invoice`;
+                              // open in new tab so browser handles download (public)
+                              window.open(url, '_blank');
+                            }}
+                            className="bg-gray-100 text-gray-800"
+                          >
+                            Facture commande
+                          </Button>
+
+                          {/* Payout batch invoices (if any) */}
+                          {(order.payout_invoice_urls && order.payout_invoice_urls.length > 0) && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleDownloadInvoice(order.payout_invoice_urls[0])}
+                              className="bg-yellow-100 text-yellow-800"
+                            >
+                              Facture paiement vendeur
+                            </Button>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
