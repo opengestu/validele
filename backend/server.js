@@ -4588,9 +4588,10 @@ app.get('/paymentsuccess', (req, res) => {
   <canvas class="confetti"></canvas>
   <h1>🎉 Paiement réussi !</h1>
   <p>Merci pour votre commande.</p>
-  <a href="${invoiceUrl}" class="btn" download>Télécharger la facture</a>
+  <a id="invoiceLink" href="${invoiceUrl}" class="btn ${invoiceUrl === '#' ? 'disabled' : ''}" download>Télécharger la facture</a>
   <script>
     (function(){
+      // Confetti animation (defensive)
       const canvas = document.querySelector('.confetti');
       const ctx = canvas.getContext && canvas.getContext('2d');
       if (!ctx) return; // defensive
@@ -4602,10 +4603,146 @@ app.get('/paymentsuccess', (req, res) => {
       function update(){ confettis.forEach(c => { c.y += Math.cos(c.d) + 2 + c.r/8; c.x += Math.sin(0.5) * 2; if (c.y > H) { c.x = Math.random() * W; c.y = -10; } }); }
       setInterval(draw, 16);
       window.addEventListener('resize', () => { W = window.innerWidth; H = window.innerHeight; canvas.width = W; canvas.height = H; });
+
+      // Invoice lookup & auto-bind (if redirect doesn't include order_id)
+      async function tryResolveOrder() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          let orderId = params.get('order_id');
+          const invoiceLink = document.getElementById('invoiceLink');
+
+          function enable(linkHref) {
+            invoiceLink.href = linkHref;
+            invoiceLink.classList.remove('disabled');
+            invoiceLink.setAttribute('download', 'invoice.html');
+          }
+
+          if (orderId && orderId !== '') {
+            enable('/api/orders/' + orderId + '/invoice');
+            return;
+          }
+
+          // Try transaction ids commonly used by providers
+          const tx = params.get('transaction_id') || params.get('transaction') || params.get('txn') || params.get('provider_id') || params.get('provider_transaction_id');
+          if (!tx) return;
+
+          const lookup = await fetch('/api/payment/lookup?transaction_id=' + encodeURIComponent(tx));
+          if (!lookup.ok) return;
+          const data = await lookup.json();
+          if (data && data.order_id) enable('/api/orders/' + data.order_id + '/invoice');
+        } catch (e) {
+          console.warn('Invoice lookup failed:', e);
+        }
+      }
+
+      // On load try resolving
+      tryResolveOrder();
+
     })();
   </script>
+  <style>
+    /* simple disabled style for button when invoice unavailable */
+    .btn.disabled { opacity: 0.65; pointer-events: none; }
+  </style>
 </body>
 </html>`);
+});
+
+// Public endpoint: download a simple HTML invoice for an order
+app.get('/api/orders/:id/invoice', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    if (!orderId) return res.status(400).send('order id required');
+
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone), vendor:profiles!orders_vendor_id_fkey(full_name, phone), delivery_address`)
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error || !order) {
+      console.error('[INVOICE] Order not found:', error);
+      return res.status(404).send('Order not found');
+    }
+
+    const rows = [{ order_code: order.order_code || order.id, gross: Number(order.total_amount || 0), commission: 0, net: Number(order.total_amount || 0) }];
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+
+    const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Facture - ${order.order_code || order.id}</title>
+    <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+  </head>
+  <body>
+    <h2>Facture - Commande ${order.order_code || order.id}</h2>
+    <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
+    <p><strong>Vendeur:</strong> ${order.vendor?.full_name || ''} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
+    <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} ${order.buyer?.phone ? '('+order.buyer.phone+')' : ''}</p>
+    <h3>Détails</h3>
+    <table>
+      <thead><tr><th>Commande</th><th>Brut (FCFA)</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
+      </tfoot>
+    </table>
+    <p>Adresse livraison: ${order.delivery_address || '-'}</p>
+    <p>Merci pour votre commande.</p>
+  </body>
+</html>`;
+
+    const filename = `invoice-${order.order_code || order.id}.html`;
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(html);
+  } catch (err) {
+    console.error('[INVOICE] Error generating invoice:', err);
+    return res.status(500).send('Internal server error');
+  }
+});
+
+// Lookup endpoint: find order id from a provider/transaction id (used by /paymentsuccess to enable invoice download)
+app.get('/api/payment/lookup', async (req, res) => {
+  try {
+    const { transaction_id, provider_id } = req.query || {};
+    if (!transaction_id && !provider_id) return res.status(400).json({ success: false, error: 'transaction_id or provider_id required' });
+
+    // Try to find a matching payment transaction
+    try {
+      const q = await supabase
+        .from('payment_transactions')
+        .select('order_id,transaction_id,provider_transaction_id')
+        .or(
+          transaction_id ? `transaction_id.eq.${transaction_id}` : 'transaction_id.is.null'
+        )
+        .limit(1);
+
+      let rows = q.data || [];
+
+      if ((!rows || rows.length === 0) && provider_id) {
+        const q2 = await supabase
+          .from('payment_transactions')
+          .select('order_id,transaction_id,provider_transaction_id')
+          .eq('provider_transaction_id', provider_id)
+          .limit(1);
+        rows = q2.data || [];
+      }
+
+      if (!rows || rows.length === 0) return res.status(404).json({ success: false, error: 'not_found' });
+
+      return res.json({ success: true, order_id: rows[0].order_id || null, transaction: rows[0].transaction_id || rows[0].provider_transaction_id });
+    } catch (err) {
+      console.error('[LOOKUP] DB error:', err);
+      return res.status(500).json({ success: false, error: String(err) });
+    }
+  } catch (err) {
+    console.error('[LOOKUP] error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
 });
 
 const PORT = process.env.PORT || 5000;

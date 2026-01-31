@@ -268,6 +268,12 @@ async function initiateWavePayment(params) {
   if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
 
   // Pour Wave, destination = numéro du client qui paie
+  // Build redirect URL and append order_id so frontend can show invoice immediately
+  let redirectUrl = PIXPAY_CONFIG.wave_redirect_url || undefined;
+  if (redirectUrl && orderId) {
+    redirectUrl = redirectUrl + (redirectUrl.includes('?') ? '&' : '?') + 'order_id=' + encodeURIComponent(orderId);
+  }
+
   const payload = {
     amount: parseInt(amount),
     destination: formattedPhone,  // Numéro du client Wave
@@ -275,7 +281,7 @@ async function initiateWavePayment(params) {
     service_id: PIXPAY_SERVICE_IDS.WAVE_LINK, // Forcé : Wave → PixPay (génère le lien de paiement)
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
-    redirect_url: PIXPAY_CONFIG.wave_redirect_url || undefined,
+    redirect_url: redirectUrl,
     redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url || undefined,
     custom_data: JSON.stringify({
       order_id: orderId,
