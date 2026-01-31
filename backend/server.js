@@ -264,10 +264,8 @@ app.post('/api/vendor/add-product', async (req, res) => {
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
-    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } }
-    });
+    // Crée un client Supabase avec la clé service_role pour bypasser RLS (custom JWT, pas JWT Supabase)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const { data, error } = await supabase
       .from('products')
       .insert({
