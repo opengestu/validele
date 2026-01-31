@@ -2465,11 +2465,22 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const { notes, scheduled_at, commission_pct } = req.body || {};
     const createdBy = req.adminUser?.id || null;
 
+    // Prefer the service role client for admin operations to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      console.log('[ADMIN] create payout batch - using service role client');
+    } else {
+      console.warn('[ADMIN] create payout batch - SUPABASE_SERVICE_ROLE_KEY missing; falling back to RLS-bound client (may fail)');
+    }
+
     const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
     if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
     // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
-    const { data: orders, error } = await supabase
+    const { data: orders, error } = await supabaseAdmin
       .from('orders')
       .select('id, vendor_id, total_amount, payment_confirmed_at, status')
       .eq('status', 'delivered')
@@ -2487,7 +2498,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
     // Insert batch (store commission_pct)
-    const { data: batch, error: batchErr } = await supabase
+    const { data: batch, error: batchErr } = await supabaseAdmin
       .from('payout_batches')
       .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes, commission_pct: pct })
       .select('*')
@@ -2506,7 +2517,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount };
     });
 
-    const { error: itemsErr } = await supabase.from('payout_batch_items').insert(items);
+    const { error: itemsErr } = await supabaseAdmin.from('payout_batch_items').insert(items);
     if (itemsErr) {
       console.error('[ADMIN] create payout batch - insert items error:', itemsErr);
       throw itemsErr;
@@ -2514,7 +2525,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     // Mark orders as scheduled
     const orderIds = orders.map(o => o.id);
-    const { error: updateOrdersErr } = await supabase.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
+    const { error: updateOrdersErr } = await supabaseAdmin.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
     if (updateOrdersErr) {
       console.error('[ADMIN] create payout batch - updating orders error:', updateOrdersErr);
     }
@@ -2522,7 +2533,8 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     res.json({ success: true, batch });
   } catch (error) {
     console.error('[ADMIN] create payout batch error:', error);
-    res.status(500).json({ success: false, error: String(error) });
+    const msg = error?.message || (error && typeof error === 'object' ? JSON.stringify(error) : String(error));
+    res.status(500).json({ success: false, error: msg });
   }
 });
 
@@ -4548,6 +4560,14 @@ app.post('/api/paydunya/notification', async (req, res) => {
 
 // Route de succès de paiement avec confettis et facture téléchargeable
 // Accessible en GET /paymentsuccess?order_id=<id>
+// Note: some providers (PixPay/PayDunya) redirect to /payment-success (with hyphen).
+// Add a small compatibility redirect to handle that.
+app.get('/payment-success', (req, res) => {
+  // preserve query string when redirecting
+  const qs = req.originalUrl && req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  return res.redirect(302, '/paymentsuccess' + qs);
+});
+
 app.get('/paymentsuccess', (req, res) => {
   const orderId = req.query.order_id || '';
   const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
