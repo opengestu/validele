@@ -2643,16 +2643,46 @@ app.get('/api/admin/payout-batches/:id/details', requireAdmin, async (req, res) 
 // Render a printable invoice HTML for a vendor within a batch
 app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) => {
   try {
-    const batchId = req.params.id;
-    const vendorId = req.query.vendorId;
+    let batchId = req.params.id;
+    const vendorId = req.query.vendorId || req.query.vendor_id || req.query.vendor;
     if (!batchId || !vendorId) return res.status(400).send('batch id and vendorId required');
 
-    const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
-    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+    console.log('[ADMIN] invoice request for batch:', batchId, 'vendorId:', vendorId);
 
-    if (!batch) return res.status(404).send('Batch not found');
-    if (!vendor) return res.status(404).send('Vendor not found');
+    // Try to fetch the batch and vendor-specific items
+    let { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    let { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    let { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+
+    // Fallback: if batch not found, try to find latest batch that contains vendor items
+    if (!batch) {
+      console.warn('[ADMIN] batch not found, attempting fallback lookup by vendor items');
+      const { data: foundItems } = await supabase.from('payout_batch_items').select('batch_id, created_at').eq('vendor_id', vendorId).order('created_at', { ascending: false }).limit(1);
+      if (foundItems && foundItems.length > 0 && foundItems[0].batch_id) {
+        batchId = foundItems[0].batch_id;
+        console.log('[ADMIN] fallback found batchId for vendor:', batchId);
+        const q = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+        batch = q.data;
+        const it = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+        items = it.data || [];
+      }
+    }
+
+    if (!batch) {
+      console.warn('[ADMIN] No batch found after fallback for batchId/vendorId:', req.params.id, vendorId);
+      return res.status(404).send('Batch not found for this vendor');
+    }
+
+    if (!vendor) {
+      console.warn('[ADMIN] vendor not found:', vendorId);
+      return res.status(404).send('Vendor not found');
+    }
+
+    // If the batch exists but contains no items for this vendor, return a clear message
+    if (!items || items.length === 0) {
+      console.warn('[ADMIN] Batch exists but no items for vendor in batch:', batchId, 'vendor:', vendorId);
+      return res.status(404).send('No payout items found for this vendor in the specified batch');
+    }
 
     const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
@@ -2691,6 +2721,103 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
   } catch (err) {
     console.error('[ADMIN] invoice error:', err);
     res.status(500).send(String(err));
+  }
+});
+
+// Vendor endpoint: download the latest payout batch invoice for the authenticated vendor
+app.get('/api/vendor/payout-batches/latest-invoice', async (req, res) => {
+  try {
+    // Determine vendor id from Authorization Bearer token (SMS JWT or Supabase token) or query param vendor_id
+    let vendorId = req.query.vendor_id || null;
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+
+    if (!vendorId && authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      // Try our JWT first
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) vendorId = decoded.sub;
+      } catch (e) {
+        // Fallback to Supabase token
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) vendorId = user.id;
+        } catch (e2) {
+          // ignore
+        }
+      }
+    }
+
+    if (!vendorId) return res.status(401).json({ success: false, error: 'Vendor authentication required' });
+
+    // Find latest batch that contains items for this vendor
+    const { data: items, error: itemsErr } = await supabase
+      .from('payout_batch_items')
+      .select('batch_id')
+      .eq('vendor_id', vendorId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (itemsErr) {
+      console.error('[VENDOR-INVOICE] DB error finding batch items for vendor:', itemsErr);
+      return res.status(500).json({ success: false, error: 'DB error' });
+    }
+
+    if (!items || items.length === 0) return res.status(404).json({ success: false, error: 'no_batch_found' });
+
+    const batchId = items[0].batch_id;
+
+    // Fetch batch and vendor-specific items
+    const { data: batch, error: batchErr } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    const { data: itemsDetails, error: itemsDetErr } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    const { data: vendor, error: vendorErr } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+
+    if (batchErr || itemsDetErr || vendorErr) {
+      console.error('[VENDOR-INVOICE] DB error fetching batch/vender/items:', batchErr || itemsDetErr || vendorErr);
+      return res.status(500).json({ success: false, error: 'DB error fetching invoice data' });
+    }
+
+    if (!batch) return res.status(404).json({ success: false, error: 'batch_not_found' });
+    if (!vendor) return res.status(404).json({ success: false, error: 'vendor_not_found' });
+
+    const rows = (itemsDetails || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Facture - Batch ${batchId}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture de paiement - Batch ${batchId}</h2>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
+          <h3>Détails</h3>
+          <table>
+            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+            </tfoot>
+          </table>
+          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
+          <p>Signature: _________________________</p>
+        </body>
+      </html>`;
+
+    const filename = `invoice-batch-${batchId}-vendor-${vendorId}.html`;
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(html);
+  } catch (err) {
+    console.error('[VENDOR-INVOICE] Unexpected error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
   }
 });
 

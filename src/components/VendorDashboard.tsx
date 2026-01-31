@@ -414,6 +414,49 @@ const VendorDashboard = () => {
     }
   }
 
+  // Download the latest vendor payout batch invoice and force download
+  async function handleDownloadLatestBatchInvoice() {
+    try {
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
+      const headers: Record<string,string> = { 'Accept': '*/*' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
+
+      if (resp.status === 404) {
+        toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'warning' });
+        return;
+      }
+      if (resp.status === 401) {
+        toast({ title: 'Non autorisé', description: 'Authentification requise pour télécharger la facture', variant: 'destructive' });
+        return;
+      }
+      if (!resp.ok) {
+        toast({ title: 'Erreur', description: 'Impossible de télécharger la facture de batch', variant: 'destructive' });
+        return;
+      }
+      const blob = await resp.blob();
+      let filename = 'batch-invoice.html';
+      const cd = resp.headers.get('content-disposition') || '';
+      const m = /filename\s*=\s*"?([^;"]+)"?/i.exec(cd);
+      if (m && m[1]) filename = m[1];
+      const urlObj = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = urlObj;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(urlObj);
+      toast({ title: 'Téléchargé', description: 'Facture de paiement prête en téléchargement' });
+    } catch (err) {
+      console.error('[VendorDashboard] download latest batch invoice error', err);
+      toast({ title: 'Erreur', description: 'Erreur téléchargement facture de batch', variant: 'destructive' });
+    }
+  }
+
   // Fetch profile (keeps parity with BuyerDashboard)
   const fetchProfile = useCallback(async () => {
     if (!user?.id) {
@@ -1080,7 +1123,17 @@ const VendorDashboard = () => {
         </TabsContent>
         {/* Orders Tab */}
         <TabsContent value="orders" className="space-y-6">
-          <h2 className="text-2xl font-bold text-gray-900">Commandes</h2>
+          <div className="flex items-center justify-between gap-3 flex-nowrap">
+            <div className="flex items-center gap-1 whitespace-nowrap">
+              <h3 className="text-xs md:text-sm font-semibold text-gray-900 m-0 leading-none">Commandes</h3>
+              <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
+            </div>
+            <div>
+              <Button size="sm" onClick={handleDownloadLatestBatchInvoice} className="bg-yellow-100 text-yellow-800 text-[11px] px-2 py-0.5 rounded-md h-7">
+                Facture paiement
+              </Button>
+            </div>
+          </div>
           <Card>
             <CardHeader>
               <CardTitle>Commandes récentes</CardTitle>
@@ -1441,7 +1494,15 @@ const VendorDashboard = () => {
             </TabsContent>
             <TabsContent value="orders" className="mt-0">
               <div className="space-y-4">
-                <h2 className="text-lg font-semibold">Commandes ({totalOrders})</h2>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 whitespace-nowrap">
+                    <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
+                    <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
+                  </div>
+                  <Button size="sm" onClick={handleDownloadLatestBatchInvoice} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7">
+                    Facture paiement
+                  </Button>
+                </div>
                 <div className="grid gap-4">
                   {orders.map((order) => (
                     <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
