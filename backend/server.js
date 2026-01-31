@@ -2649,28 +2649,45 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
 
     console.log('[ADMIN] invoice request for batch:', batchId, 'vendorId:', vendorId);
 
-    // Try to fetch the batch and vendor-specific items
-    let { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    let { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
-    let { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+    // Prefer using the service role client for admin invoice queries (bypass RLS)
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let db = supabase; // default (RLS-bound)
+    if (serviceRoleKey) {
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        console.log('[ADMIN] invoice - using service role Supabase client for batch lookup');
+      } catch (e) {
+        console.warn('[ADMIN] invoice - failed to create service role client, falling back to current client:', e?.message || e);
+      }
+    } else {
+      console.warn('[ADMIN] invoice - SUPABASE_SERVICE_ROLE_KEY missing; using RLS-bound client (may not see some batch rows)');
+    }
+
+    // Try to fetch the batch and vendor-specific items using the chosen client
+    let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     // Fallback: if batch not found, try to find latest batch that contains vendor items
     if (!batch) {
       console.warn('[ADMIN] batch not found, attempting fallback lookup by vendor items');
-      const { data: foundItems } = await supabase.from('payout_batch_items').select('batch_id, created_at').eq('vendor_id', vendorId).order('created_at', { ascending: false }).limit(1);
+      const { data: foundItems } = await db.from('payout_batch_items').select('batch_id, created_at').eq('vendor_id', vendorId).order('created_at', { ascending: false }).limit(1);
+      console.log('[ADMIN] fallback lookup result count:', (foundItems || []).length);
       if (foundItems && foundItems.length > 0 && foundItems[0].batch_id) {
         batchId = foundItems[0].batch_id;
         console.log('[ADMIN] fallback found batchId for vendor:', batchId);
-        const q = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+        const q = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
         batch = q.data;
-        const it = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
         items = it.data || [];
       }
     }
 
     if (!batch) {
       console.warn('[ADMIN] No batch found after fallback for batchId/vendorId:', req.params.id, vendorId);
-      return res.status(404).send('Batch not found for this vendor');
+      const hint = process.env.SUPABASE_SERVICE_ROLE_KEY ? '' : ' (possible insufficient DB permissions - SUPABASE_SERVICE_ROLE_KEY missing)';
+      return res.status(404).send('Batch not found for this vendor' + hint);
     }
 
     if (!vendor) {
