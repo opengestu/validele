@@ -508,7 +508,7 @@ const AdminDashboard: React.FC = () => {
                         <TableCell>{o.buyer?.full_name || '-'}</TableCell>
                         <TableCell>{o.vendor?.full_name || '-'}</TableCell>
                         <TableCell>{o.delivery?.full_name || '-'}</TableCell>
-                        <TableCell>{o.buyer?.address || o.delivery_address || '-'}</TableCell>
+                        <TableCell>{o.buyer?.address || '-'}</TableCell>
                         <TableCell>{o.total_amount?.toLocaleString()} FCFA</TableCell>
                         <TableCell>{o.status}</TableCell>
                         <TableCell>

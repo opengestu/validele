@@ -5350,7 +5350,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
 
     const { data: order, error } = await sb
       .from('orders')
-      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone), delivery_address`)
+      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone), delivery_address`)
       .eq('id', orderId)
       .maybeSingle();
 
@@ -5393,7 +5393,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
         <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
       </tfoot>
     </table>
-    <p>Adresse livraison: ${order.delivery_address || '-'}</p>
+    <p>Adresse livraison: ${order.buyer?.address || '-'}</p>
     <p>Merci pour votre commande.</p>
   </body>
 </html>`;
