@@ -376,6 +376,65 @@ app.post('/api/admin/test-push', async (req, res) => {
   }
 });
 
+// Endpoint: permettre à l'utilisateur connecté d'enregistrer son push_token
+app.post('/api/me/push-token', async (req, res) => {
+  try {
+    const { push_token } = req.body || {};
+    if (!push_token || typeof push_token !== 'string' || push_token.length < 10) {
+      return res.status(400).json({ success: false, error: 'push_token requis (string)' });
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+
+    // 1) Essayer de décoder comme JWT interne
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.sub) userId = decoded.sub;
+    } catch (e) {
+      // ignore - token may be a Supabase JWT
+    }
+
+    // 2) Sinon, essayer supabase.auth.getUser
+    if (!userId) {
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        if (authErr || !user) {
+          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+        }
+        userId = user.id;
+      } catch (e) {
+        console.error('[ME PUSH-TOKEN] supabase.getUser error:', e);
+        return res.status(500).json({ success: false, error: 'server_error' });
+      }
+    }
+
+    // Mettre à jour le profil avec le token (utiliser le JWT utilisateur pour respecter RLS)
+    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
+    const { data, error } = await supabaseUser
+      .from('profiles')
+      .upsert({ id: userId, push_token }, { onConflict: 'id', returning: 'representation' });
+
+    if (error) {
+      console.error('[ME PUSH-TOKEN] supabase upsert error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+    }
+
+    console.log('[ME PUSH-TOKEN] push_token enregistré pour user:', userId);
+    return res.json({ success: true, data: data?.[0] });
+  } catch (err) {
+    console.error('[ME PUSH-TOKEN] handler error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+});
+
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
 async function deleteProductHandler(req, res) {
   try {

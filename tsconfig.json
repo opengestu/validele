@@ -1,7 +1,10 @@
 {
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "5.0",
+    "skipLibCheck": true,
+    "lib": ["ES2021"],        // backend node only — n'incluez pas "DOM" si vous n'en avez pas besoin
+    "types": ["node"]
   },
   "include": ["src"]
 }
