@@ -486,6 +486,14 @@ async function deleteProductHandler(req, res) {
     let deleteResult;
     if (isSmsAuth) {
       // For SMS auth, use service role to bypass RLS
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceRoleKey) {
+        console.error('[API] delete-product: SUPABASE_SERVICE_ROLE_KEY missing for SMS session');
+        return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+      }
+      const { createClient: createAdminClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      
       const { data, error } = await supabaseAdmin
         .from('products')
         .delete()
