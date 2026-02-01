@@ -5394,6 +5394,11 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
       return res.status(404).send('Order not found');
     }
 
+    // Normalize delivery_address to buyer profile address when available
+    const finalAddress = (order.buyer && order.buyer.address) ? order.buyer.address : (order.delivery_address || '-');
+    const vendorName = order.vendor?.company_name || order.vendor?.full_name || 'Vendeur inconnu';
+    const buyerName = order.buyer?.full_name || 'Acheteur inconnu';
+
     const rows = [{ order_code: order.order_code || order.id, gross: Number(order.total_amount || 0), commission: 0, net: Number(order.total_amount || 0) }];
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
 
@@ -5401,14 +5406,14 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Facture - ${order.order_code || order.id}</title>
+    <title>Facture - Commande ${order.order_code || order.id}</title>
     <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
   </head>
   <body>
     <h2>Facture - Commande ${order.order_code || order.id}</h2>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
-    <p><strong>Vendeur:</strong> ${order.vendor?.company_name || order.vendor?.full_name || ''} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
-    <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} ${order.buyer?.phone ? '('+order.buyer.phone+')' : ''}</p>
+    <p><strong>Vendeur:</strong> ${vendorName} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
+    <p><strong>Acheteur:</strong> ${buyerName} ${order.buyer?.phone ? '('+order.buyer.phone+')' : ''}</p>
     <h3>Détails</h3>
     <table>
       <thead><tr><th>Commande</th><th>Brut (FCFA)</th></tr></thead>
@@ -5419,7 +5424,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
         <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
       </tfoot>
     </table>
-    <p>Adresse livraison: ${order.buyer?.address || '-'}</p>
+    <p><strong>Adresse livraison:</strong> ${finalAddress}</p>
     <p>Merci pour votre commande.</p>
   </body>
 </html>`;

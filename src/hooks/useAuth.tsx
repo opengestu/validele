@@ -20,6 +20,7 @@ interface UserProfile {
   phone?: string | null;
   role: 'buyer' | 'vendor' | 'delivery';
   company_name?: string | null;
+  address?: string | null;
   vehicle_info?: string | null;
   walletType?: string | null; // Always present if available in DB
   wallet_type?: string | null; // For compatibility with DB field naming

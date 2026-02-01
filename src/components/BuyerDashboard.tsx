@@ -833,7 +833,7 @@ const BuyerDashboard = () => {
               total_amount: searchResult.price * purchaseQuantity,
               payment_method: 'orange_money',
               buyer_phone: userProfile?.phone || '',
-              delivery_address: 'Adresse à définir',
+              delivery_address: userProfile?.address || authUserProfile?.address || 'Adresse à définir',
             })
           },
           30000
@@ -921,7 +921,7 @@ const BuyerDashboard = () => {
               total_amount: searchResult.price * purchaseQuantity,
               payment_method: 'wave',
               buyer_phone: userProfile?.phone || '',
-              delivery_address: 'Adresse à définir',
+              delivery_address: userProfile?.address || authUserProfile?.address || 'Adresse à définir',
             })
           },
           30000
@@ -1006,7 +1006,7 @@ const BuyerDashboard = () => {
             total_amount: searchResult.price * purchaseQuantity,
             payment_method: paymentMethod,
             buyer_phone: userProfile?.phone || '',
-            delivery_address: 'Adresse à définir',
+            delivery_address: userProfile?.address || authUserProfile?.address || 'Adresse à définir',
             description: searchResult.description,
             storeName: searchResult.profiles?.full_name || searchResult.profiles?.company_name || 'Boutique'
           })
@@ -1755,8 +1755,8 @@ const BuyerDashboard = () => {
                                   )}
                                   <div className="flex flex-col gap-2 mt-4">
                                     <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse de livraison :</span>
-                                      <span className="flex-1 min-w-0 break-words text-base">{userProfile?.address || 'Adresse à définir'}</span>
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse :</span>
+                                      <span className="flex-1 min-w-0 break-words text-base">{order.delivery_address || userProfile?.address || 'Adresse à définir'}</span>
                                     </div>
                                   </div>
                                 </div>
