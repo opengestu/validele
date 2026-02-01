@@ -102,7 +102,7 @@ const BuyerDashboard = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   // Profile state for user information
-  const [userProfile, setUserProfile] = useState<{ full_name?: string; phone?: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<{ full_name?: string; phone?: string; address?: string } | null>(null);
   const [editProfile, setEditProfile] = useState<{ full_name: string; phone: string }>({ full_name: '', phone: '' });
   const [savingProfile, setSavingProfile] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -154,7 +154,7 @@ const BuyerDashboard = () => {
 
       if (!resp.ok) {
         if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
-        if (resp.status === 404) { toast({ title: 'Introuvable', description: 'Facture introuvable', variant: 'warning' }); return; }
+        if (resp.status === 404) { toast({ title: 'Introuvable', description: 'Facture introuvable', variant: 'default' }); return; }
         throw new Error(`Backend returned ${resp.status}`);
       }
 
@@ -489,7 +489,7 @@ const BuyerDashboard = () => {
       if (smsSessionStr) {
         
         if (authUserProfile) {
-          setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined });
+          setUserProfile({ full_name: authUserProfile.full_name ?? undefined, phone: authUserProfile.phone ?? undefined, address: (authUserProfile as any)?.address ?? undefined });
           setEditProfile({ full_name: authUserProfile.full_name ?? '', phone: authUserProfile.phone ?? '' });
         } else {
           setUserProfile(null);
@@ -510,14 +510,15 @@ const BuyerDashboard = () => {
 
         const { data, error } = await supabase
           .from('profiles')
-          .select('full_name, phone')
+          .select('full_name, phone, address')
           .eq('id', user.id)
           .single();
 
         if (!error && data) {
           setUserProfile({ 
             full_name: data.full_name ?? undefined, 
-            phone: data.phone ?? undefined 
+            phone: data.phone ?? undefined,
+            address: data.address ?? undefined
           });
           // Do not setEditProfile here, only set from userProfile when opening drawer
         } else {
@@ -532,7 +533,7 @@ const BuyerDashboard = () => {
               role: 'buyer',
             });
           if (!insertError) {
-            setUserProfile({ full_name: '', phone: '' });
+            setUserProfile({ full_name: '', phone: '', address: '' });
           } else {
             setUserProfile(null);
           }
@@ -595,13 +596,14 @@ const BuyerDashboard = () => {
         // Relire le profil depuis Supabase après la sauvegarde
         const { data, error: fetchError } = await supabase
           .from('profiles')
-          .select('full_name, phone')
+          .select('full_name, phone, address')
           .eq('id', user.id)
           .single();
         if (!fetchError && data) {
           setUserProfile({
             full_name: data.full_name ?? undefined,
-            phone: data.phone ?? undefined
+            phone: data.phone ?? undefined,
+            address: data.address ?? undefined
           });
         }
       }
@@ -1754,7 +1756,7 @@ const BuyerDashboard = () => {
                                   <div className="flex flex-col gap-2 mt-4">
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse de livraison :</span>
-                                      <span className="flex-1 min-w-0 break-words text-base">{order.delivery_address || order.profiles?.address || 'Adresse à définir'}</span>
+                                      <span className="flex-1 min-w-0 break-words text-base">{order.delivery_address || userProfile?.address || 'Adresse à définir'}</span>
                                     </div>
                                   </div>
                                 </div>

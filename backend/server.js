@@ -5350,7 +5350,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
 
     const { data: order, error } = await sb
       .from('orders')
-      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone), vendor:profiles!orders_vendor_id_fkey(full_name, phone), delivery_address`)
+      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone), delivery_address`)
       .eq('id', orderId)
       .maybeSingle();
 
@@ -5381,7 +5381,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
   <body>
     <h2>Facture - Commande ${order.order_code || order.id}</h2>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
-    <p><strong>Vendeur:</strong> ${order.vendor?.full_name || ''} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
+    <p><strong>Vendeur:</strong> ${order.vendor?.company_name || order.vendor?.full_name || ''} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
     <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} ${order.buyer?.phone ? '('+order.buyer.phone+')' : ''}</p>
     <h3>Détails</h3>
     <table>

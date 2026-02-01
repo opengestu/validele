@@ -15,6 +15,7 @@ type Order = {
   total_amount?: number;
   status?: string;
   vendor_id?: string;
+  delivery_address?: string;
   payout_status?: string | null;
   payout_requested_at?: string | null;
   payout_requested_by?: string | null;
@@ -518,11 +519,6 @@ const AdminDashboard: React.FC = () => {
                         </TableCell>
                         <TableCell className="flex gap-2">
                           <Button size="sm" onClick={() => handlePayout(o.id)} disabled={!(o.status === 'delivered' && (o.payout_status === 'requested' || o.payout_status === 'scheduled')) || processing}>Payer</Button>
-                          <Button size="sm" variant="secondary" onClick={() => {
-                            const minutes = Number(prompt('Durée du compte à rebours (minutes)?', '10'));
-                            if (!minutes || minutes <= 0) return; startTimer(o.id, minutes * 60, `Admin started ${minutes}m countdown`);
-                          }}>Start Timer</Button>
-                          <Button size="sm" variant="ghost" onClick={() => notifyUser(o.buyer?.id, 'Message admin', 'Message')}>Notifier</Button>
                         </TableCell>
                       </TableRow>
                     ))}

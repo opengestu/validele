@@ -134,7 +134,7 @@ const VendorDashboard = () => {
 
       if (!resp.ok) {
         if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
-        if (resp.status === 404) { toast({ title: 'Introuvable', description: 'Facture introuvable', variant: 'warning' }); return; }
+        if (resp.status === 404) { toast({ title: 'Introuvable', description: 'Facture introuvable', variant: 'default' }); return; }
         throw new Error(`Backend returned ${resp.status}`);
       }
 
@@ -495,7 +495,9 @@ const VendorDashboard = () => {
         try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
       }
       const fullUrl = url.startsWith('http') ? url : apiUrl(url);
-      const resp = await fetch(fullUrl, { method: 'GET', headers: Object.assign({ 'Accept': '*/*' }, token ? { Authorization: `Bearer ${token}` } : {}) });
+      const headers: Record<string, string> = { 'Accept': '*/*' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(fullUrl, { method: 'GET', headers });
       if (!resp.ok) {
         toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
         return;
@@ -533,7 +535,7 @@ const VendorDashboard = () => {
       const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
 
       if (resp.status === 404) {
-        toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'warning' });
+        toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'default' });
         return;
       }
       if (resp.status === 401) {
@@ -858,7 +860,7 @@ const VendorDashboard = () => {
         });
         // If the server returns 401, surface a clear message and force re-login
         if (resp.status === 401) {
-          let errJson = null;
+          let errJson: any = null;
           try { errJson = await resp.json(); } catch (e) { /* ignore */ }
           const msg = (errJson && errJson.error) ? errJson.error : 'Session invalide ou expirée. Veuillez vous reconnecter.';
           throw new Error(msg);
@@ -1301,7 +1303,7 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
-                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.buyer?.address || order.delivery_address || 'Adresse à définir'}</span>
+                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
                       </div>
 
                       <div className="flex items-center mb-1 mt-2">
@@ -1654,7 +1656,7 @@ const VendorDashboard = () => {
                         </div>
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Adresse :</strong>
-                          <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.buyer?.address || order.delivery_address || 'Adresse à définir'}</span>
+                          <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
                         </div>
                         {/* Statut tout en bas */}
                         <div className="flex items-center mb-1 mt-2">
