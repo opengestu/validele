@@ -71,6 +71,14 @@ async function sendPushNotification(token, title, body, data = {}) {
     return { success: false, message: 'Impossible d\'obtenir le token Firebase' };
   }
   
+  // Firebase FCM requiert que toutes les valeurs de 'data' soient des strings
+  const stringData = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== null && value !== undefined) {
+      stringData[key] = String(value);
+    }
+  }
+  
   const message = {
     message: {
       token: token,
@@ -78,7 +86,7 @@ async function sendPushNotification(token, title, body, data = {}) {
         title: title,
         body: body,
       },
-      data: data,
+      data: stringData,
       android: {
         priority: 'high',
         notification: {
@@ -147,6 +155,14 @@ async function sendPushToTopic(topic, title, body, data = {}) {
     return { success: false, message: 'Impossible d\'obtenir le token Firebase' };
   }
   
+  // Firebase FCM requiert que toutes les valeurs de 'data' soient des strings
+  const stringData = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== null && value !== undefined) {
+      stringData[key] = String(value);
+    }
+  }
+  
   const message = {
     message: {
       topic: topic,
@@ -154,7 +170,7 @@ async function sendPushToTopic(topic, title, body, data = {}) {
         title: title,
         body: body,
       },
-      data: data,
+      data: stringData,
       android: {
         priority: 'high',
         notification: {
