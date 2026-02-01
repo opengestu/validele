@@ -2185,11 +2185,10 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
     const { data, error } = await supabase
       .from('orders')
       .select(`
-        id, order_code, total_amount, status, vendor_id, buyer_id, delivery_person_id,
-        payout_status, payout_requested_at, payout_requested_by,
-        buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, wallet_type),
-        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
-        delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone)
+        *,
+        buyer:buyer_id(id, full_name, phone, wallet_type),
+        vendor:vendor_id(id, full_name, phone, wallet_type),
+        delivery:delivery_person_id(id, full_name, phone)
       `)
       .order('created_at', { ascending: false });
     if (error) throw error;

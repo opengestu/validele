@@ -102,7 +102,7 @@ const AdminDashboard: React.FC = () => {
   const { session, userProfile } = useAuth();
   const params = useParams();
   const adminId = params?.adminId;
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<OrderFull[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
   const [batchItems, setBatchItems] = useState<PayoutBatchItem[]>([]);
