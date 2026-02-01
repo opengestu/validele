@@ -36,6 +36,7 @@ const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
+const { getNotificationTemplate } = require('./notification-templates');
 
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
@@ -1754,6 +1755,59 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           console.error('[PIXPAY] Erreur update order:', orderError);
         } else {
           console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
+          
+          // Notifier l'acheteur et le vendeur du paiement confirmé
+          try {
+            const { data: orderDetails } = await supabase
+              .from('orders')
+              .select('buyer_id, vendor_id, order_code, total_amount')
+              .eq('id', orderId)
+              .single();
+
+            if (orderDetails) {
+              // Notification acheteur
+              const { data: buyerTokens } = await supabase
+                .from('push_tokens')
+                .select('token')
+                .eq('user_id', orderDetails.buyer_id)
+                .eq('is_active', true);
+
+              if (buyerTokens && buyerTokens.length > 0) {
+                const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
+                  orderCode: orderDetails.order_code,
+                  amount: orderDetails.total_amount,
+                  orderId: orderId
+                });
+
+                for (const { token } of buyerTokens) {
+                  await sendPushNotification(token, notif.title, notif.body, notif.data);
+                }
+                console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur');
+              }
+
+              // Notification vendeur
+              const { data: vendorTokens } = await supabase
+                .from('push_tokens')
+                .select('token')
+                .eq('user_id', orderDetails.vendor_id)
+                .eq('is_active', true);
+
+              if (vendorTokens && vendorTokens.length > 0) {
+                const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
+                  orderCode: orderDetails.order_code,
+                  amount: orderDetails.total_amount,
+                  orderId: orderId
+                });
+
+                for (const { token } of vendorTokens) {
+                  await sendPushNotification(token, notif.title, notif.body, notif.data);
+                }
+                console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur');
+              }
+            }
+          } catch (notifErr) {
+            console.error('[PIXPAY] Erreur notifications paiement:', notifErr);
+          }
         }
       }
     } else if (state === 'SUCCESSFUL' && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
@@ -1762,10 +1816,34 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         // If orderId corresponds to an order -> mark that order as paid
         if (orderId) {
           // Check if orderId is an actual order
-          const { data: orderExists } = await supabase.from('orders').select('id').eq('id', orderId).maybeSingle();
+          const { data: orderExists } = await supabase.from('orders').select('id, vendor_id, order_code, total_amount').eq('id', orderId).maybeSingle();
           if (orderExists && orderExists.id) {
             await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
             console.log('[PIXPAY] Order payout marked paid:', orderId);
+            
+            // Notifier le vendeur que le paiement est effectué
+            try {
+              const { data: vendorTokens } = await supabase
+                .from('push_tokens')
+                .select('token')
+                .eq('user_id', orderExists.vendor_id)
+                .eq('is_active', true);
+
+              if (vendorTokens && vendorTokens.length > 0) {
+                const notif = getNotificationTemplate('PAYOUT_PAID', {
+                  orderCode: orderExists.order_code,
+                  amount: orderExists.total_amount,
+                  orderId: orderExists.id
+                });
+
+                for (const { token } of vendorTokens) {
+                  await sendPushNotification(token, notif.title, notif.body, notif.data);
+                }
+                console.log('[PIXPAY] Notification payout payé envoyée au vendeur');
+              }
+            } catch (notifErr) {
+              console.error('[PIXPAY] Erreur notification payout payé:', notifErr);
+            }
           } else {
             // Otherwise treat orderId as a batch id
             const { data: items } = await supabase.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
@@ -2520,6 +2598,30 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
       // Mark order as processing (final paid will be set by webhook SUCCESSFUL)
       const { error: updErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
       if (updErr) console.error('[ADMIN] Erreur mise à jour order payout_status:', updErr);
+      
+      // Notifier le vendeur que le paiement est en cours
+      try {
+        const { data: vendorTokens } = await supabase
+          .from('push_tokens')
+          .select('token')
+          .eq('user_id', report.order.vendor_id)
+          .eq('is_active', true);
+
+        if (vendorTokens && vendorTokens.length > 0) {
+          const notif = getNotificationTemplate('PAYOUT_PROCESSING', {
+            orderCode: report.order.order_code,
+            amount: report.order.total_amount,
+            orderId: report.order.id
+          });
+
+          for (const { token } of vendorTokens) {
+            await sendPushNotification(token, notif.title, notif.body, notif.data);
+          }
+          console.log('[ADMIN] Notification payout processing envoyée au vendeur');
+        }
+      } catch (notifErr) {
+        console.error('[ADMIN] Erreur notification payout:', notifErr);
+      }
     }
 
     res.json({ success: result.success, result });
@@ -3966,13 +4068,27 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       if (buyerPhone && deliveryPhone) {
         const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
         await notificationService.sendSMS(buyerPhone, smsText);
-        // Envoi aussi d'une notification push (optionnel)
+        
+        // Notification push à l'acheteur avec le template
         if (order.buyer_id) {
-          await notificationService.sendPushNotificationToUser(
-            order.buyer_id, 
-            '🚚 Livraison en cours', 
-            `Votre commande est en cours de livraison. Livreur: ${deliveryPhone}`
-          );
+          const { data: buyerTokens } = await supabase
+            .from('push_tokens')
+            .select('token')
+            .eq('user_id', order.buyer_id)
+            .eq('is_active', true);
+
+          if (buyerTokens && buyerTokens.length > 0) {
+            const notif = getNotificationTemplate('ORDER_IN_DELIVERY', {
+              orderCode: order.order_code,
+              deliveryPhone: deliveryPhone,
+              orderId: order.id
+            });
+
+            for (const { token } of buyerTokens) {
+              await sendPushNotification(token, notif.title, notif.body, notif.data);
+            }
+            console.log('[MARK-IN-DELIVERY] Notification push envoyée à l\'acheteur');
+          }
         }
       }
     } catch (smsErr) {
@@ -4078,8 +4194,47 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
 
     // Notify buyer and vendor about completed delivery
     try {
-      if (order.buyer_id) await notificationService.sendPushNotificationToUser(order.buyer_id, '✅ Livraison effectuée!', `Votre commande ${order.order_code || ''} est livrée.`);
-      if (order.vendor_id) await notificationService.sendPushNotificationToUser(order.vendor_id, '✅ Commande livrée', `La commande ${order.order_code || ''} a été livrée.`);
+      // Notification à l'acheteur
+      if (order.buyer_id) {
+        const { data: buyerTokens } = await supabase
+          .from('push_tokens')
+          .select('token')
+          .eq('user_id', order.buyer_id)
+          .eq('is_active', true);
+
+        if (buyerTokens && buyerTokens.length > 0) {
+          const notif = getNotificationTemplate('ORDER_DELIVERED', {
+            orderCode: order.order_code,
+            orderId: order.id
+          });
+
+          for (const { token } of buyerTokens) {
+            await sendPushNotification(token, notif.title, notif.body, notif.data);
+          }
+          console.log('[MARK-DELIVERED] Notification acheteur envoyée');
+        }
+      }
+
+      // Notification au vendeur
+      if (order.vendor_id) {
+        const { data: vendorTokens } = await supabase
+          .from('push_tokens')
+          .select('token')
+          .eq('user_id', order.vendor_id)
+          .eq('is_active', true);
+
+        if (vendorTokens && vendorTokens.length > 0) {
+          const notif = getNotificationTemplate('PAYOUT_REQUESTED', {
+            orderCode: order.order_code,
+            orderId: order.id
+          });
+
+          for (const { token } of vendorTokens) {
+            await sendPushNotification(token, notif.title, notif.body, notif.data);
+          }
+          console.log('[MARK-DELIVERED] Notification vendeur envoyée');
+        }
+      }
     } catch (notifErr) {
       console.error('[MARK-DELIVERED] Notification error:', notifErr);
     }
@@ -4209,6 +4364,54 @@ app.post('/api/orders', async (req, res) => {
     }
 
     console.log('[CREATE-ORDER-SIMPLE] Commande créée:', order.id);
+
+    // Envoyer une notification au vendeur
+    try {
+      const { data: vendorTokens } = await supabase
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', vendor_id)
+        .eq('is_active', true);
+
+      if (vendorTokens && vendorTokens.length > 0) {
+        const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
+          orderCode: order_code,
+          amount: total_amount,
+          orderId: order.id
+        });
+
+        for (const { token } of vendorTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[CREATE-ORDER-SIMPLE] Notification vendeur envoyée');
+      }
+    } catch (notifErr) {
+      console.error('[CREATE-ORDER-SIMPLE] Erreur notification vendeur:', notifErr);
+    }
+
+    // Envoyer une notification à l'acheteur
+    try {
+      const { data: buyerTokens } = await supabase
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', buyer_id)
+        .eq('is_active', true);
+
+      if (buyerTokens && buyerTokens.length > 0) {
+        const notif = getNotificationTemplate('ORDER_CREATED', {
+          orderCode: order_code,
+          amount: total_amount,
+          orderId: order.id
+        });
+
+        for (const { token } of buyerTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[CREATE-ORDER-SIMPLE] Notification acheteur envoyée');
+      }
+    } catch (notifErr) {
+      console.error('[CREATE-ORDER-SIMPLE] Erreur notification acheteur:', notifErr);
+    }
 
     return res.json({ 
       success: true, 
@@ -4498,6 +4701,54 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
       .eq('id', order.id);
 
     console.log('[CREATE-ORDER] Token mis à jour pour commande', order.id);
+
+    // Envoyer une notification au vendeur
+    try {
+      const { data: vendorTokens } = await supabase
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', vendor_id)
+        .eq('is_active', true);
+
+      if (vendorTokens && vendorTokens.length > 0) {
+        const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
+          orderCode: order_code,
+          amount: total_amount,
+          orderId: order.id
+        });
+
+        for (const { token } of vendorTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[CREATE-ORDER] Notification vendeur envoyée');
+      }
+    } catch (notifErr) {
+      console.error('[CREATE-ORDER] Erreur notification vendeur:', notifErr);
+    }
+
+    // Envoyer une notification à l'acheteur
+    try {
+      const { data: buyerTokens } = await supabase
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', buyer_id)
+        .eq('is_active', true);
+
+      if (buyerTokens && buyerTokens.length > 0) {
+        const notif = getNotificationTemplate('ORDER_CREATED', {
+          orderCode: order_code,
+          amount: total_amount,
+          orderId: order.id
+        });
+
+        for (const { token } of buyerTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[CREATE-ORDER] Notification acheteur envoyée');
+      }
+    } catch (notifErr) {
+      console.error('[CREATE-ORDER] Erreur notification acheteur:', notifErr);
+    }
 
     // 4. Retourner la réponse (inclure qr_code généré)
     return res.json({ 
