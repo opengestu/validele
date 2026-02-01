@@ -449,15 +449,21 @@ async function deleteProductHandler(req, res) {
     }
     const token = authHeader.split(' ')[1];
     let userId = null;
+    let isSmsAuth = false;
+
+    // Try to verify custom JWT (SMS auth)
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       if (decoded && decoded.sub) {
         userId = decoded.sub;
+        isSmsAuth = true;
+        console.log('[DEBUG] delete-product: SMS auth verified for user:', userId);
       }
     } catch (e) {
       console.warn('[DEBUG] /api/vendor/delete-product jwt verify failed:', e?.message || e);
     }
 
+    // If not SMS auth, try Supabase auth
     if (!userId) {
       try {
         const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
@@ -476,25 +482,40 @@ async function deleteProductHandler(req, res) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
 
-    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } }
-    });
-    const { data, error } = await supabase
-      .from('products')
-      .delete()
-      .eq('id', product_id)
-      .select();
-
-    console.log('[DEBUG] delete result:', { data, error });
-    if (error) {
-      console.error('[API] Erreur suppression produit:', error);
-      return res.status(500).json({ success: false, error: error.message || 'Erreur suppression produit' });
+    // Use admin client for SMS auth (bypass RLS), otherwise use user token
+    let deleteResult;
+    if (isSmsAuth) {
+      // For SMS auth, use service role to bypass RLS
+      const { data, error } = await supabaseAdmin
+        .from('products')
+        .delete()
+        .eq('id', product_id)
+        .eq('vendor_id', vendor_id)
+        .select();
+      deleteResult = { data, error };
+      console.log('[DEBUG] delete result (admin):', { data, error });
+    } else {
+      // For Supabase auth, use user token (respect RLS)
+      const userSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        global: { headers: { Authorization: `Bearer ${token}` } }
+      });
+      const { data, error } = await userSupabase
+        .from('products')
+        .delete()
+        .eq('id', product_id)
+        .select();
+      deleteResult = { data, error };
+      console.log('[DEBUG] delete result (user):', { data, error });
     }
-    if (!data || data.length === 0) {
+
+    if (deleteResult.error) {
+      console.error('[API] Erreur suppression produit:', deleteResult.error);
+      return res.status(500).json({ success: false, error: deleteResult.error.message || 'Erreur suppression produit' });
+    }
+    if (!deleteResult.data || deleteResult.data.length === 0) {
       return res.status(404).json({ success: false, error: 'Produit introuvable ou non supprimé' });
     }
-    return res.json({ success: true, deleted: data[0] });
+    return res.json({ success: true, deleted: deleteResult.data[0] });
   } catch (err) {
     console.error('[API] /api/vendor/delete-product error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
