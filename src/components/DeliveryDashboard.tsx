@@ -26,8 +26,8 @@ type DeliveryOrder = {
   status: string;
   order_code?: string | null;
   products?: { name?: string | null; code?: string | null } | null;
-  buyer_profile?: { full_name?: string | null; phone?: string | null } | null;
-  vendor_profile?: { full_name?: string | null; phone?: string | null } | null;
+  buyer_profile?: { phone?: string | null; address?: string | null } | null;
+  vendor_profile?: { company_name?: string | null; phone?: string | null; address?: string | null } | null;
   delivery_address?: string | null;
   buyer_phone?: string | null;
   total_amount?: number | null;
@@ -660,10 +660,9 @@ const DeliveryDashboard = () => {
             {delivery.products?.name}
           </h3>
           <div className="space-y-1 text-sm text-gray-600">
-            <p><span className="font-medium">Client :</span> {delivery.buyer_profile?.full_name || 'N/A'}</p>
             {delivery.buyer_profile?.phone && (
               <div className="flex items-center gap-3">
-                <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Contact:</span>
+                <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Client:</span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

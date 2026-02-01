@@ -3,7 +3,7 @@
   "compilerOptions": {
     "ignoreDeprecations": "5.0",
     "skipLibCheck": true,
-    "lib": ["ES2021"],        // backend node only — n'incluez pas "DOM" si vous n'en avez pas besoin
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
   "include": ["src"]

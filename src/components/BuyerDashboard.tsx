@@ -287,7 +287,7 @@ const BuyerDashboard = () => {
 
         // Helper to fetch and return profile map
         const fetchProfilesMap = async (ids: string[]) => {
-          type ProfileLike = { id?: string; full_name?: string; phone?: string; company_name?: string; [key: string]: unknown };
+          type ProfileLike = { id?: string; company_name?: string; phone?: string; address?: string; [key: string]: unknown };
           const map: Record<string, ProfileLike> = {};
           await Promise.all(ids.map(async (id) => {
             try {
@@ -1697,7 +1697,7 @@ const BuyerDashboard = () => {
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.full_name || 'N/A'}</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">
@@ -1729,13 +1729,9 @@ const BuyerDashboard = () => {
                                   </div>
                                   {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
                                     <div className="flex flex-col gap-2 mt-4">
-                                      <div className="flex items-center gap-4">
-                                        <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
-                                        <span className="flex-1 min-w-0 truncate text-base">{order.delivery_person?.full_name || (order.status === 'in_delivery' ? "En cours d'affectation" : 'N/A')}</span>
-                                      </div>
                                       {order.delivery_person?.phone ? (
                                         <div className="flex items-center gap-4 text-base">
-                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Contacts:</span>
+                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
                                           <div className="flex items-center gap-3">
                                             <Tooltip>
                                               <TooltipTrigger asChild>
@@ -1757,8 +1753,8 @@ const BuyerDashboard = () => {
                                   )}
                                   <div className="flex flex-col gap-2 mt-4">
                                     <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse :</span>
-                                      <span className="flex-1 min-w-0 break-words text-base">{order.profiles?.address || order.delivery_address || 'Adresse à définir'}</span>
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse de livraison :</span>
+                                      <span className="flex-1 min-w-0 break-words text-base">{order.delivery_address || order.profiles?.address || 'Adresse à définir'}</span>
                                     </div>
                                   </div>
                                 </div>

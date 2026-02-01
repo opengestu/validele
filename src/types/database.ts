@@ -40,11 +40,11 @@ export interface Order {
     name: string;
   };
   profiles?: {
-    full_name: string;
+    company_name?: string;
     phone?: string;
+    address?: string;
   };
   delivery_person?: {
-    full_name: string;
     phone?: string;
   };
   token?: string;

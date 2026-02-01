@@ -64,7 +64,7 @@
     "googleapis": "^144.0.0",
     "html5-qrcode": "^2.3.8",
     "input-otp": "^1.2.4",
-    "jspdf": "^3.0.1",
+    "jspdf": "^4.0.0",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
     "node-cron": "^3.0.2",
@@ -106,6 +106,6 @@
     "tailwindcss": "^3.4.11",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.0.1",
-    "vite": "^5.4.19"
+    "vite": "^7.3.1"
   }
 }

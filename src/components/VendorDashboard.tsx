@@ -1286,10 +1286,6 @@ const VendorDashboard = () => {
                       {/* ...statut déplacé en bas... */}
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Client :</strong>
-                        <span className="font-semibold text-gray-900" style={{ fontSize: "14px", marginLeft: 8 }}>{order.profiles?.full_name || 'Client'}</span>
-                      </div>
-                      <div className="flex items-center text-sm text-gray-800 mb-1">
-                        <strong>Contacts :</strong>
                         <div style={{ marginLeft: 8 }}>
                           <button
                             type="button"
@@ -1644,10 +1640,6 @@ const VendorDashboard = () => {
                         </div>
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Client :</strong>
-                          <span className="font-semibold text-gray-900" style={{ fontSize: "14px", marginLeft: 8 }}>{order.profiles?.full_name || 'Client'}</span>
-                        </div>
-                        <div className="flex items-center text-sm text-gray-800 mb-1">
-                          <strong>Contacts :</strong>
                           <div style={{ marginLeft: 8 }}>
                             <button
                               type="button"
