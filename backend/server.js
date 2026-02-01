@@ -696,9 +696,14 @@ app.post('/api/vendor/orders', async (req, res) => {
         console.warn('[VENDOR ORDERS] Failed to attach payout_batch info:', attachErr);
       }
 
+      const normalizedOrders = (data || []).map((o) => ({
+        ...o,
+        delivery_address: (o && o.buyer && o.buyer.address) ? o.buyer.address : o.delivery_address
+      }));
+
       return res.json({ 
         success: true, 
-        orders: data || [],
+        orders: normalizedOrders,
         count: data?.length || 0,
         byStatus,
         usingServiceRole: true,
@@ -859,7 +864,7 @@ app.post('/api/orders/search', async (req, res) => {
     // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
     const { data, error } = await supabase
       .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, address), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
       .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
       .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
@@ -870,6 +875,9 @@ app.post('/api/orders/search', async (req, res) => {
     }
 
     if (data) {
+      if (data.buyer_profile && data.buyer_profile.address) {
+        data.delivery_address = data.buyer_profile.address;
+      }
       console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
       return res.json({ success: true, order: data });
     } else {
@@ -927,7 +935,11 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       }
 
       console.log('[API/delivery/my-orders] admin query returned', Array.isArray(data) ? data.length : 0, 'orders');
-      return res.json({ success: true, orders: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
+      const normalizedOrders = (data || []).map((o) => ({
+        ...o,
+        delivery_address: (o && o.buyer_profile && o.buyer_profile.address) ? o.buyer_profile.address : o.delivery_address
+      }));
+      return res.json({ success: true, orders: normalizedOrders, count: normalizedOrders.length, usingServiceRole: true, timestamp: new Date().toISOString() });
     } catch (e) {
       console.error('[API/delivery/my-orders] admin client failed:', e);
       return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
@@ -2403,12 +2415,16 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
     });
 
     // Enrichir les commandes avec les données des profils
-    const enrichedOrders = orders.map(order => ({
-      ...order,
-      buyer: profileMap[order.buyer_id] || null,
-      vendor: profileMap[order.vendor_id] || null,
-      delivery: profileMap[order.delivery_person_id] || null
-    }));
+    const enrichedOrders = orders.map(order => {
+      const buyer = profileMap[order.buyer_id] || null;
+      return {
+        ...order,
+        buyer,
+        vendor: profileMap[order.vendor_id] || null,
+        delivery: profileMap[order.delivery_person_id] || null,
+        delivery_address: buyer?.address || order.delivery_address
+      };
+    });
 
     console.log('[ADMIN] /api/admin/orders fetched:', enrichedOrders.length, 'orders with profile data');
     console.log('[ADMIN] Sample order:', JSON.stringify(enrichedOrders[0] || {}));
@@ -4482,6 +4498,7 @@ app.get('/api/buyer/orders', async (req, res) => {
           .select(`
             id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
+            buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, phone),
             qr_code, delivery_person_id
@@ -4497,6 +4514,7 @@ app.get('/api/buyer/orders', async (req, res) => {
           .select(`
             id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
+            buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, phone),
             qr_code, delivery_person_id
@@ -4515,6 +4533,14 @@ app.get('/api/buyer/orders', async (req, res) => {
     if (queryError) {
       console.error('[BUYER] Erreur récupération commandes:', queryError);
       return res.status(500).json({ success: false, error: queryError.message || 'Erreur serveur' });
+    }
+
+    // Normalize delivery_address from buyer profile address when available
+    if (Array.isArray(orders)) {
+      orders = orders.map((o) => ({
+        ...o,
+        delivery_address: (o && o.buyer && o.buyer.address) ? o.buyer.address : o.delivery_address
+      }));
     }
 
     // Diagnostics: if an order has delivery_person_id but no delivery profile joined,
