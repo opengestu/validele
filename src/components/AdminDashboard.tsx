@@ -42,6 +42,7 @@ type ProfileRef = {
   full_name?: string;
   phone?: string;
   wallet_type?: string | null;
+  address?: string | null;
 };
 
 type OrderFull = Order & {
@@ -489,6 +490,7 @@ const AdminDashboard: React.FC = () => {
                     <TableHead>Acheteur</TableHead>
                     <TableHead>Vendeur</TableHead>
                     <TableHead>Livraison</TableHead>
+                    <TableHead>Adresse</TableHead>
                     <TableHead>Montant</TableHead>
                     <TableHead>Statut</TableHead>
                     <TableHead>Payout</TableHead>
@@ -505,6 +507,7 @@ const AdminDashboard: React.FC = () => {
                         <TableCell>{o.buyer?.full_name || '-'}</TableCell>
                         <TableCell>{o.vendor?.full_name || '-'}</TableCell>
                         <TableCell>{o.delivery?.full_name || '-'}</TableCell>
+                        <TableCell>{o.buyer?.address || o.delivery_address || '-'}</TableCell>
                         <TableCell>{o.total_amount?.toLocaleString()} FCFA</TableCell>
                         <TableCell>{o.status}</TableCell>
                         <TableCell>
@@ -526,7 +529,7 @@ const AdminDashboard: React.FC = () => {
 
                   {orders.filter(o => String(o.status).toLowerCase() === 'delivered').length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-gray-500">Aucune commande livrée</TableCell>
+                      <TableCell colSpan={10} className="text-center text-gray-500">Aucune commande livrée</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

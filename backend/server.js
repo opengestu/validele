@@ -2210,7 +2210,7 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
     // Récupérer tous les profils en une seule requête
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from('profiles')
-      .select('id, full_name, phone, wallet_type')
+      .select('id, full_name, phone, wallet_type, address')
       .in('id', Array.from(profileIds));
 
     if (profilesError) {
