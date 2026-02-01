@@ -335,6 +335,47 @@ app.all('/api/admin/test-sms', async (req, res) => {
   }
 });
 
+// Admin: test FCM push (POST JSON { userId | token, title, body, data })
+app.post('/api/admin/test-push', async (req, res) => {
+  try {
+    const { userId, token, title, body, data } = req.body || {};
+    if (!title || !body) return res.status(400).json({ success: false, error: 'title and body required' });
+
+    console.log('[ADMIN TEST PUSH] payload:', { userId, hasToken: !!token, title, body, data: !!data });
+
+    // Direct token path (useful to test a device token without creating a user)
+    if (token) {
+      try {
+        const result = await sendPushNotification(token, title, body, data || {});
+        console.log('[ADMIN TEST PUSH] direct token result:', result);
+        return res.json({ success: true, direct: true, result });
+      } catch (e) {
+        console.error('[ADMIN TEST PUSH] direct token error:', e);
+        return res.status(500).json({ success: false, error: String(e.message || e) });
+      }
+    }
+
+    if (!notificationService || typeof notificationService.sendPushNotificationToUser !== 'function') {
+      console.error('[ADMIN TEST PUSH] notificationService.sendPushNotificationToUser not available');
+      return res.status(500).json({ success: false, error: 'notificationService.sendPushNotificationToUser not available on server' });
+    }
+
+    if (!userId) return res.status(400).json({ success: false, error: 'userId or token required' });
+
+    try {
+      const result = await notificationService.sendPushNotificationToUser(userId, title, body, data || {});
+      console.log('[ADMIN TEST PUSH] sent to user:', userId, 'result:', result);
+      return res.json({ success: true, userId, result });
+    } catch (e) {
+      console.error('[ADMIN TEST PUSH] user push error:', e);
+      return res.status(500).json({ success: false, error: String(e.message || e) });
+    }
+  } catch (err) {
+    console.error('[ADMIN TEST PUSH] handler error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+});
+
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
 async function deleteProductHandler(req, res) {
   try {
