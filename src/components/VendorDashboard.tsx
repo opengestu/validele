@@ -1305,7 +1305,7 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
-                        <span className="text-gray-700" style={{ marginLeft: 8 }}>Adresse à définir</span>
+                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.buyer?.address || order.delivery_address || 'Adresse à définir'}</span>
                       </div>
 
                       <div className="flex items-center mb-1 mt-2">
@@ -1662,7 +1662,7 @@ const VendorDashboard = () => {
                         </div>
                         <div className="flex items-center text-sm text-gray-800 mb-1">
                           <strong>Adresse :</strong>
-                          <span className="text-gray-700" style={{ marginLeft: 8 }}>Adresse à définir</span>
+                          <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.buyer?.address || order.delivery_address || 'Adresse à définir'}</span>
                         </div>
                         {/* Statut tout en bas */}
                         <div className="flex items-center mb-1 mt-2">

@@ -1755,6 +1755,12 @@ const BuyerDashboard = () => {
                                       ) : null}
                                     </div>
                                   )}
+                                  <div className="flex flex-col gap-2 mt-4">
+                                    <div className="flex items-center gap-4">
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Adresse :</span>
+                                      <span className="flex-1 min-w-0 break-words text-base">{order.profiles?.address || order.delivery_address || 'Adresse à définir'}</span>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             </div>

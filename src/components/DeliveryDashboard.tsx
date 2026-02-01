@@ -680,7 +680,7 @@ const DeliveryDashboard = () => {
               </div>
             )} 
 
-            <p>Adresse : {delivery.delivery_address}</p>
+            <p>Adresse : {delivery.buyer_profile?.address || delivery.delivery_address || 'Adresse à définir'}</p>
           </div>
           {/* Affichage du statut de paiement vendeur(se) */}
           {delivery.status === 'delivered' && payoutTransaction && (

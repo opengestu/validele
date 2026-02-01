@@ -543,8 +543,9 @@ app.post('/api/vendor/orders', async (req, res) => {
           delivery_person_id,
           created_at,
           updated_at,
+          delivery_address,
           products(*),
-          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+          buyer:profiles!orders_buyer_id_fkey(full_name, phone, address),
           delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
           qr_code
         `)
@@ -815,7 +816,7 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
       const { data, error } = await supabaseAdmin
         .from('orders')
-        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, address)`)
         .eq('delivery_person_id', deliveryPersonId)
         .order('created_at', { ascending: false });
 
@@ -4176,9 +4177,9 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabaseAdmin
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at,
+            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
-            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
@@ -4191,9 +4192,9 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabase
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at,
+            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
-            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
