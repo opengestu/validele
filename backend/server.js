@@ -2181,35 +2181,60 @@ app.post('/api/admin/login-local', async (req, res) => {
 // Lister les commandes (admin)
 app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   try {
-    // Include buyer, vendor and (if present) delivery person details using FK relationship selects
-    const { data, error } = await supabase
+    // Utiliser le service-role client pour avoir accès complet aux données
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    // Récupérer d'abord toutes les commandes
+    const { data: orders, error: ordersError } = await supabaseAdmin
       .from('orders')
-      .select(`
-        *,
-        buyer:buyer_id(id, full_name, phone, wallet_type),
-        vendor:vendor_id(id, full_name, phone, wallet_type),
-        delivery:delivery_person_id(id, full_name, phone)
-      `)
+      .select('*')
       .order('created_at', { ascending: false });
-    if (error) throw error;
-
-    // Debug logs only when DEBUG environment variable is explicitly enabled
-    if (process.env.DEBUG === 'true') {
-      try {
-        const count = Array.isArray(data) ? data.length : 0;
-        console.log('[ADMIN] /api/admin/orders fetched count:', count);
-        console.log('[ADMIN] /api/admin/orders sample rows:', JSON.stringify((data || []).slice(0, 10)));
-      } catch (e) {
-        console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
-      }
-
-      // Include debug info in the response when DEBUG environment flag is enabled
-      const debugPayload = { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) };
-      return res.json(Object.assign({ success: true, orders: data }, { debug: debugPayload }));
+    
+    if (ordersError) {
+      console.error('[ADMIN] Erreur récupération orders:', ordersError);
+      throw ordersError;
     }
 
-    // Normal response (no debug information)
-    return res.json({ success: true, orders: data });
+    // Récupérer tous les IDs de profils uniques
+    const profileIds = new Set();
+    orders.forEach(order => {
+      if (order.buyer_id) profileIds.add(order.buyer_id);
+      if (order.vendor_id) profileIds.add(order.vendor_id);
+      if (order.delivery_person_id) profileIds.add(order.delivery_person_id);
+    });
+
+    // Récupérer tous les profils en une seule requête
+    const { data: profiles, error: profilesError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, full_name, phone, wallet_type')
+      .in('id', Array.from(profileIds));
+
+    if (profilesError) {
+      console.error('[ADMIN] Erreur récupération profiles:', profilesError);
+    }
+
+    // Créer un map des profils pour un accès rapide
+    const profileMap = {};
+    (profiles || []).forEach(profile => {
+      profileMap[profile.id] = profile;
+    });
+
+    // Enrichir les commandes avec les données des profils
+    const enrichedOrders = orders.map(order => ({
+      ...order,
+      buyer: profileMap[order.buyer_id] || null,
+      vendor: profileMap[order.vendor_id] || null,
+      delivery: profileMap[order.delivery_person_id] || null
+    }));
+
+    console.log('[ADMIN] /api/admin/orders fetched:', enrichedOrders.length, 'orders with profile data');
+    console.log('[ADMIN] Sample order:', JSON.stringify(enrichedOrders[0] || {}));
+
+    return res.json({ success: true, orders: enrichedOrders });
   } catch (error) {
     console.error('[ADMIN] Erreur list orders:', error);
     res.status(500).json({ success: false, error: String(error) });
