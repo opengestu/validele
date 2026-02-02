@@ -985,7 +985,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         </div>
 
         {/* Mobile keypad (dans le flux normal, pas fixed) */}
-        <div className="sm:hidden mt-16">
+        <div className="sm:hidden mt-8">
           <div className="flex justify-center">
             <div
               className="bg-white/95 p-3 rounded-2xl w-full max-w-[280px]"
@@ -1129,7 +1129,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     </button>
                   </div>
                 </div>
-                <div className="mt-10 md:mt-12">{renderNumericKeypad()}</div>
+                <div className="mt-14 sm:mt-10 md:mt-12">{renderNumericKeypad()}</div>
               </div>
             </div>
           </div>
@@ -1142,7 +1142,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-base font-medium">Entrez le code reçu par SMS</p>
               <p className="text-sm text-muted-foreground mt-2">Saisissez le code à 4 chiffres envoyé sur votre téléphone</p>
             </div>
-            <div className="mt-6 mb-12 sm:mb-0">
+            <div className="mt-6 mb-16 sm:mb-4">
               {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
             </div>
             {renderNumericKeypad()}
@@ -1168,7 +1168,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <h3 className="text-xl sm:text-2xl font-extrabold text-foreground">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
               <p className="text-sm text-muted-foreground mt-1">Entrez votre code PIN pour continuer</p>
             </div>
-            <div className="mb-12 sm:mb-0">{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
+            <div className="mb-16 sm:mb-4">{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
             {renderNumericKeypad()}
             {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
             {/* Desktop: bouton normal */}
@@ -1193,7 +1193,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-sm text-muted-foreground mt-2">Choisissez 4 chiffres pour sécuriser votre compte</p>
               <p className="text-xs text-blue-600 mt-2">🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites</p>
             </div>
-            <div className="mb-12 sm:mb-0">{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
+            <div className="mb-16 sm:mb-4">{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
             {renderNumericKeypad()}
             <Button type="button" onClick={handleBack} className="w-full text-sm text-muted-foreground hover:text-foreground mt-6">← Retour</Button>
           </>
@@ -1210,7 +1210,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-sm text-muted-foreground mt-1">Entrez à nouveau votre code PIN pour le confirmer</p>
               <p className="text-xs text-orange-600 mt-1">⚠️ Assurez-vous d'entrer le même code que précédemment</p>
             </div>
-            <div className="mb-12 sm:mb-0">{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
+            <div className="mb-16 sm:mb-4">{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
             {renderNumericKeypad()}
           </>
         )}
