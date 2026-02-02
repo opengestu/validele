@@ -34,6 +34,7 @@ interface PhoneAuthFormProps {
 export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false }) => {
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
   const [loading, setLoading] = useState(false);
+  const [redirecting, setRedirecting] = useState(false); // Nouvel état pour le spinner de redirection
   const [resendCooldown, setResendCooldown] = useState(0);
   const [formData, setFormData] = useState({
     phone: '',
@@ -386,8 +387,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             title: "Connexion réussie ! 🎉",
             description: `Bienvenue ${existingProfile.full_name}`,
           });
-          // Attendre un peu pour que le toast s'affiche
-          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Activer le mode redirection pour afficher le spinner plein écran
+          setRedirecting(true);
+          await new Promise(resolve => setTimeout(resolve, 800));
+          
           const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                              existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
          
@@ -494,7 +498,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         title: "Connexion réussie ! 🎉",
         description: `Content de vous revoir, ${existingProfile.full_name}`,
       });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Activer le mode redirection pour afficher le spinner plein écran
+      setRedirecting(true);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                            existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
       window.location.href = redirectPath;
@@ -593,8 +601,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         description: isResetPin ? "Vous pouvez maintenant vous connecter" : `Bienvenue ${existingProfile.full_name}`,
       });
      
-      // Attendre un peu pour que le toast s'affiche
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Activer le mode redirection pour afficher le spinner plein écran
+      setRedirecting(true);
+      await new Promise(resolve => setTimeout(resolve, 800));
      
       // Réinitialiser le mode reset
       setIsResetPin(false);
@@ -673,6 +682,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         title: "Compte créé ! 🎊",
         description: "Bienvenue sur Validèl",
       });
+      
+      // Activer le mode redirection pour afficher le spinner plein écran
+      setRedirecting(true);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       const redirectPath = formData.role === 'vendor' ? '/vendor' :
                          formData.role === 'delivery' ? '/delivery' : '/buyer';
      
@@ -1049,8 +1063,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
   return (
     <>
-      {/* Spinner overlay after PIN entry and during loading */}
-      {loading && (
+      {/* Spinner overlay plein écran pendant la redirection */}
+      {redirecting && (
+        <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner size="xl" className="text-[#24BD5C]" />
+            <p className="text-lg font-medium text-gray-700">Connexion en cours...</p>
+          </div>
+        </div>
+      )}
+      
+      {/* Spinner overlay pendant le chargement (loading) - moins prioritaire que redirecting */}
+      {loading && !redirecting && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/60">
           <Spinner size="xl" hideWhenGlobal={false} />
         </div>
