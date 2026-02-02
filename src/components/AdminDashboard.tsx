@@ -168,15 +168,43 @@ const AdminDashboard: React.FC = () => {
   const isAdminUser = userProfile ? !!(userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)) : true;
 
 
+  // Vérifier la session admin au chargement
+  useEffect(() => {
+    const checkAdminSession = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/admin/validate'), {
+          headers: getAuthHeader(),
+          credentials: 'include'
+        });
+        if (res.ok) {
+          setIsAuthenticated(true);
+          setShowAdminLogin(false);
+        } else {
+          setIsAuthenticated(false);
+          setShowAdminLogin(true);
+        }
+      } catch (error) {
+        console.error('Erreur vérification session:', error);
+        setIsAuthenticated(false);
+        setShowAdminLogin(true);
+      }
+    };
+
+    checkAdminSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // If the user is known and not admin, block access. If userProfile is missing, allow showing login form.
     if (userProfile && !isAdminUser) {
       setLoading(false);
       return;
     }
-    fetchData();
+    if (isAuthenticated) {
+      fetchData();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile, adminId]);
+  }, [userProfile, adminId, isAuthenticated]);
 
   const getAuthHeader = (): HeadersInit => {
     const adminToken = localStorage.getItem('admin_token');
@@ -252,6 +280,7 @@ const AdminDashboard: React.FC = () => {
 
   // New: admin login (email/password + optional 2FA) UI state
   const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminOtp, setAdminOtp] = useState('');
@@ -266,6 +295,43 @@ const AdminDashboard: React.FC = () => {
 
 
   const isOnline = useNetwork();
+
+  const handleLogout = async () => {
+    try {
+      await fetch(apiUrl('/api/admin/logout'), {
+        method: 'POST',
+        headers: getAuthHeader(),
+        credentials: 'include'
+      });
+      
+      // Nettoyer le state et le localStorage
+      try { 
+        localStorage.removeItem('admin_token');
+        localStorage.removeItem('admin_orders');
+        localStorage.removeItem('admin_transactions');
+      } catch(e) { /* ignore */ }
+      
+      setIsAuthenticated(false);
+      setShowAdminLogin(true);
+      setOrders([]);
+      setTransactions([]);
+      setBatches([]);
+      setRefunds([]);
+      setTransfers([]);
+      
+      toast({ 
+        title: 'Déconnecté', 
+        description: 'Vous avez été déconnecté avec succès' 
+      });
+    } catch (error) {
+      console.error('Erreur déconnexion:', error);
+      toast({ 
+        title: 'Erreur', 
+        description: 'Erreur lors de la déconnexion', 
+        variant: 'destructive' 
+      });
+    }
+  };
 
   const handleApproveRefund = async (refundId: string) => {
     setProcessing(true);
@@ -312,12 +378,14 @@ const AdminDashboard: React.FC = () => {
       const headers = getAuthHeader();
       const oRes = await fetch(apiUrl('/api/admin/orders'), { headers, credentials: 'include' });
       if (oRes.status === 401) {
+        setIsAuthenticated(false);
         setShowAdminLogin(true);
         setLoading(false);
         return;
       }
       const tRes = await fetch(apiUrl('/api/admin/transactions'), { headers, credentials: 'include' });
       if (tRes.status === 401) {
+        setIsAuthenticated(false);
         setShowAdminLogin(true);
         setLoading(false);
         return;
@@ -561,6 +629,7 @@ const AdminDashboard: React.FC = () => {
                 }
                 // Prefer httpOnly cookie set by server; remove legacy admin_token
                 try { localStorage.removeItem('admin_token'); } catch(e) { /* ignore */ }
+                setIsAuthenticated(true);
                 setShowAdminLogin(false);
                 setAdminEmail(''); setAdminPassword(''); setAdminOtp('');
                 setAuthError(null);
@@ -585,8 +654,16 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto py-6">
-      <h1 className="text-2xl font-bold mb-4">Dashboard Admin</h1>
-
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Dashboard Admin</h1>
+        <Button 
+          variant="destructive" 
+          size="sm"
+          onClick={handleLogout}
+        >
+          Se déconnecter
+        </Button>
+      </div>
 
       {!isOnline && (
         <div className="max-w-6xl mx-auto mb-4">
