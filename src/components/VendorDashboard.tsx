@@ -103,6 +103,57 @@ const VendorDashboard = () => {
   }
   // Utilise smsUser si présent, sinon user
   const effectiveUser = smsUser || user;
+
+  // Helper function to group orders by date
+  const groupOrdersByDate = (ordersList: Order[]) => {
+    const groups: { [key: string]: Order[] } = {};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    ordersList.forEach(order => {
+      const orderDate = new Date(order.created_at || Date.now());
+      orderDate.setHours(0, 0, 0, 0);
+      
+      let dateKey: string;
+      if (orderDate.getTime() === today.getTime()) {
+        dateKey = "Aujourd'hui";
+      } else if (orderDate.getTime() === yesterday.getTime()) {
+        dateKey = "Hier";
+      } else {
+        // Format: "Lundi 27 Janvier 2026"
+        dateKey = orderDate.toLocaleDateString('fr-FR', { 
+          weekday: 'long', 
+          day: 'numeric', 
+          month: 'long', 
+          year: 'numeric' 
+        });
+        // Capitalize first letter
+        dateKey = dateKey.charAt(0).toUpperCase() + dateKey.slice(1);
+      }
+      
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(order);
+    });
+
+    // Sort groups by date (most recent first)
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+      if (a === "Aujourd'hui") return -1;
+      if (b === "Aujourd'hui") return 1;
+      if (a === "Hier") return -1;
+      if (b === "Hier") return 1;
+      // For other dates, parse and compare
+      const dateA = new Date(groups[a][0].created_at || 0);
+      const dateB = new Date(groups[b][0].created_at || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+
+    return { groups, sortedKeys };
+  };
+
   // ...existing code...
   // States
   const [products, setProducts] = useState<Product[]>([]);
@@ -1632,67 +1683,94 @@ const VendorDashboard = () => {
                     Facture paiement
                   </Button>
                 </div>
-                <div className="grid gap-4">
-                  {orders.map((order) => (
-                    <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
-                      <CardContent className="p-4">
-                        {/* Ligne 1 : Icône + nom produit + prix à droite */}
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
-                            <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                
+                {/* Orders grouped by date */}
+                {orders.length > 0 && (() => {
+                  const { groups, sortedKeys } = groupOrdersByDate(orders);
+                  return (
+                    <div className="space-y-6">
+                      {sortedKeys.map((dateKey) => (
+                        <div key={dateKey}>
+                          {/* Date header */}
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1.5 rounded-lg shadow-sm">
+                              <span className="text-sm font-semibold">{dateKey}</span>
+                            </div>
+                            <div className="flex-grow h-px bg-gradient-to-r from-orange-200 to-transparent"></div>
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                              {groups[dateKey].length} commande{groups[dateKey].length > 1 ? 's' : ''}
+                            </span>
                           </div>
-                          <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
-                            {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
-                          </span>
-                        </div>
-                        <div className="flex items-center mb-1">
-                          <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
-                          <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'16px', marginLeft: 8}}>{order.order_code || order.id}</span>
-                        </div>
-                        <div className="flex items-center text-sm text-gray-800 mb-1">
-                          <strong>Client :</strong>
-                          <div style={{ marginLeft: 8 }}>
-                            <button
-                              type="button"
-                              onClick={() => handleCallClient(order)}
-                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
-                              aria-label="Appeler ce client"
-                            >
-                              <PhoneIcon className="h-4 w-4" />
-                              <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
-                            </button>
+                          
+                          {/* Orders for this date */}
+                          <div className="grid gap-4">
+                            {groups[dateKey].map((order) => (
+                              <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
+                                <CardContent className="p-4">
+                                  {/* Ligne 1 : Icône + nom produit + prix à droite */}
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-2">
+                                      <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                                      <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                                    </div>
+                                    <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
+                                      {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center mb-1">
+                                    <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
+                                    <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'16px', marginLeft: 8}}>{order.order_code || order.id}</span>
+                                  </div>
+                                  {/* Heure de la commande */}
+                                  <div className="flex items-center text-xs text-gray-500 mb-1">
+                                    <span>🕐 {new Date(order.created_at || Date.now()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                                  </div>
+                                  <div className="flex items-center text-sm text-gray-800 mb-1">
+                                    <strong>Client :</strong>
+                                    <div style={{ marginLeft: 8 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCallClient(order)}
+                                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                                        aria-label="Appeler ce client"
+                                      >
+                                        <PhoneIcon className="h-4 w-4" />
+                                        <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center text-sm text-gray-800 mb-1">
+                                    <strong>Adresse :</strong>
+                                    <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
+                                  </div>
+                                  {/* Statut tout en bas */}
+                                  <div className="flex items-center mb-1 mt-2">
+                                    <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
+                                    <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
+                                      {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
+                                    </span>
+                                  </div>
+                                  {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
+                                  <div className="flex items-center mt-2 space-x-2">
+                                    {/* Order invoice (public endpoint) - open in modal */}
+                                    <Button
+                                      size="sm"
+                                      onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                                      className="bg-gray-100 text-gray-800"
+                                    >
+                                      Voir facture
+                                    </Button>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
                           </div>
                         </div>
-                        <div className="flex items-center text-sm text-gray-800 mb-1">
-                          <strong>Adresse :</strong>
-                          <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
-                        </div>
-                        {/* Statut tout en bas */}
-                        <div className="flex items-center mb-1 mt-2">
-                          <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                          <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
-                            {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
-                          </span>
-                        </div>
-                        {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
-                        <div className="flex items-center mt-2 space-x-2">
-                          {/* Order invoice (public endpoint) - open in modal */}
-                          <Button
-                            size="sm"
-                            onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                            className="bg-gray-100 text-gray-800"
-                          >
-                            Voir facture
-                          </Button>
-
-
-
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                
                 {orders.length === 0 && (
                   <div className="text-center py-8 text-gray-500">
                     <ShoppingCart className="h-8 w-8 mx-auto mb-2 text-gray-400" />
