@@ -19,6 +19,7 @@ type Order = {
   payout_status?: string | null;
   payout_requested_at?: string | null;
   payout_requested_by?: string | null;
+  payout_paid_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -187,20 +188,38 @@ const AdminDashboard: React.FC = () => {
   };
 
   // Transaction statuses mapping and helper for badge classes
+  // Include Pixpay statuses: PENDING1, PENDING2, SUCCESSFUL, SUCCESS, FAILED
   const TX_STATUS_LABELS_FR: Record<string, string> = {
     pending: 'En attente',
     queued: 'En file',
     processing: 'En cours',
     paid: 'Payée',
     failed: 'Échouée',
-    cancelled: 'Annulée'
+    cancelled: 'Annulée',
+    // Pixpay statuses
+    PENDING1: 'En attente',
+    PENDING2: 'En attente',
+    SUCCESSFUL: 'Réussie ✓',
+    SUCCESS: 'Réussie ✓',
+    FAILED: 'Échouée'
   };
+  
+  // Normalize status for consistent display
+  const normalizeStatus = (s?: string): string => {
+    const st = String(s || '').toUpperCase();
+    if (st === 'SUCCESSFUL' || st === 'SUCCESS') return 'paid';
+    if (st === 'PENDING1' || st === 'PENDING2') return 'pending';
+    if (st === 'FAILED') return 'failed';
+    return String(s || '').toLowerCase();
+  };
+  
   const txStatusClass = (s?: string) => {
-    const st = String(s || '').toLowerCase();
+    const st = normalizeStatus(s);
     if (st === 'pending' || st === 'queued') return 'bg-yellow-100 text-yellow-800';
-    if (st === 'processing') return 'bg-yellow-200 text-yellow-900';
+    if (st === 'processing') return 'bg-blue-100 text-blue-800';
     if (st === 'paid' || st === 'confirmed') return 'bg-green-100 text-green-800';
     if (st === 'failed' || st === 'error') return 'bg-red-100 text-red-800';
+    if (st === 'cancelled') return 'bg-slate-200 text-slate-600';
     return 'bg-slate-100 text-slate-700';
   };
 
@@ -546,14 +565,38 @@ const AdminDashboard: React.FC = () => {
                         <TableCell>{o.total_amount?.toLocaleString()} FCFA</TableCell>
                         <TableCell>{o.status}</TableCell>
                         <TableCell>
-                          <span className={`px-2 py-1 rounded text-sm ${o.payout_status === 'paid' ? 'bg-green-100 text-green-800' : o.payout_status === 'processing' ? 'bg-yellow-100 text-yellow-800' : 'bg-slate-100 text-slate-700'}`}>
-                            {o.payout_status || '-'}
+                          <span className={`px-2 py-1 rounded text-sm ${
+                            o.payout_status === 'paid' ? 'bg-green-100 text-green-800' : 
+                            o.payout_status === 'processing' ? 'bg-blue-100 text-blue-800' : 
+                            o.payout_status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
+                            o.payout_status === 'requested' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {o.payout_status === 'paid' ? 'Payé ✓' : 
+                             o.payout_status === 'processing' ? 'En cours' :
+                             o.payout_status === 'scheduled' ? 'Programmé' :
+                             o.payout_status === 'requested' ? 'Demandé' :
+                             o.payout_status || '-'}
                           </span>
-                          {o.payout_requested_at ? ` — ${new Date(o.payout_requested_at).toLocaleString()}` : ''}
+                          {o.payout_paid_at ? ` — Payé le ${new Date(o.payout_paid_at).toLocaleString()}` : 
+                           o.payout_requested_at ? ` — Demandé le ${new Date(o.payout_requested_at).toLocaleString()}` : ''}
                         </TableCell>
                         <TableCell className="flex gap-2">
-                          <Button size="sm" onClick={() => handlePayout(o.id)} disabled={!(o.status === 'delivered' && o.payout_status === 'requested') || processing}>
-                            {o.payout_status === 'processing' ? 'En cours...' : o.payout_status === 'paid' ? 'Payé ✓' : o.payout_status === 'scheduled' ? 'Programmé' : 'Payer'}
+                          <Button 
+                            size="sm" 
+                            onClick={() => handlePayout(o.id)} 
+                            disabled={!(o.status === 'delivered' && o.payout_status === 'requested') || processing}
+                            className={
+                              o.payout_status === 'paid' ? 'bg-green-600 hover:bg-green-600 cursor-default' : 
+                              o.payout_status === 'scheduled' ? 'bg-purple-600 hover:bg-purple-600 cursor-default' :
+                              o.payout_status === 'processing' ? 'bg-blue-600 hover:bg-blue-600 cursor-default' :
+                              ''
+                            }
+                          >
+                            {o.payout_status === 'paid' ? '✓ Payé' : 
+                             o.payout_status === 'processing' ? '⏳ En cours' : 
+                             o.payout_status === 'scheduled' ? '📅 Programmé' : 
+                             'Payer'}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -679,15 +722,29 @@ const AdminDashboard: React.FC = () => {
                     <TableRow key={b.id}>
                       <TableCell>{b.id}</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
-                      <TableCell>{b.status}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          b.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                          b.status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
+                          b.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          b.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          'bg-slate-100 text-slate-700'
+                        }`}>
+                          {b.status === 'processing' ? '⏳ En cours' :
+                           b.status === 'scheduled' ? '📅 Programmé' :
+                           b.status === 'completed' ? '✓ Terminé' :
+                           b.status === 'failed' ? '✗ Échoué' :
+                           b.status || '-'}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         {(b.total_amount||0).toLocaleString()} FCFA
                         {b.commission_pct ? ` — commission ${b.commission_pct}%` : ''}
                       </TableCell>
                       <TableCell className="flex gap-2">
                         <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
-                        <Button size="sm" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? 'En cours...' : 'Process'}</Button>
-                        <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Cancel</Button>
+                        <Button size="sm" disabled={b.status === 'processing' || processing} className={b.status === 'processing' ? 'bg-blue-400' : ''} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? '⏳ En cours...' : 'Traiter'}</Button>
+                        <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Annuler</Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -725,7 +782,19 @@ const AdminDashboard: React.FC = () => {
                     <TableRow key={b.id}>
                       <TableCell>{b.id}</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
-                      <TableCell>{b.status}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          b.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          b.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          b.status === 'cancelled' ? 'bg-slate-200 text-slate-600' :
+                          'bg-slate-100 text-slate-700'
+                        }`}>
+                          {b.status === 'completed' ? '✓ Terminé' :
+                           b.status === 'failed' ? '✗ Échoué' :
+                           b.status === 'cancelled' ? '⊘ Annulé' :
+                           b.status || '-'}
+                        </span>
+                      </TableCell>
                       <TableCell>{(b.total_amount||0).toLocaleString()} FCFA</TableCell>
                       <TableCell className="flex gap-2">
                         <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
