@@ -4098,7 +4098,7 @@ if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
 }
 
 
-// Remboursement client (annulation commande)
+// Remboursement client (annulation commande) - Créer une demande pour approbation admin
 app.post('/api/payment/pixpay/refund', async (req, res) => {
   try {
     const { orderId, reason } = req.body;
@@ -4138,15 +4138,134 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       });
     }
 
-    // 3) Récupérer le téléphone et wallet_type de l'acheteur
-    const buyerPhone = order.buyer?.phone;
-    // Déterminer le wallet_type à partir du payment_method de la commande
-    let walletType = order.buyer?.wallet_type;
-    if (!walletType && order.payment_method) {
+    // 3) Vérifier si une demande n'existe pas déjà
+    const { data: existingRequest } = await supabase
+      .from('refund_requests')
+      .select('id, status')
+      .eq('order_id', orderId)
+      .in('status', ['pending', 'approved'])
+      .single();
+
+    if (existingRequest) {
+      return res.status(400).json({
+        success: false,
+        error: 'Une demande de remboursement existe déjà pour cette commande'
+      });
+    }
+
+    // 4) Créer la demande de remboursement
+    const { data: refundRequest, error: refundError } = await supabase
+      .from('refund_requests')
+      .insert({
+        order_id: orderId,
+        buyer_id: order.buyer_id,
+        amount: order.total_amount,
+        reason: reason || 'Non satisfaction client',
+        status: 'pending',
+        requested_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (refundError) {
+      console.error('[REFUND] Erreur création demande:', refundError);
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la création de la demande de remboursement'
+      });
+    }
+
+    console.log('[REFUND] Demande créée:', refundRequest.id);
+
+    return res.json({
+      success: true,
+      refund_request_id: refundRequest.id,
+      message: `Demande de remboursement soumise. Elle sera examinée par un administrateur.`
+    });
+
+  } catch (error) {
+    console.error('[REFUND] Erreur:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors de la demande de remboursement'
+    });
+  }
+});
+
+// [ADMIN] Récupérer toutes les demandes de remboursement
+app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
+  try {
+    const { data: refunds, error } = await supabaseAdmin
+      .from('refund_requests')
+      .select(`
+        *,
+        order:orders(id, order_code, products(name)),
+        buyer:profiles!refund_requests_buyer_id_fkey(id, full_name, phone)
+      `)
+      .order('requested_at', { ascending: false });
+
+    if (error) {
+      console.error('[REFUND] Erreur récupération demandes:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la récupération des demandes'
+      });
+    }
+
+    return res.json({
+      success: true,
+      refunds: refunds || []
+    });
+
+  } catch (error) {
+    console.error('[REFUND] Erreur:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur serveur'
+    });
+  }
+});
+
+// [ADMIN] Approuver une demande de remboursement et traiter le remboursement
+app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const refundId = req.params.id;
+
+    // 1) Récupérer la demande de remboursement
+    const { data: refundRequest, error: refundError } = await supabaseAdmin
+      .from('refund_requests')
+      .select(`
+        *,
+        order:orders(id, status, total_amount, buyer_id, payment_method),
+        buyer:profiles!refund_requests_buyer_id_fkey(phone, wallet_type, full_name)
+      `)
+      .eq('id', refundId)
+      .single();
+
+    if (refundError || !refundRequest) {
+      console.error('[REFUND] Demande non trouvée:', refundError);
+      return res.status(404).json({
+        success: false,
+        error: 'Demande de remboursement non trouvée'
+      });
+    }
+
+    if (refundRequest.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: `Cette demande a déjà été traitée (statut: ${refundRequest.status})`
+      });
+    }
+
+    // 2) Récupérer le téléphone et wallet_type de l'acheteur
+    const buyerPhone = refundRequest.buyer?.phone;
+    let walletType = refundRequest.buyer?.wallet_type;
+    
+    if (!walletType && refundRequest.order?.payment_method) {
       // Mapper payment_method vers wallet_type
-      if (order.payment_method === 'wave') {
+      if (refundRequest.order.payment_method === 'wave') {
         walletType = 'wave-senegal';
-      } else if (order.payment_method === 'orange_money') {
+      } else if (refundRequest.order.payment_method === 'orange_money') {
         walletType = 'orange-senegal';
       }
     }
@@ -4165,42 +4284,58 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       });
     }
 
-    console.log('[REFUND] Infos acheteur:', { buyerPhone, walletType, amount: order.total_amount });
+    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, amount: refundRequest.amount });
 
-    // 4) Effectuer le remboursement via PixPay
+    // 3) Effectuer le remboursement via PixPay
     const result = await pixpaySendMoney({
-      amount: order.total_amount,
+      amount: refundRequest.amount,
       phone: buyerPhone,
-      orderId: orderId,
+      orderId: refundRequest.order_id,
       type: 'refund',
       walletType: walletType
     });
 
     console.log('[REFUND] Résultat PixPay:', result);
 
+    // 4) Mettre à jour la demande de remboursement
+    const { error: updateRefundError } = await supabaseAdmin
+      .from('refund_requests')
+      .update({
+        status: result.success ? 'processed' : 'approved',
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: req.user?.id || 'admin',
+        processed_at: result.success ? new Date().toISOString() : null,
+        transaction_id: result.transaction_id
+      })
+      .eq('id', refundId);
+
+    if (updateRefundError) {
+      console.error('[REFUND] Erreur mise à jour demande:', updateRefundError);
+    }
+
     // 5) Mettre à jour le statut de la commande
-    const { error: updateError } = await supabase
+    const { error: updateOrderError } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
-        cancellation_reason: reason || 'Remboursement client'
+        cancellation_reason: refundRequest.reason || 'Remboursement approuvé par admin'
       })
-      .eq('id', orderId);
+      .eq('id', refundRequest.order_id);
 
-    if (updateError) {
-      console.error('[REFUND] Erreur mise à jour commande:', updateError);
+    if (updateOrderError) {
+      console.error('[REFUND] Erreur mise à jour commande:', updateOrderError);
     }
 
     // 6) Enregistrer la transaction de remboursement
     if (result.transaction_id) {
-      const { error: txError } = await supabase
+      const { error: txError } = await supabaseAdmin
         .from('payment_transactions')
         .insert({
           transaction_id: result.transaction_id,
           provider: 'pixpay',
-          order_id: orderId,
-          amount: order.total_amount,
+          order_id: refundRequest.order_id,
+          amount: refundRequest.amount,
           phone: buyerPhone,
           status: result.state || 'PENDING1',
           transaction_type: 'refund',
@@ -4216,7 +4351,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       success: result.success,
       transaction_id: result.transaction_id,
       message: result.success 
-        ? `Remboursement de ${order.total_amount} FCFA initié vers ${buyerPhone}`
+        ? `Remboursement de ${refundRequest.amount} FCFA initié vers ${buyerPhone}`
         : result.message
     });
 
@@ -4224,7 +4359,76 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
     console.error('[REFUND] Erreur:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erreur lors du remboursement'
+      error: error.message || 'Erreur lors du traitement du remboursement'
+    });
+  }
+});
+
+// [ADMIN] Rejeter une demande de remboursement
+app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res) => {
+  try {
+    const refundId = req.params.id;
+    const { reason } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({
+        success: false,
+        error: 'Raison du rejet requise'
+      });
+    }
+
+    // 1) Récupérer la demande
+    const { data: refundRequest, error: refundError } = await supabaseAdmin
+      .from('refund_requests')
+      .select('id, status')
+      .eq('id', refundId)
+      .single();
+
+    if (refundError || !refundRequest) {
+      return res.status(404).json({
+        success: false,
+        error: 'Demande de remboursement non trouvée'
+      });
+    }
+
+    if (refundRequest.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: `Cette demande a déjà été traitée (statut: ${refundRequest.status})`
+      });
+    }
+
+    // 2) Mettre à jour la demande
+    const { error: updateError } = await supabaseAdmin
+      .from('refund_requests')
+      .update({
+        status: 'rejected',
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: req.user?.id || 'admin',
+        rejection_reason: reason
+      })
+      .eq('id', refundId);
+
+    if (updateError) {
+      console.error('[REFUND] Erreur rejet demande:', updateError);
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors du rejet de la demande'
+      });
+    }
+
+    console.log('[REFUND] Demande rejetée:', refundId);
+
+    return res.json({
+      success: true,
+      message: 'Demande de remboursement rejetée'
+    });
+
+  } catch (error) {
+    console.error('[REFUND] Erreur:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors du rejet'
     });
   }
 });

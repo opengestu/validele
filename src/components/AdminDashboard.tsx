@@ -115,6 +115,24 @@ type AdminTransfer = {
   created_at?: string;
 };
 
+// Refund requests
+type RefundRequest = {
+  id: string;
+  order_id?: string;
+  buyer_id?: string;
+  amount?: number;
+  reason?: string | null;
+  status?: 'pending' | 'approved' | 'rejected' | 'processed';
+  requested_at?: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  processed_at?: string | null;
+  transaction_id?: string | null;
+  rejection_reason?: string | null;
+  order?: { id: string; order_code?: string; products?: { name?: string } } | null;
+  buyer?: ProfileRef | null;
+};
+
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
   const { session, userProfile, loading: authLoading } = useAuth();
@@ -129,10 +147,13 @@ const AdminDashboard: React.FC = () => {
   const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'transfers'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'transfers'|'refunds'>('orders');
 
   // Admin transfers state
   const [transfers, setTransfers] = useState<AdminTransfer[]>([]);
+  
+  // Refunds state
+  const [refunds, setRefunds] = useState<RefundRequest[]>([]);
   const [transferAmount, setTransferAmount] = useState('');
   const [transferPhone, setTransferPhone] = useState('');
   const [transferWalletType, setTransferWalletType] = useState<'wave-senegal' | 'orange-senegal'>('wave-senegal');
@@ -246,6 +267,45 @@ const AdminDashboard: React.FC = () => {
 
   const isOnline = useNetwork();
 
+  const handleApproveRefund = async (refundId: string) => {
+    setProcessing(true);
+    try {
+      const res = await fetch(apiUrl(`/api/admin/refund-requests/${refundId}/approve`), {
+        method: 'POST',
+        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Erreur lors de l\'approbation');
+      toast({ title: 'Succès', description: 'Remboursement approuvé et traité' });
+      fetchData();
+    } catch (err: unknown) {
+      toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleRejectRefund = async (refundId: string, reason: string) => {
+    setProcessing(true);
+    try {
+      const res = await fetch(apiUrl(`/api/admin/refund-requests/${refundId}/reject`), {
+        method: 'POST',
+        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Erreur lors du rejet');
+      toast({ title: 'Succès', description: 'Demande de remboursement rejetée' });
+      fetchData();
+    } catch (err: unknown) {
+      toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -264,10 +324,12 @@ const AdminDashboard: React.FC = () => {
       }
 
       const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers, credentials: 'include' });
+      const refundsRes = await fetch(apiUrl('/api/admin/refund-requests'), { headers, credentials: 'include' });
 
       const oJson = await oRes.json();
       const tJson = await tRes.json();
       const batchesJson = await batchesRes.json();
+      const refundsJson = refundsRes.ok ? await refundsRes.json() : { refunds: [] };
 
       if (oRes.ok) {
         const fetchedOrders = oJson.orders || [];
@@ -539,6 +601,7 @@ const AdminDashboard: React.FC = () => {
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'transfers' ? 'bg-green-700 text-white' : 'bg-green-100 text-green-800'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
+          <button className={`px-3 py-2 rounded ${activeTab === 'refunds' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
         </div>
 
         {activeTab === 'orders' && (
@@ -1010,6 +1073,142 @@ const AdminDashboard: React.FC = () => {
                   {transfers.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-gray-500">Aucun transfert effectué</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'refunds' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>🔄 Demandes de remboursement</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Gérer les demandes de remboursement des clients
+              </p>
+
+              {/* Pending Refunds */}
+              <h4 className="font-semibold mb-3">Demandes en attente</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Commande</TableHead>
+                    <TableHead>Produit</TableHead>
+                    <TableHead>Acheteur</TableHead>
+                    <TableHead>Montant</TableHead>
+                    <TableHead>Raison</TableHead>
+                    <TableHead>Date demande</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {refunds
+                    .filter(r => r.status === 'pending')
+                    .map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-mono text-xs">{r.id.substring(0, 8)}...</TableCell>
+                        <TableCell>{r.order?.order_code || r.order_id}</TableCell>
+                        <TableCell>{r.order?.products?.name || '-'}</TableCell>
+                        <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
+                        <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                        <TableCell>{r.reason || '-'}</TableCell>
+                        <TableCell>{r.requested_at ? new Date(r.requested_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button 
+                              size="sm" 
+                              variant="default"
+                              className="bg-green-600 hover:bg-green-700"
+                              onClick={() => {
+                                if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name}?`)) {
+                                  handleApproveRefund(r.id);
+                                }
+                              }}
+                              disabled={processing}
+                            >
+                              ✓ Approuver
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="destructive"
+                              onClick={() => {
+                                const reason = prompt('Raison du rejet:');
+                                if (reason) {
+                                  handleRejectRefund(r.id, reason);
+                                }
+                              }}
+                              disabled={processing}
+                            >
+                              ✗ Rejeter
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  {refunds.filter(r => r.status === 'pending').length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-gray-500">Aucune demande en attente</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+
+              {/* Processed Refunds History */}
+              <h4 className="font-semibold mt-8 mb-3">Historique des remboursements</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Commande</TableHead>
+                    <TableHead>Acheteur</TableHead>
+                    <TableHead>Montant</TableHead>
+                    <TableHead>Raison</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead>Date traitement</TableHead>
+                    <TableHead>Traité par</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {refunds
+                    .filter(r => r.status !== 'pending')
+                    .sort((a, b) => {
+                      const dateA = a.reviewed_at || a.processed_at || a.requested_at || '';
+                      const dateB = b.reviewed_at || b.processed_at || b.requested_at || '';
+                      return new Date(dateB).getTime() - new Date(dateA).getTime();
+                    })
+                    .map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-mono text-xs">{r.id.substring(0, 8)}...</TableCell>
+                        <TableCell>{r.order?.order_code || r.order_id}</TableCell>
+                        <TableCell>{r.buyer?.full_name || '-'}</TableCell>
+                        <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                        <TableCell className="text-sm">{r.reason || '-'}</TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded text-sm ${
+                            r.status === 'approved' || r.status === 'processed' 
+                              ? 'bg-green-100 text-green-800' 
+                              : r.status === 'rejected'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {r.status === 'approved' ? 'Approuvé ✓' : r.status === 'processed' ? 'Traité ✓' : r.status === 'rejected' ? 'Rejeté ✗' : r.status}
+                          </span>
+                          {r.status === 'rejected' && r.rejection_reason && (
+                            <div className="text-xs text-gray-500 mt-1">Motif: {r.rejection_reason}</div>
+                          )}
+                        </TableCell>
+                        <TableCell>{r.reviewed_at ? new Date(r.reviewed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : r.processed_at ? new Date(r.processed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
+                        <TableCell className="text-xs text-gray-500">{r.reviewed_by || '-'}</TableCell>
+                      </TableRow>
+                    ))}
+                  {refunds.filter(r => r.status !== 'pending').length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

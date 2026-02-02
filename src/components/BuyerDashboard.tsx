@@ -1288,9 +1288,9 @@ const BuyerDashboard = () => {
 
       if (result.success) {
         toast({
-          title: "✅ Remboursement initié",
-          description: result.message || `Remboursement de ${refundOrder.total_amount} FCFA en cours`,
-          duration: 6000,
+          title: "✅ Demande envoyée",
+          description: result.message || `Votre demande de remboursement de ${refundOrder.total_amount} FCFA a été soumise. Elle sera examinée par un administrateur.`,
+          duration: 8000,
         });
         
         // Fermer le modal et rafraîchir les commandes
@@ -1300,12 +1300,12 @@ const BuyerDashboard = () => {
         fetchOrders();
         fetchTransactions();
       } else {
-        throw new Error(result.error || 'Erreur lors du remboursement');
+        throw new Error(result.error || 'Erreur lors de la demande de remboursement');
       }
     } catch (error) {
       console.error('[REFUND] Erreur:', error);
       toast({
-        title: "❌ Échec du remboursement",
+        title: "❌ Échec de la demande",
         description: error instanceof Error ? error.message : 'Erreur inconnue',
         variant: "destructive",
       });
@@ -2191,9 +2191,10 @@ const BuyerDashboard = () => {
               </div>
 
               {/* Avertissement */}
-              <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg">
-                <p className="text-sm text-yellow-800">
-                  <strong>⚠️ Attention:</strong> Cette action est irréversible. Le montant sera remboursé sur votre compte 
+              <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>ℹ️ Information:</strong> Votre demande de remboursement sera examinée par un administrateur. 
+                  Une fois approuvée, le montant sera remboursé sur votre compte 
                   {refundOrder.payment_method === 'wave' ? ' Wave' : ' Orange Money'}.
                 </p>
               </div>
@@ -2244,7 +2245,7 @@ const BuyerDashboard = () => {
                   ) : (
                     <>
                       <XCircle className="h-4 w-4 mr-2" />
-                      Confirmer le remboursement
+                      Soumettre la demande
                     </>
                   )}
                 </Button>
