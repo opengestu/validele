@@ -160,7 +160,22 @@ const AdminDashboard: React.FC = () => {
   const [transferNote, setTransferNote] = useState('');
   const [transferProcessing, setTransferProcessing] = useState(false);
 
+  // Admin login state - DOIT ÊTRE DÉCLARÉ AVANT LES useEffect
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminOtp, setAdminOtp] = useState('');
+  const [adminProcessing, setAdminProcessing] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
+  // Transaction details modal state
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionFull | null>(null);
+  const [txDetailsOpen, setTxDetailsOpen] = useState(false);
+  const [retryingTxId, setRetryingTxId] = useState<string | null>(null);
+
+  // Batch details modal state
+  const [selectedVendorForInvoice, setSelectedVendorForInvoice] = useState<string | null>(null);
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
   // If we have a userProfile, ensure it matches the admin id or the adminId param.
@@ -272,23 +287,6 @@ const AdminDashboard: React.FC = () => {
     if (st === 'cancelled') return 'bg-slate-200 text-slate-600';
     return 'bg-slate-100 text-slate-700';
   };
-
-  // Transaction details modal state
-  const [selectedTransaction, setSelectedTransaction] = useState<TransactionFull | null>(null);
-  const [txDetailsOpen, setTxDetailsOpen] = useState(false);
-  const [retryingTxId, setRetryingTxId] = useState<string | null>(null);
-
-  // New: admin login (email/password + optional 2FA) UI state
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminOtp, setAdminOtp] = useState('');
-  const [adminProcessing, setAdminProcessing] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-
-  // Batch details modal state
-  const [selectedVendorForInvoice, setSelectedVendorForInvoice] = useState<string | null>(null);
 
   // Note: PIN-based admin login has been disabled for security reasons. The legacy PIN flow is blocked server-side for admin profiles.
   // The submitPinAsAdmin function and related local PIN UI states were intentionally removed.
