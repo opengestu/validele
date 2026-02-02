@@ -4382,7 +4382,14 @@ console.log(`[PAYDUNYA] Mode utilisé: ${PAYDUNYA_MODE}`);
 // Créer une commande simple sans facture PayDunya (pour PixPay Orange Money)
 app.post('/api/orders', async (req, res) => {
   try {
-    const { supabase } = require('./supabase');
+    // Use service role client to bypass RLS for order creation
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.error('[CREATE-ORDER-SIMPLE] SUPABASE_SERVICE_ROLE_KEY missing');
+      return res.status(500).json({ success: false, message: 'Server misconfiguration' });
+    }
+    const supabaseAdmin = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    
     const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address } = req.body;
 
     console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
@@ -4396,7 +4403,7 @@ app.post('/api/orders', async (req, res) => {
     const tokenRaw = crypto.randomBytes(8).toString('hex').toUpperCase();
 
     // Créer la commande dans Supabase (inclure le token sécurisé comme qr_code)
-    const { data: order, error: orderError } = await supabase
+    const { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
       .insert({
         buyer_id,
@@ -4425,7 +4432,7 @@ app.post('/api/orders', async (req, res) => {
 
     // Envoyer une notification au vendeur
     try {
-      const { data: vendorTokens } = await supabase
+      const { data: vendorTokens } = await supabaseAdmin
         .from('push_tokens')
         .select('token')
         .eq('user_id', vendor_id)
@@ -4449,7 +4456,7 @@ app.post('/api/orders', async (req, res) => {
 
     // Envoyer une notification à l'acheteur
     try {
-      const { data: buyerTokens } = await supabase
+      const { data: buyerTokens } = await supabaseAdmin
         .from('push_tokens')
         .select('token')
         .eq('user_id', buyer_id)
