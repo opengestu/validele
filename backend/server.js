@@ -1728,6 +1728,16 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     console.log('[PIXPAY-WEBHOOK] Headers:', JSON.stringify(req.headers, null, 2));
     console.log('[PIXPAY-WEBHOOK] Body:', JSON.stringify(ipnData, null, 2));
 
+    // Create admin client with service role key to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = null;
+    if (serviceRoleKey) {
+      const { createClient: createAdminClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    } else {
+      console.warn('[PIXPAY-WEBHOOK] ⚠️ No service role key, using regular client');
+    }
+
     const {
       transaction_id,
       state,
@@ -1762,7 +1772,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state, '| Type:', transactionType);
 
     // Mettre à jour la transaction dans Supabase - utiliser supabaseAdmin pour bypass RLS
-    if (transaction_id) {
+    if (transaction_id && supabaseAdmin) {
       try {
           const { error: updateError } = await supabaseAdmin
             .from('payment_transactions')
@@ -3715,6 +3725,15 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
 app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) => {
   try {
     console.log('[ADMIN] sync-pending-transactions: Starting...');
+    
+    // Create admin client with service role key to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.error('[ADMIN] sync-pending-transactions: SUPABASE_SERVICE_ROLE_KEY missing');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: service role key missing' });
+    }
+    const { createClient: createAdminClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
     
     // Find all transactions with PENDING1 or PENDING2 status
     const { data: pendingTxs, error: fetchErr } = await supabaseAdmin
