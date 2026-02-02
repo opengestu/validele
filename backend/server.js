@@ -3287,7 +3287,10 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
     const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const capitalizedDate = formattedDate.replace(/^(\d+)\s+(\w)/, (m, day, firstLetter) => `${day} ${firstLetter.toUpperCase()}${formattedDate.slice(day.length + 2)}`);
+    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
     // Simple HTML invoice (grouped by product with sales count)
     const html = `<!doctype html>
@@ -3470,7 +3473,10 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
     const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const capitalizedDate = formattedDate.replace(/^(\d+)\s+(\w)/, (m, day, firstLetter) => `${day} ${firstLetter.toUpperCase()}${formattedDate.slice(day.length + 2)}`);
+    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
     const html = `<!doctype html>
       <html>
