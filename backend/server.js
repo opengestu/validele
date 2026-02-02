@@ -2874,13 +2874,14 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       throw batchErr || new Error('Failed to create batch');
     }
 
-    // Compute commission and net per item and insert items
+    // Compute commission and net per item and insert items with status 'queued'
     const items = orders.map(o => {
       const amount = Number(o.total_amount || 0);
       const commission_amount = Math.round(amount * pct / 100);
       const net_amount = amount - commission_amount;
-      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount };
+      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount, status: 'queued' };
     });
+    console.log('[ADMIN] create payout batch - inserting', items.length, 'items with status queued');
 
     const { error: itemsErr } = await supabaseAdmin.from('payout_batch_items').insert(items);
     if (itemsErr) {
@@ -3267,9 +3268,14 @@ async function processPayoutBatch(batchId) {
 
     await supabaseAdmin.from('payout_batches').update({ status: 'processing' }).eq('id', batchId);
 
+    // Debug: fetch ALL items regardless of status to see what's in the batch
+    const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('id, order_id, status, vendor_id').eq('batch_id', batchId);
+    console.log('[ADMIN] processPayoutBatch: ALL items in batch:', allItems?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status, vendor_id: i.vendor_id })));
+
     const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
-    console.log('[ADMIN] processPayoutBatch: Items found:', { count: items?.length || 0, itemsErr, items: items?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status })) });
+    console.log('[ADMIN] processPayoutBatch: Items with queued/failed status:', { count: items?.length || 0, itemsErr, items: items?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status })) });
     if (!items || items.length === 0) {
+      console.log('[ADMIN] processPayoutBatch: No items found with queued/failed status - marking batch as completed');
       await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
       return { success: true, message: 'No items to process' };
     }
