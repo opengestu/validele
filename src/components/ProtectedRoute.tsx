@@ -59,15 +59,15 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     }
   }
 
-  // // Affichage de chargement - attendre que l'authentification soit prête
-  // if (loading) {
-  //   // During auth bootstrap we do not show a large overlay spinner; show a simple lightweight text
-  //   return (
-  //     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-  //       <div className="text-center text-gray-600">Chargement...</div>
-  //     </div>
-  //   );
-  // }
+  // Affichage de chargement - attendre que l'authentification soit prête
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+        <Spinner size="xl" className="text-[#24BD5C]" />
+        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      </div>
+    );
+  }
 
   // Hors connexion
   if (!isOnline) {
