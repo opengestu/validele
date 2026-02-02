@@ -2106,10 +2106,13 @@ async function requireAdmin(req, res, next) {
         // Also accept users who have role='admin' in profiles table
         try {
           const { data: profRow, error: profErr } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
+          console.log('[ADMIN] requireAdmin: profile lookup for', data.user.id, '-> role:', profRow?.role);
           if (!profErr && profRow && profRow.role === 'admin') {
             console.log('[ADMIN] requireAdmin: profile role=admin, granting access for', data.user.id);
             req.adminUser = data.user;
             return next();
+          } else {
+            console.log('[ADMIN] requireAdmin: profile role is not admin, role=', profRow?.role);
           }
         } catch (e) {
           console.warn('[ADMIN] requireAdmin: error checking profile role:', e?.message || e);
@@ -2313,19 +2316,14 @@ app.post('/api/admin/logout', async (req, res) => {
 });
 
 // GET /api/admin/validate - validate current admin session (cookie)
-app.get('/api/admin/validate', async (req, res) => {
+app.get('/api/admin/validate', requireAdmin, async (req, res) => {
   try {
-    const token = req.cookies?.admin_access;
-    if (!token) return res.status(401).json({ success: false, error: 'No admin session' });
-    const { data: userRes } = await supabase.auth.getUser(token);
-    const user = userRes?.user;
-    if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
-    const adminIdEnv = process.env.ADMIN_USER_ID;
-    if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
-      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
-    }
-    return res.json({ success: true, user });
+    // Si on arrive ici, c'est que requireAdmin a validé l'accès
+    return res.json({ 
+      success: true, 
+      user: req.adminUser,
+      message: 'Admin session valide'
+    });
   } catch (err) {
     console.error('[ADMIN] validate error:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });
