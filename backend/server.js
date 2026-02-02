@@ -3265,35 +3265,47 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       };
     });
 
-    // Compute how many times each product appears in this batch (sales count)
-    const productCounts = {};
+    // Group products by name and aggregate totals
+    const productGroups = {};
     for (const r of rows) {
       const key = r.product_name || '-';
-      productCounts[key] = (productCounts[key] || 0) + 1;
+      if (!productGroups[key]) {
+        productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
+      }
+      productGroups[key].count += 1;
+      productGroups[key].gross += r.gross;
+      productGroups[key].commission += r.commission;
+      productGroups[key].net += r.net;
     }
+    const groupedRows = Object.values(productGroups);
 
-    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
-    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
-    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = rows.length;
 
-    // Simple HTML invoice (Commande now shows product in parens, and a 'Ventes' column shows sales count per product)
+    // Format date for title: "06 Février 2026"
+    const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
+    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const capitalizedDate = formattedDate.replace(/^(\d+)\s+(\w)/, (m, day, firstLetter) => `${day} ${firstLetter.toUpperCase()}${formattedDate.slice(day.length + 2)}`);
+
+    // Simple HTML invoice (grouped by product with sales count)
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Invoice - Batch ${batchId}</title>
+          <title>Facture de paiement du ${capitalizedDate}</title>
           <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <h2>Facture de paiement - Batch ${batchId}</h2>
+          <h2>Facture de paiement du ${capitalizedDate}</h2>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
+          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
           <h3>Détails</h3>
           <table>
-            <thead><tr><th>Commande (Produit)</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${rows.map(r => `<tr><td>${r.order_code} (${r.product_name})</td><td style="text-align:center">${productCounts[r.product_name] || 0}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
               <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
@@ -3436,30 +3448,46 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
       };
     });
 
-    const productCounts = {};
-    for (const r of rows) productCounts[r.product_name] = (productCounts[r.product_name] || 0) + 1;
+    // Group products by name and aggregate totals
+    const productGroups = {};
+    for (const r of rows) {
+      const key = r.product_name || '-';
+      if (!productGroups[key]) {
+        productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
+      }
+      productGroups[key].count += 1;
+      productGroups[key].gross += r.gross;
+      productGroups[key].commission += r.commission;
+      productGroups[key].net += r.net;
+    }
+    const groupedRows = Object.values(productGroups);
 
-    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
-    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
-    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = rows.length;
+
+    // Format date for title: "06 Février 2026"
+    const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
+    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const capitalizedDate = formattedDate.replace(/^(\d+)\s+(\w)/, (m, day, firstLetter) => `${day} ${firstLetter.toUpperCase()}${formattedDate.slice(day.length + 2)}`);
 
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture - Batch ${batchId}</title>
+          <title>Facture de paiement du ${capitalizedDate}</title>
           <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <h2>Facture de paiement - Batch ${batchId}</h2>
+          <h2>Facture de paiement du ${capitalizedDate}</h2>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
+          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
           <h3>Détails</h3>
           <table>
-            <thead><tr><th>Commande (Produit)</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${rows.map(r => `<tr><td>${r.order_code} (${r.product_name})</td><td style="text-align:center">${productCounts[r.product_name] || 0}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
               <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
@@ -3470,7 +3498,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
         </body>
       </html>`;
 
-    const filename = `invoice-batch-${batchId}-vendor-${vendorId}.html`;
+    const filename = `facture-paiement-${capitalizedDate.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
