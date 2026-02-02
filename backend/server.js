@@ -1855,11 +1855,12 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       console.log('[PIXPAY] ✅ Payout SUCCESSFUL', { transaction_id, transactionType, orderId });
       try {
         // If orderId corresponds to an order -> mark that order as paid
+        // Use supabaseAdmin to bypass RLS
         if (orderId) {
           // Check if orderId is an actual order
-          const { data: orderExists } = await supabase.from('orders').select('id, vendor_id, order_code, total_amount').eq('id', orderId).maybeSingle();
+          const { data: orderExists } = await supabaseAdmin.from('orders').select('id, vendor_id, order_code, total_amount').eq('id', orderId).maybeSingle();
           if (orderExists && orderExists.id) {
-            await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+            await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
             console.log('[PIXPAY] Order payout marked paid:', orderId);
             
             // Notifier le vendeur que le paiement est effectué
@@ -1886,14 +1887,14 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               console.error('[PIXPAY] Erreur notification payout payé:', notifErr);
             }
           } else {
-            // Otherwise treat orderId as a batch id
-            const { data: items } = await supabase.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
+            // Otherwise treat orderId as a batch id - use supabaseAdmin to bypass RLS
+            const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
             if (items && items.length > 0) {
               const itemIds = items.map(i => i.id);
               const orderIds = items.map(i => i.order_id).filter(Boolean);
-              await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-              if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-              await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
+              await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+              if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+              await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
               console.log('[PIXPAY] Batch payout completed for batch:', orderId);
             } else {
               console.log('[PIXPAY] Payout SUCCESSFUL but no order or batch found for id:', orderId);
@@ -3435,9 +3436,25 @@ async function processPayoutBatch(batchId) {
       }
     }
 
-    const anyFailed = results.some(r => !r.success);
-    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, results });
-    await supabaseAdmin.from('payout_batches').update({ status: anyFailed ? 'failed' : 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
+    // Determine final batch status:
+    // - If any vendor payout failed completely -> 'failed'
+    // - If all vendor payouts succeeded but items are 'processing' (waiting for webhook) -> 'processing'
+    // - If all items are already 'paid' -> 'completed'
+    const anyFailed = results.some(r => !r.success && r.message !== 'all_already_paid');
+    const anyProcessing = results.some(r => r.success && r.transaction_id); // Has transaction_id = sent to Pixpay, waiting for confirmation
+    const allAlreadyPaid = results.every(r => r.message === 'all_already_paid');
+    
+    let finalStatus = 'completed';
+    if (anyFailed) {
+      finalStatus = 'failed';
+    } else if (anyProcessing) {
+      finalStatus = 'processing'; // Wait for webhook to confirm and set to 'completed'
+    } else if (allAlreadyPaid) {
+      finalStatus = 'completed';
+    }
+    
+    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, anyProcessing, allAlreadyPaid, finalStatus, results });
+    await supabaseAdmin.from('payout_batches').update({ status: finalStatus, processed_at: new Date().toISOString() }).eq('id', batchId);
 
     return { success: true, results };
   } catch (error) {
@@ -3497,43 +3514,43 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
 
       await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
 
-      // If this tx references an order, mark order paid
+      // If this tx references an order, mark order paid - use supabaseAdmin to bypass RLS
       if (tx.order_id) {
-        await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
+        await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
       }
 
-      // If tx references a batch, finalize batch
+      // If tx references a batch, finalize batch - use supabaseAdmin to bypass RLS
       if (tx.batch_id) {
         const batchId = tx.batch_id;
-        const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
+        const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
         if (items && items.length > 0) {
           const itemIds = items.map(i => i.id);
           const orderIds = items.map(i => i.order_id).filter(Boolean);
-          await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+          await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
         }
-        await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
+        await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
       }
 
       return res.json({ success: true, message: 'transaction finalized', transaction_id });
     }
 
-    // finalize by batch_id
+    // finalize by batch_id - use supabaseAdmin to bypass RLS
     if (batch_id) {
-      const { data: txsBatch } = await supabase.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
+      const { data: txsBatch } = await supabaseAdmin.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
       if (txsBatch && txsBatch.length > 0) {
         const txb = txsBatch[0];
-        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
+        await supabaseAdmin.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
       }
 
-      const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
+      const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
       if (items && items.length > 0) {
         const itemIds = items.map(i => i.id);
         const orderIds = items.map(i => i.order_id).filter(Boolean);
-        await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-        if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+        await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+        if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
       }
-      await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
+      await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
 
       return res.json({ success: true, message: 'batch finalized', batch_id });
     }
