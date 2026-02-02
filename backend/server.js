@@ -3267,7 +3267,8 @@ async function processPayoutBatch(batchId) {
 
     await supabaseAdmin.from('payout_batches').update({ status: 'processing' }).eq('id', batchId);
 
-    const { data: items } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
+    const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
+    console.log('[ADMIN] processPayoutBatch: Items found:', { count: items?.length || 0, itemsErr, items: items?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status })) });
     if (!items || items.length === 0) {
       await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
       return { success: true, message: 'No items to process' };
@@ -3278,6 +3279,7 @@ async function processPayoutBatch(batchId) {
     const results = [];
     for (const vendorId of Object.keys(byVendor)) {
       const vendorItems = byVendor[vendorId];
+      console.log('[ADMIN] processPayoutBatch: Processing vendor:', vendorId, 'items:', vendorItems.length);
 
       // Verify each item/order for eligibility and split eligible vs ineligible
       const eligibleItems = [];
@@ -3285,24 +3287,53 @@ async function processPayoutBatch(batchId) {
       for (const it of vendorItems) {
         try {
           const report = await verifyOrderForPayout(it.order_id, supabaseAdmin);
+          console.log('[ADMIN] processPayoutBatch: Order verification:', { order_id: it.order_id, eligible: report.eligible, reasons: report.reasons });
           if (report.ok && report.eligible) {
             eligibleItems.push(it);
           } else {
             ineligible.push({ item: it, reason: report });
           }
         } catch (e) {
+          console.error('[ADMIN] processPayoutBatch: Order verification error:', it.order_id, e);
           ineligible.push({ item: it, reason: { ok: false, error: String(e) } });
         }
       }
 
-      // Mark ineligible items as failed with reasons
+      console.log('[ADMIN] processPayoutBatch: Eligible:', eligibleItems.length, 'Ineligible:', ineligible.length);
+
+      // Mark ineligible items - distinguish between already_paid (success) and other failures
       if (ineligible.length > 0) {
-        const ids = ineligible.map(i => i.item.id);
-        try {
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: ineligible.map(i => i.reason) }) }).in('id', ids);
-        } catch (e) {
-          console.error('[ADMIN] failed marking ineligible payout items:', e);
+        const alreadyPaidItems = ineligible.filter(i => i.reason?.reasons?.includes('already_paid'));
+        const failedItems = ineligible.filter(i => !i.reason?.reasons?.includes('already_paid'));
+        
+        // Mark already paid items as 'paid' (they succeeded previously)
+        if (alreadyPaidItems.length > 0) {
+          const paidIds = alreadyPaidItems.map(i => i.item.id);
+          try {
+            await supabaseAdmin.from('payout_batch_items').update({ status: 'paid', provider_response: JSON.stringify({ info: 'already_paid_previously' }) }).in('id', paidIds);
+            console.log('[ADMIN] processPayoutBatch: Marked', paidIds.length, 'items as paid (already paid previously)');
+          } catch (e) {
+            console.error('[ADMIN] failed marking already_paid items:', e);
+          }
         }
+        
+        // Mark other ineligible items as failed
+        if (failedItems.length > 0) {
+          const failedIds = failedItems.map(i => i.item.id);
+          try {
+            await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: failedItems.map(i => i.reason) }) }).in('id', failedIds);
+          } catch (e) {
+            console.error('[ADMIN] failed marking ineligible payout items:', e);
+          }
+        }
+      }
+
+      // If all items are already paid, consider this vendor as success
+      const alreadyPaidCount = ineligible.filter(i => i.reason?.reasons?.includes('already_paid')).length;
+      if (eligibleItems.length === 0 && alreadyPaidCount === vendorItems.length) {
+        console.log('[ADMIN] processPayoutBatch: All items for vendor', vendorId, 'already paid');
+        results.push({ vendorId, success: true, message: 'all_already_paid' });
+        continue;
       }
 
       if (eligibleItems.length === 0) {
@@ -3312,8 +3343,10 @@ async function processPayoutBatch(batchId) {
 
       // Use net_amount (gross - commission) to compute payout per vendor
       const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
+      console.log('[ADMIN] processPayoutBatch: Total net amount for vendor', vendorId, ':', totalNet);
 
       const { data: vendor } = await supabaseAdmin.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
+      console.log('[ADMIN] processPayoutBatch: Vendor info:', { vendorId, phone: vendor?.phone, wallet_type: vendor?.wallet_type });
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
         await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
@@ -3322,7 +3355,9 @@ async function processPayoutBatch(batchId) {
       }
 
       try {
+        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: totalNet, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal' });
         const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
+        console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
 
         if (payoutRes && payoutRes.transaction_id) {
           // Record aggregated payout transaction and link to batch_id (not a single order)
@@ -3344,6 +3379,7 @@ async function processPayoutBatch(batchId) {
     }
 
     const anyFailed = results.some(r => !r.success);
+    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, results });
     await supabaseAdmin.from('payout_batches').update({ status: anyFailed ? 'failed' : 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
 
     return { success: true, results };
