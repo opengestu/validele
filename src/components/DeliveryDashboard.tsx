@@ -49,6 +49,16 @@ const DeliveryDashboard = () => {
     }
   }, [user, authUserProfile, loading, navigate]);
 
+  // Afficher un spinner pendant le chargement initial de l'authentification
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+        <Spinner size="xl" className="text-[#24BD5C]" />
+        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      </div>
+    );
+  }
+
   // ...existing code...
   const [userProfile, setUserProfile] = useState<ProfileRow | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
