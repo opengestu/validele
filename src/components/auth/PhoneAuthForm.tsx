@@ -911,8 +911,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     return (
       <>
         {/* Desktop / tablet keypad (hidden on small screens) */}
-        <div className="hidden sm:block mt-3 pb-3 sm:pb-0">
-          <div className="grid grid-cols-3 gap-3">
+        <div className="hidden sm:block mt-8 pb-3 sm:pb-0">
+<div className="grid grid-cols-3 gap-5 max-w-[280px] mx-auto">
             {[1,2,3,4,5,6,7,8,9].map(n => (
               <button
                 key={n}
@@ -920,21 +920,36 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 aria-label={`Num ${n}`}
                 onPointerDown={provideHaptic}
                 onClick={() => handleKeypadDigit(String(n))}
-                className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
+                className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all hover:bg-[#10b981] hover:text-white"
+                style={{ border: '3px solid #10b981', color: '#10b981' }}
+                onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
+                onMouseLeave={(e) => e.currentTarget.style.color = '#10b981'}
               >{n}</button>
-            ))} 
+            ))}
             {/* Left cell intentionally left empty to keep 0 and X on the right */}
-            <div />
-            <button type="button" aria-label="Num 0" onPointerDown={provideHaptic} onClick={() => handleKeypadDigit('0')} className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center transition-transform active:scale-95">0</button>
+            <div className="w-[70px] h-[70px]" />
+            <button 
+              type="button" 
+              aria-label="Num 0" 
+              onPointerDown={provideHaptic} 
+              onClick={() => handleKeypadDigit('0')} 
+              className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center transition-all active:scale-95 hover:bg-[#10b981] hover:text-white"
+              style={{ border: '3px solid #10b981', color: '#10b981' }}
+              onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
+              onMouseLeave={(e) => e.currentTarget.style.color = '#10b981'}
+            >0</button>
             <button
               type="button"
               aria-label="Effacer"
               title="Effacer"
               onPointerDown={provideHaptic}
               onClick={handleKeypadBackspace}
-              className="h-14 md:h-16 rounded-2xl bg-white/95 shadow-md text-lg md:text-xl font-semibold flex items-center justify-center active:scale-95 transition-transform"
+              className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center active:scale-95 transition-all hover:bg-red-500 hover:text-white"
+              style={{ border: '3px solid #ef4444', color: '#ef4444' }}
+              onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
+              onMouseLeave={(e) => e.currentTarget.style.color = '#ef4444'}
             >
-              <span className="text-2xl md:text-3xl">⌫</span>
+              <span className="text-2xl">⌫</span>
             </button>
           </div>
 
@@ -955,20 +970,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           )}
         </div>
 
-        {/* Mobile fixed keypad (anchors to bottom) */}
-        <div className="sm:hidden">
-          <div
-            className="fixed left-0 right-0 z-50 flex justify-center"
-            style={{
-              bottom: isAndroid ? '0px' : '8px',
-              paddingBottom: isAndroid ? 'calc(env(safe-area-inset-bottom) + 48px)' : 'calc(env(safe-area-inset-bottom) + 24px)'
-            }}
-          >
+        {/* Mobile keypad (dans le flux normal, pas fixed) */}
+        <div className="sm:hidden mt-16">
+          <div className="flex justify-center">
             <div
-              className="bg-background/90 backdrop-blur-md p-3 rounded-none sm:rounded-2xl shadow-lg border border-muted/20 w-full max-w-none"
-              style={isAndroid ? { boxShadow: 'none', border: 'none', background: 'rgba(255,255,255,0.97)', width: '100vw', borderRadius: 0 } : {}}
+              className="bg-white/95 p-3 rounded-2xl w-full max-w-[280px]"
             >
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-4 max-w-[250px] mx-auto">
                 {[1,2,3,4,5,6,7,8,9].map(n => (
                   <button
                     key={`m-${n}`}
@@ -976,20 +984,29 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     aria-label={`Num ${n}`}
                     onPointerDown={provideHaptic}
                     onClick={() => handleKeypadDigit(String(n))}
-                    className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-transform"
+                    className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all"
+                    style={{ border: '2px solid #10b981', color: '#10b981' }}
                   >{n}</button>
                 ))}
-                <div />
-                <button type="button" aria-label="Num 0" onPointerDown={provideHaptic} onClick={() => handleKeypadDigit('0')} className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center transition-transform active:scale-95">0</button>
+                <div className="w-[56px] h-[56px]" />
+                <button 
+                  type="button" 
+                  aria-label="Num 0" 
+                  onPointerDown={provideHaptic} 
+                  onClick={() => handleKeypadDigit('0')} 
+                  className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center transition-all active:scale-95"
+                  style={{ border: '2px solid #10b981', color: '#10b981' }}
+                >0</button>
                 <button
                   type="button"
                   aria-label="Effacer"
                   title="Effacer"
                   onPointerDown={provideHaptic}
                   onClick={handleKeypadBackspace}
-                  className="h-14 rounded-2xl bg-white/95 shadow-md text-lg font-semibold flex items-center justify-center active:scale-95 transition-transform"
+                  className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center active:scale-95 transition-all"
+                  style={{ border: '2px solid #ef4444', color: '#ef4444' }}
                 >
-                  <span className="text-2xl">⌫</span>
+                  <span className="text-xl">⌫</span>
                 </button>
               </div>
 
@@ -1041,7 +1058,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
 
       <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 py-2 ${className ?? ''}`}>
-      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg border border-muted/20 space-y-3 max-h-[90vh] overflow-y-auto mt-0 pb-64 sm:pb-4">
+      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none space-y-3 sm:pb-4" style={{ boxShadow: 'none', border: 'none' }}>
 
 
         {/* Étape : téléphone */}
@@ -1049,7 +1066,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           <div className="space-y-2">
             <div className="w-full flex justify-center">
               <div className="w-full max-w-[280px]">
-                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 shadow-sm mb-[160px] sm:mb-10 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`} style={{ marginBottom: isAndroid ? '220px' : undefined }}>
+                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 shadow-sm mb-4 sm:mb-10 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
                   <div className="flex items-center gap-1 px-2 py-1 shrink-0 border-r border-muted/20">
                     <span className="text-base md:text-lg">🇸🇳</span>
                     <span className="text-base md:text-lg text-muted-foreground font-medium">+221</span>
@@ -1101,7 +1118,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-base font-medium">Entrez le code reçu par SMS</p>
               <p className="text-sm text-muted-foreground mt-2">Saisissez le code à 4 chiffres envoyé sur votre téléphone</p>
             </div>
-            <div className="mt-6 mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>
+            <div className="mt-6 mb-12 sm:mb-0">
               {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
             </div>
             {renderNumericKeypad()}
@@ -1127,7 +1144,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <h3 className="text-xl sm:text-2xl font-extrabold text-foreground">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
               <p className="text-sm text-muted-foreground mt-1">Entrez votre code PIN pour continuer</p>
             </div>
-            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
+            <div className="mb-12 sm:mb-0">{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
             {renderNumericKeypad()}
             {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
             {/* Desktop: bouton normal */}
@@ -1152,7 +1169,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-sm text-muted-foreground mt-2">Choisissez 4 chiffres pour sécuriser votre compte</p>
               <p className="text-xs text-blue-600 mt-2">🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites</p>
             </div>
-            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
+            <div className="mb-12 sm:mb-0">{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
             {renderNumericKeypad()}
             <Button type="button" onClick={handleBack} className="w-full text-sm text-muted-foreground hover:text-foreground mt-6">← Retour</Button>
           </>
@@ -1169,7 +1186,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-sm text-muted-foreground mt-1">Entrez à nouveau votre code PIN pour le confirmer</p>
               <p className="text-xs text-orange-600 mt-1">⚠️ Assurez-vous d'entrer le même code que précédemment</p>
             </div>
-            <div className="mb-[160px] sm:mb-0" style={{ marginBottom: isAndroid ? '220px' : undefined }}>{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
+            <div className="mb-12 sm:mb-0">{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
             {renderNumericKeypad()}
           </>
         )}
