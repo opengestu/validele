@@ -6054,11 +6054,11 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Facture - Commande ${order.order_code || order.id}</title>
+    <title>Facture de la commande</title>
     <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
   </head>
   <body>
-    <h2>Facture - Commande ${order.order_code || order.id}</h2>
+    <h2>Facture de la commande</h2>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
     <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
@@ -6077,7 +6077,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
   </body>
 </html>`;
 
-    const filename = `invoice-${order.order_code || order.id}.html`;
+    const filename = `facture-commande.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
