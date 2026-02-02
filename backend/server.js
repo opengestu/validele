@@ -3052,10 +3052,17 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
-    // Insert batch (store commission_pct)
+    // Insert batch (store commission_pct) with explicit 'scheduled' status
     const { data: batch, error: batchErr } = await supabaseAdmin
       .from('payout_batches')
-      .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes, commission_pct: pct })
+      .insert({ 
+        created_by: createdBy, 
+        scheduled_at: scheduled_at || new Date().toISOString(), 
+        total_amount: totalAmount, 
+        notes, 
+        commission_pct: pct,
+        status: 'scheduled'  // Explicit status for process-scheduled to work
+      })
       .select('*')
       .single();
 
@@ -3063,6 +3070,8 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       console.error('[ADMIN] create payout batch - insert batch error:', batchErr);
       throw batchErr || new Error('Failed to create batch');
     }
+
+    console.log('[ADMIN] create payout batch - batch created with id:', batch.id, 'status:', batch.status);
 
     // Compute commission and net per item and insert items with status 'queued'
     const items = orders.map(o => {
@@ -3702,11 +3711,35 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
 // Trigger processing of scheduled batches (admin manual trigger)
 app.post('/api/admin/payout-batches/process-scheduled', requireAdmin, async (req, res) => {
   try {
-    const now = new Date().toISOString();
-    const { data: batches, error } = await supabase.from('payout_batches').select('*').lte('scheduled_at', now).eq('status', 'scheduled').limit(100);
+    console.log('[ADMIN] process-scheduled triggered');
+    
+    // Use service role to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let dbClient = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+    
+    // Find all batches that are scheduled (not yet processed) - regardless of scheduled_at time
+    // The manual button should process all pending batches
+    const { data: batches, error } = await dbClient
+      .from('payout_batches')
+      .select('*')
+      .eq('status', 'scheduled')
+      .limit(100);
+    
+    console.log('[ADMIN] process-scheduled found batches:', batches?.length || 0);
+    
     if (error) throw error;
+    
+    if (!batches || batches.length === 0) {
+      return res.json({ success: true, processed: 0, message: 'Aucun batch programmé à traiter' });
+    }
+    
     const summaries = [];
-    for (const b of batches || []) {
+    for (const b of batches) {
+      console.log('[ADMIN] process-scheduled processing batch:', b.id);
       const r = await processPayoutBatch(b.id);
       summaries.push({ batch: b.id, result: r });
     }

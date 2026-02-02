@@ -552,7 +552,9 @@ const AdminDashboard: React.FC = () => {
                           {o.payout_requested_at ? ` — ${new Date(o.payout_requested_at).toLocaleString()}` : ''}
                         </TableCell>
                         <TableCell className="flex gap-2">
-                          <Button size="sm" onClick={() => handlePayout(o.id)} disabled={!(o.status === 'delivered' && (o.payout_status === 'requested' || o.payout_status === 'scheduled')) || processing}>Payer</Button>
+                          <Button size="sm" onClick={() => handlePayout(o.id)} disabled={!(o.status === 'delivered' && o.payout_status === 'requested') || processing}>
+                            {o.payout_status === 'processing' ? 'En cours...' : o.payout_status === 'paid' ? 'Payé ✓' : o.payout_status === 'scheduled' ? 'Programmé' : 'Payer'}
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -684,8 +686,8 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                       <TableCell className="flex gap-2">
                         <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
-                        <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Process</Button>
-                        <Button size="sm" variant="destructive" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Cancel</Button>
+                        <Button size="sm" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? 'En cours...' : 'Process'}</Button>
+                        <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Cancel</Button>
                       </TableCell>
                     </TableRow>
                   ))}
