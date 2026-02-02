@@ -2696,8 +2696,10 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
   // Checks: delivered implies buyer paid for our app flow; accept payment_confirmed_at, status='paid' or status='delivered' as paid
   const delivered = order.status === 'delivered';
   const paid = !!order.payment_confirmed_at || order.status === 'paid' || order.status === 'delivered';
+  // IMPORTANT: Do NOT trust payout_status='paid' alone - we must verify a real Pixpay transaction exists
+  // The payout_status might be incorrectly set without an actual payout
   const payoutStatusOk = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
-  let alreadyPaid = order.payout_status === 'paid';
+  let alreadyPaid = false; // Start with false, only set true if we find a REAL transaction
 
   // Vendor info required
   const { data: vendor } = await db
@@ -2708,52 +2710,101 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
 
   const vendorOk = vendor && vendor.phone;
 
-  // Additional check: detect if a successful payout transaction already exists for this order
+  // Check if a successful payout transaction ACTUALLY exists for this order
+  // This is the authoritative check - we don't trust payout_status alone
   try {
-    // 1) direct transaction for this order
-    const { data: txs } = await db.from('payment_transactions').select('id,transaction_id,status').eq('order_id', orderId).eq('status', 'SUCCESSFUL').limit(1);
-    if (txs && txs.length > 0) {
-      // There is a provider-confirmed payout for this order
-      if (!alreadyPaid) {
-        // Try to reconcile state in DB (best-effort)
+    // 1) Check for a direct transaction for this order with provider_transaction_id
+    const { data: txs } = await db.from('payment_transactions')
+      .select('id, transaction_id, status, provider_transaction_id')
+      .eq('order_id', orderId)
+      .eq('transaction_type', 'payout')
+      .limit(5);
+    
+    // A payout is considered done if there's a SUCCESSFUL transaction OR a transaction with provider_transaction_id
+    const hasTx = txs && txs.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
+    
+    if (hasTx) {
+      console.log(`[ADMIN] verifyOrderForPayout: Found existing payout transaction for order ${orderId}`);
+      alreadyPaid = true;
+      // Reconcile DB state if needed
+      if (order.payout_status !== 'paid') {
         try {
           await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
         } catch (e) {
           console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid:', e?.message || e);
         }
       }
-      alreadyPaid = true;
     } else {
-      // 2) check if order is part of a batch that has a successful payment transaction
-      const { data: items } = await db.from('payout_batch_items').select('batch_id').eq('order_id', orderId);
-      const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
-      if (batchIds.length > 0) {
-        const { data: txsBatch } = await db.from('payment_transactions').select('id,transaction_id,status').in('batch_id', batchIds).eq('status', 'SUCCESSFUL').limit(1);
-        if (txsBatch && txsBatch.length > 0) {
-          if (!alreadyPaid) {
-            try {
-              await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-            } catch (e) {
-              console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
+      // 2) Check if order is part of a batch that has a successful payout transaction
+      const { data: items } = await db.from('payout_batch_items')
+        .select('batch_id, provider_transaction_id, status')
+        .eq('order_id', orderId);
+      
+      // Check if any batch item has a provider_transaction_id (meaning Pixpay was called)
+      const itemWithTx = (items || []).find(i => i.provider_transaction_id && i.provider_transaction_id !== 'null');
+      if (itemWithTx) {
+        console.log(`[ADMIN] verifyOrderForPayout: Found batch item with provider_transaction_id for order ${orderId}`);
+        alreadyPaid = true;
+        if (order.payout_status !== 'paid') {
+          try {
+            await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+          } catch (e) {
+            console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
+          }
+        }
+      } else {
+        // 3) Check batch-level transaction
+        const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
+        if (batchIds.length > 0) {
+          const { data: txsBatch } = await db.from('payment_transactions')
+            .select('id, transaction_id, status, provider_transaction_id')
+            .in('batch_id', batchIds)
+            .eq('transaction_type', 'payout')
+            .limit(5);
+          
+          const hasBatchTx = txsBatch && txsBatch.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
+          if (hasBatchTx) {
+            console.log(`[ADMIN] verifyOrderForPayout: Found batch transaction for order ${orderId}`);
+            alreadyPaid = true;
+            if (order.payout_status !== 'paid') {
+              try {
+                await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+              } catch (e) {
+                console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch tx):', e?.message || e);
+              }
             }
           }
-          alreadyPaid = true;
         }
+      }
+    }
+    
+    // If payout_status says 'paid' but we found NO transaction, reset it to allow retry
+    if (order.payout_status === 'paid' && !alreadyPaid) {
+      console.log(`[ADMIN] verifyOrderForPayout: Order ${orderId} has payout_status='paid' but NO real transaction found - resetting to 'requested'`);
+      try {
+        await db.from('orders').update({ payout_status: 'requested', payout_paid_at: null }).eq('id', orderId);
+        // Update our local reference
+        order.payout_status = 'requested';
+      } catch (e) {
+        console.warn('[ADMIN] verifyOrderForPayout - failed to reset payout_status:', e?.message || e);
       }
     }
   } catch (e) {
     console.warn('[ADMIN] verifyOrderForPayout - error checking existing payout txs:', e?.message || e);
-    // Non-fatal
+    // Non-fatal, but be conservative
   }
 
+  // Recalculate payoutStatusOk after potential reset
+  const payoutStatusOkFinal = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
+
   // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
-  const eligible = delivered && paid && payoutStatusOk && !alreadyPaid && vendorOk;
+  const eligible = delivered && paid && payoutStatusOkFinal && !alreadyPaid && vendorOk;
 
   const reasons = [];
   if (!delivered) reasons.push('not_delivered');
   if (!paid) reasons.push('not_paid');
   if (!vendorOk) reasons.push('vendor_info_missing');
-  if (!payoutStatusOk) reasons.push('invalid_payout_status');
+  if (!payoutStatusOkFinal) reasons.push('invalid_payout_status');
   if (alreadyPaid) reasons.push('already_paid');
 
   return {
@@ -2764,7 +2815,7 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
       delivered,
       paid,
       payment_confirmed_at: order.payment_confirmed_at || null,
-      payoutStatusOk,
+      payoutStatusOk: payoutStatusOkFinal,
       vendorOk,
       payout_status: order.payout_status || null,
       alreadyPaid
