@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS admin_transfers (
   status TEXT DEFAULT 'processing',
   provider_transaction_id TEXT,
   provider_response JSONB,
-  created_by TEXT REFERENCES profiles(id),
+  created_by UUID REFERENCES profiles(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

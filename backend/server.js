@@ -890,10 +890,18 @@ app.post('/api/orders/search', async (req, res) => {
     const pattern = `%${cleaned}%`;
     console.log('[API/orders/search] Recherche code nettoyé:', cleaned);
 
+    // Use service role client to bypass RLS for delivery search
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let dbClient = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
     // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, address), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, address, phone), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
       .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
       .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
@@ -904,10 +912,16 @@ app.post('/api/orders/search', async (req, res) => {
     }
 
     if (data) {
-      if (data.buyer_profile && data.buyer_profile.address) {
-        data.delivery_address = data.buyer_profile.address;
+      // Ajouter les informations de l'acheteur pour l'affichage
+      if (data.buyer_profile) {
+        if (data.buyer_profile.address) {
+          data.delivery_address = data.buyer_profile.address;
+        }
+        if (data.buyer_profile.phone) {
+          data.buyer_phone = data.buyer_profile.phone;
+        }
       }
-      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
+      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status, 'buyer_phone:', data.buyer_phone);
       return res.json({ success: true, order: data });
     } else {
       console.warn('[API/orders/search] Aucune commande trouvée pour code:', cleaned);
@@ -4230,12 +4244,17 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 // Nouvelle version conforme et robuste de la route /api/orders/mark-in-delivery
 app.post('/api/orders/mark-in-delivery', async (req, res) => {
   try {
+    console.log('[MARK-IN-DELIVERY] Request received:', { body: req.body });
+    
     // Accepter les deux formats : orderId et orderId
     const orderId = req.body.orderId || req.body.order_id || req.body.id;
     let deliveryPersonId = req.body.deliveryPersonId || req.body.delivery_person_id || req.body.deliveryPerson || null;
     if (!orderId) {
+      console.log('[MARK-IN-DELIVERY] Missing orderId');
       return res.status(400).json({ success: false, error: 'orderId required' });
     }
+
+    console.log('[MARK-IN-DELIVERY] Processing orderId:', orderId, 'deliveryPersonId:', deliveryPersonId);
 
     // If deliveryPersonId was not provided, try to infer from Authorization bearer token (Supabase session or JWT)
     if (!deliveryPersonId) {
@@ -4258,8 +4277,19 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       }
     }
 
+    // Use service role client to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let dbClient = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      console.log('[MARK-IN-DELIVERY] Using service role client');
+    } else {
+      console.warn('[MARK-IN-DELIVERY] SUPABASE_SERVICE_ROLE_KEY missing - using RLS-bound client');
+    }
+
     // Fetch current order with buyer, delivery person, and product info
-    const { data: order, error: orderErr } = await supabase
+    const { data: order, error: orderErr } = await dbClient
       .from('orders')
       .select(`
         id, status, buyer_id, order_code, delivery_person_id,
@@ -4269,12 +4299,16 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       `)
       .eq('id', orderId)
       .maybeSingle();
+    
+    console.log('[MARK-IN-DELIVERY] Order fetched:', order ? { id: order.id, status: order.status, buyer_phone: order.buyer?.phone } : 'null', 'error:', orderErr);
+    
     if (orderErr || !order) {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
     // Update only if status is assigned or paid (allow starting delivery from 'paid')
     if (!['assigned', 'paid'].includes(order.status)) {
+      console.log('[MARK-IN-DELIVERY] Order status not valid for delivery start:', order.status);
       return res.status(400).json({ 
         success: false, 
         error: 'order_not_assignable',
@@ -4293,12 +4327,17 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       updates.delivery_person_id = deliveryPersonId;
     }
 
+    console.log('[MARK-IN-DELIVERY] Updating order with:', updates);
+
     // Tentative d'update robuste : si une colonne manque dans le schéma (PGRST204),
     // on supprime les clés problématiques et on réessaie.
-    async function safeUpdateOrder(id, updateObj) {
+    async function safeUpdateOrder(id, updateObj, client) {
       try {
-        const { error } = await supabase.from('orders').update(updateObj).eq('id', id);
-        if (!error) return { ok: true, used: updateObj, removed: [] };
+        const { error } = await client.from('orders').update(updateObj).eq('id', id);
+        if (!error) {
+          console.log('[MARK-IN-DELIVERY] Order updated successfully');
+          return { ok: true, used: updateObj, removed: [] };
+        }
 
         const msg = String(error?.message || '');
         console.error('[MARK-IN-DELIVERY] Première tentative update returned error:', error);
@@ -4327,8 +4366,11 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
           return { ok: false, error, removed: missingCols };
         }
 
-        const { error: retryErr } = await supabase.from('orders').update(cleaned).eq('id', id);
-        if (!retryErr) return { ok: true, used: cleaned, removed: missingCols };
+        const { error: retryErr } = await client.from('orders').update(cleaned).eq('id', id);
+        if (!retryErr) {
+          console.log('[MARK-IN-DELIVERY] Order updated successfully (retry without missing columns)');
+          return { ok: true, used: cleaned, removed: missingCols };
+        }
 
         console.error('[MARK-IN-DELIVERY] Retry update failed:', retryErr);
         return { ok: false, error: retryErr, removed: missingCols };
@@ -4338,7 +4380,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       }
     }
 
-    const safeRes = await safeUpdateOrder(orderId, updates);
+    const safeRes = await safeUpdateOrder(orderId, updates, dbClient);
     if (!safeRes.ok) {
       console.error('[MARK-IN-DELIVERY] Erreur update order finale:', safeRes.error || safeRes.exception);
       return res.status(500).json({ 
@@ -4349,6 +4391,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     }
 
     // Envoi d'un SMS à l'acheteur avec le numéro du livreur et le nom du produit
+    console.log('[MARK-IN-DELIVERY] Preparing SMS notification...');
     try {
       const buyerPhone = order.buyer?.phone;
       // Si le numéro du livreur n'est pas dans la commande, on va le chercher
@@ -4356,14 +4399,18 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       if (!deliveryPhone && deliveryPersonId) {
         deliveryPhone = await getDeliveryPersonPhone(deliveryPersonId);
       }
+      console.log('[MARK-IN-DELIVERY] SMS data:', { buyerPhone, deliveryPhone, productName: order.product?.name });
+      
       const productName = order.product?.name || 'votre commande';
       if (buyerPhone && deliveryPhone) {
         const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
-        await notificationService.sendSMS(buyerPhone, smsText);
+        console.log('[MARK-IN-DELIVERY] Sending SMS to buyer:', buyerPhone, 'text:', smsText);
+        const smsResult = await notificationService.sendSMS(buyerPhone, smsText);
+        console.log('[MARK-IN-DELIVERY] SMS result:', smsResult);
         
         // Notification push à l'acheteur avec le template
         if (order.buyer_id) {
-          const { data: buyerTokens } = await supabase
+          const { data: buyerTokens } = await dbClient
             .from('push_tokens')
             .select('token')
             .eq('user_id', order.buyer_id)
@@ -4382,6 +4429,8 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
             console.log('[MARK-IN-DELIVERY] Notification push envoyée à l\'acheteur');
           }
         }
+      } else {
+        console.warn('[MARK-IN-DELIVERY] Missing phone for SMS - buyerPhone:', buyerPhone, 'deliveryPhone:', deliveryPhone);
       }
     } catch (smsErr) {
       console.error('[MARK-IN-DELIVERY] SMS/Push error:', smsErr);
@@ -4466,9 +4515,25 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     const { orderId, deliveredBy } = req.body || {};
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
 
+    console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy });
+
+    // Use service role client to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let dbClient = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      console.log('[MARK-DELIVERED] Using service role client');
+    }
+
     // Fetch current order
-    const { data: order, error: orderErr } = await supabase.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
-    if (orderErr || !order) return res.status(404).json({ success: false, error: 'order_not_found' });
+    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
+    if (orderErr || !order) {
+      console.error('[MARK-DELIVERED] Order not found:', orderErr);
+      return res.status(404).json({ success: false, error: 'order_not_found' });
+    }
+
+    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status });
 
     // Update only if status not already delivered
     const updates = { status: 'delivered', delivered_at: new Date().toISOString() };
@@ -4481,14 +4546,21 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
       updates.payout_requested_by = deliveredBy || null;
     }
 
-    const { error: updateErr } = await supabase.from('orders').update(updates).eq('id', orderId);
-    if (updateErr) console.error('[MARK-DELIVERED] Erreur update order:', updateErr);
+    console.log('[MARK-DELIVERED] Updating order with:', updates);
+
+    const { error: updateErr } = await dbClient.from('orders').update(updates).eq('id', orderId);
+    if (updateErr) {
+      console.error('[MARK-DELIVERED] Erreur update order:', updateErr);
+      return res.status(500).json({ success: false, error: 'update_failed', details: updateErr.message });
+    }
+
+    console.log('[MARK-DELIVERED] Order updated successfully to delivered');
 
     // Notify buyer and vendor about completed delivery
     try {
       // Notification à l'acheteur
       if (order.buyer_id) {
-        const { data: buyerTokens } = await supabase
+        const { data: buyerTokens } = await dbClient
           .from('push_tokens')
           .select('token')
           .eq('user_id', order.buyer_id)
@@ -4509,7 +4581,7 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
 
       // Notification au vendeur
       if (order.vendor_id) {
-        const { data: vendorTokens } = await supabase
+        const { data: vendorTokens } = await dbClient
           .from('push_tokens')
           .select('token')
           .eq('user_id', order.vendor_id)
