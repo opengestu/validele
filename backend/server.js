@@ -6011,8 +6011,9 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     const finalAddress = (buyer && buyer.address) ? buyer.address : (order.delivery_address || 'Adresse à définir');
     const vendorName = vendor?.company_name || vendor?.full_name || 'Vendeur inconnu';
     const buyerName = buyer?.full_name || 'Acheteur inconnu';
+    const productName = product?.name || 'Produit';
 
-    const rows = [{ order_code: order.order_code || order.id, gross: Number(order.total_amount || 0), commission: 0, net: Number(order.total_amount || 0) }];
+    const rows = [{ product_name: productName, gross: Number(order.total_amount || 0) }];
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
 
     const html = `<!doctype html>
@@ -6027,12 +6028,11 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
     <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
-    ${product ? `<p><strong>Produit:</strong> ${product.name || '-'}${product.code ? ' (' + product.code + ')' : ''}</p>` : ''}
     <h3>Détails</h3>
     <table>
-      <thead><tr><th>Commande</th><th>Brut (FCFA)</th></tr></thead>
+      <thead><tr><th>Produit</th><th>Montant (FCFA)</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
+        ${rows.map(r => `<tr><td>${r.product_name}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
       </tbody>
       <tfoot>
         <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
