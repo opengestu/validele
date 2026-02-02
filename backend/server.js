@@ -4193,6 +4193,10 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
 // [ADMIN] Récupérer toutes les demandes de remboursement
 app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
   try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
     const { data: refunds, error } = await supabaseAdmin
       .from('refund_requests')
       .select(`
@@ -4227,6 +4231,10 @@ app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
 // [ADMIN] Approuver une demande de remboursement et traiter le remboursement
 app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res) => {
   try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
     const refundId = req.params.id;
 
     // 1) Récupérer la demande de remboursement
@@ -4365,6 +4373,10 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 // [ADMIN] Rejeter une demande de remboursement
 app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res) => {
   try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
     const refundId = req.params.id;
     const { reason } = req.body;
 
