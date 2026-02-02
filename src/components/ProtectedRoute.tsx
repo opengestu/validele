@@ -40,7 +40,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
         const resp = await fetch(apiUrl('/api/test'), { method: 'GET', signal: controller.signal });
         clearTimeout(timeoutId);
         if (resp.ok) {
-          toast({ title: 'Connexion rétablie', description: 'La connexion au serveur est fonctionnelle.', variant: 'success' });
+          toast({ title: 'Connexion rétablie', description: 'La connexion au serveur est fonctionnelle.' });
           // Dispatch a synthetic online event to allow listeners to update
           if (typeof window !== 'undefined') window.dispatchEvent(new Event('online'));
         } else {
@@ -133,7 +133,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // Correction : si requiredRole est 'admin', on autorise l'accès même si userProfile n'est pas encore chargé,
   // mais on bloque explicitement l'accès aux autres rôles si userProfile est chargé et différent de 'admin'.
   if (requiredRole === 'admin') {
-    if (userProfile && userProfile.role !== 'admin') {
+    if (userProfile && (userProfile.role as string) !== 'admin') {
       // Si le profil est chargé et n'est pas admin, on redirige
       const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 
                           userProfile.role === 'delivery' ? '/delivery' : '/buyer';
