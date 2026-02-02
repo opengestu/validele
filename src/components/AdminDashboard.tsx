@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
@@ -116,7 +117,7 @@ type AdminTransfer = {
 
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
-  const { session, userProfile } = useAuth();
+  const { session, userProfile, loading: authLoading } = useAuth();
   const params = useParams();
   const adminId = params?.adminId;
   const [orders, setOrders] = useState<OrderFull[]>([]);
@@ -427,6 +428,16 @@ const AdminDashboard: React.FC = () => {
       setProcessing(false);
     }
   };
+
+  // Show fullscreen spinner while auth is loading to prevent flash of auth page
+  if (authLoading) {
+    return (
+      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+        <Spinner size="xl" className="text-[#24BD5C]" />
+        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      </div>
+    );
+  }
 
   if (!isAdminUser) {
     return (
