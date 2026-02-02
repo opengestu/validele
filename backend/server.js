@@ -1761,10 +1761,10 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     const transactionType = customData.type || 'payment'; // 'payment' ou 'payout'
     console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state, '| Type:', transactionType);
 
-    // Mettre à jour la transaction dans Supabase
+    // Mettre à jour la transaction dans Supabase - utiliser supabaseAdmin pour bypass RLS
     if (transaction_id) {
       try {
-          const { error: updateError } = await supabase
+          const { error: updateError } = await supabaseAdmin
             .from('payment_transactions')
             .update({
               status: state,
@@ -1777,6 +1777,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 
           if (updateError) {
             console.error('[PIXPAY] Erreur update DB:', updateError);
+          } else {
+            console.log('[PIXPAY] ✅ Transaction', transaction_id, 'mise à jour avec status:', state);
           }
       } catch (e) {
         console.error('[PIXPAY] defensive DB update failed (missing columns?), continue processing:', e?.message || e);
@@ -3704,6 +3706,169 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
 
   } catch (error) {
     console.error('[ADMIN] finalize-payout error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Admin utility: Sync all PENDING1/PENDING2 transactions - check if they actually succeeded
+// This is useful to fix transactions where the webhook didn't update the status
+app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) => {
+  try {
+    console.log('[ADMIN] sync-pending-transactions: Starting...');
+    
+    // Find all transactions with PENDING1 or PENDING2 status
+    const { data: pendingTxs, error: fetchErr } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('*')
+      .in('status', ['PENDING1', 'PENDING2', 'pending', 'processing']);
+    
+    if (fetchErr) {
+      console.error('[ADMIN] sync-pending-transactions: Fetch error:', fetchErr);
+      return res.status(500).json({ success: false, error: fetchErr.message });
+    }
+    
+    if (!pendingTxs || pendingTxs.length === 0) {
+      console.log('[ADMIN] sync-pending-transactions: No pending transactions found');
+      return res.json({ success: true, message: 'No pending transactions to sync', synced: 0 });
+    }
+    
+    console.log('[ADMIN] sync-pending-transactions: Found', pendingTxs.length, 'pending transactions');
+    
+    const results = [];
+    let syncedCount = 0;
+    
+    for (const tx of pendingTxs) {
+      try {
+        // Check the raw_response for the actual status from Pixpay
+        let actualStatus = tx.status;
+        let rawData = null;
+        
+        // Parse raw_response if it's a string
+        if (tx.raw_response) {
+          try {
+            rawData = typeof tx.raw_response === 'string' ? JSON.parse(tx.raw_response) : tx.raw_response;
+          } catch (e) {
+            // ignore parse error
+          }
+        }
+        
+        // Check if the transaction type is a payout and has a response indicating success
+        const txType = tx.transaction_type || '';
+        const isPayout = txType === 'payout' || txType === 'vendor_payout' || txType === 'admin_withdrawal';
+        
+        // For payout transactions with PENDING1, check if they were actually processed
+        // Pixpay payouts with a "response" field like "EFB.xxxxx" typically succeeded
+        if (isPayout && rawData?.data?.response && rawData.data.response.startsWith('EFB.')) {
+          // This is likely a successful payout - check if the order/batch is already marked as paid
+          const orderId = tx.order_id;
+          const batchId = tx.batch_id;
+          
+          // Extract custom_data to get the real order_id for batch payouts
+          let customData = {};
+          if (rawData?.data?.custom_data) {
+            try {
+              customData = JSON.parse(rawData.data.custom_data);
+            } catch (e) {}
+          }
+          const realOrderId = customData.order_id || orderId;
+          
+          // Check if this is an old transaction (more than 30 minutes) - likely succeeded
+          const txAge = Date.now() - new Date(tx.created_at).getTime();
+          const isOld = txAge > 30 * 60 * 1000; // 30 minutes
+          
+          if (isOld) {
+            // Mark as SUCCESSFUL and finalize
+            actualStatus = 'SUCCESSFUL';
+            
+            await supabaseAdmin.from('payment_transactions').update({
+              status: 'SUCCESSFUL',
+              provider_response: { message: 'operation success', synced_at: new Date().toISOString() },
+              updated_at: new Date().toISOString()
+            }).eq('id', tx.id);
+            
+            // If it's an order payout, mark the order as paid
+            if (realOrderId) {
+              const { data: orderExists } = await supabaseAdmin.from('orders').select('id').eq('id', realOrderId).maybeSingle();
+              if (orderExists) {
+                await supabaseAdmin.from('orders').update({ 
+                  payout_status: 'paid', 
+                  payout_paid_at: new Date().toISOString() 
+                }).eq('id', realOrderId);
+              }
+            }
+            
+            // If it's a batch payout, mark batch items and orders as paid
+            if (batchId || (customData.order_id && !orderId)) {
+              const batchIdToUse = batchId || customData.order_id;
+              const { data: batchExists } = await supabaseAdmin.from('payout_batches').select('id').eq('id', batchIdToUse).maybeSingle();
+              if (batchExists) {
+                const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id').eq('batch_id', batchIdToUse);
+                if (items && items.length > 0) {
+                  const itemIds = items.map(i => i.id);
+                  const orderIds = items.map(i => i.order_id).filter(Boolean);
+                  await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+                  if (orderIds.length > 0) {
+                    await supabaseAdmin.from('orders').update({ 
+                      payout_status: 'paid', 
+                      payout_paid_at: new Date().toISOString() 
+                    }).in('id', orderIds);
+                  }
+                }
+                await supabaseAdmin.from('payout_batches').update({ 
+                  status: 'completed', 
+                  processed_at: new Date().toISOString() 
+                }).eq('id', batchIdToUse);
+              }
+            }
+            
+            syncedCount++;
+            results.push({ 
+              id: tx.id, 
+              transaction_id: tx.transaction_id, 
+              old_status: tx.status, 
+              new_status: 'SUCCESSFUL',
+              synced: true 
+            });
+          } else {
+            results.push({ 
+              id: tx.id, 
+              transaction_id: tx.transaction_id, 
+              status: tx.status, 
+              synced: false, 
+              reason: 'Transaction too recent, waiting for webhook' 
+            });
+          }
+        } else {
+          results.push({ 
+            id: tx.id, 
+            transaction_id: tx.transaction_id, 
+            status: tx.status, 
+            synced: false, 
+            reason: 'Not a payout or no EFB response' 
+          });
+        }
+      } catch (txError) {
+        console.error('[ADMIN] sync-pending-transactions: Error processing tx', tx.id, txError);
+        results.push({ 
+          id: tx.id, 
+          transaction_id: tx.transaction_id, 
+          synced: false, 
+          error: String(txError) 
+        });
+      }
+    }
+    
+    console.log('[ADMIN] sync-pending-transactions: Completed. Synced', syncedCount, 'transactions');
+    
+    return res.json({ 
+      success: true, 
+      synced: syncedCount, 
+      total: pendingTxs.length, 
+      results 
+    });
+    
+  } catch (error) {
+    console.error('[ADMIN] sync-pending-transactions error:', error);
     res.status(500).json({ success: false, error: String(error) });
   }
 });

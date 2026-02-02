@@ -617,6 +617,36 @@ const AdminDashboard: React.FC = () => {
           <Card>
             <CardHeader className="flex items-center justify-between">
               <CardTitle>Transactions (payouts)</CardTitle>
+              <Button 
+                variant="outline" 
+                size="sm"
+                disabled={processing}
+                onClick={async () => {
+                  if (!confirm('Synchroniser les transactions en attente ? Cela va marquer comme réussies les transactions PENDING1 qui ont plus de 30 minutes.')) return;
+                  setProcessing(true);
+                  try {
+                    const res = await fetch(apiUrl('/api/admin/sync-pending-transactions'), { 
+                      method: 'POST', 
+                      headers: { ...getAuthHeader() },
+                      credentials: 'include'
+                    });
+                    const json = await res.json();
+                    if (!res.ok) throw new Error(json?.error || 'Erreur synchronisation');
+                    toast({ 
+                      title: 'Synchronisation terminée', 
+                      description: `${json.synced || 0} transactions mises à jour sur ${json.total || 0}` 
+                    });
+                    fetchData();
+                  } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    toast({ title: 'Erreur', description: message, variant: 'destructive' });
+                  } finally {
+                    setProcessing(false);
+                  }
+                }}
+              >
+                {processing ? '⏳ Sync...' : '🔄 Sync Pending'}
+              </Button>
             </CardHeader>
             <CardContent>
 
