@@ -3334,8 +3334,17 @@ app.get('/api/vendor/payout-batches', async (req, res) => {
 
     if (!vendorId) return res.status(401).json({ success: false, error: 'Vendor authentication required' });
 
+    // Use service role client to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    let db = supabase;
+    if (serviceRoleKey && SUPABASE_URL) {
+      const { createClient } = require('@supabase/supabase-js');
+      db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
     // Find batch ids for this vendor
-    const { data: items, error: itemsErr } = await supabase
+    const { data: items, error: itemsErr } = await db
       .from('payout_batch_items')
       .select('batch_id, created_at')
       .eq('vendor_id', vendorId)
@@ -3346,10 +3355,12 @@ app.get('/api/vendor/payout-batches', async (req, res) => {
       return res.status(500).json({ success: false, error: 'DB error' });
     }
 
+    console.log('[VENDOR] Found payout_batch_items for vendor:', vendorId, 'items:', items?.length || 0);
+
     const batchIds = Array.from(new Set((items || []).map(i => i.batch_id).filter(Boolean)));
     if (batchIds.length === 0) return res.json({ success: true, batches: [] });
 
-    const { data: batches, error: batchesErr } = await supabase.from('payout_batches').select('*').in('id', batchIds).order('created_at', { ascending: false });
+    const { data: batches, error: batchesErr } = await db.from('payout_batches').select('*').in('id', batchIds).order('created_at', { ascending: false });
     if (batchesErr) {
       console.error('[VENDOR] Error fetching batches:', batchesErr);
       return res.status(500).json({ success: false, error: 'DB error' });
@@ -3358,7 +3369,7 @@ app.get('/api/vendor/payout-batches', async (req, res) => {
     // Optionally enrich batches with item counts and net totals per batch
     const enriched = [];
     for (const b of batches || []) {
-      const { data: bItems } = await supabase.from('payout_batch_items').select('id,amount,commission_amount,net_amount').eq('batch_id', b.id).eq('vendor_id', vendorId);
+      const { data: bItems } = await db.from('payout_batch_items').select('id,amount,commission_amount,net_amount').eq('batch_id', b.id).eq('vendor_id', vendorId);
       const itemCount = (bItems || []).length;
       const totalNet = (bItems || []).reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
       enriched.push({ id: b.id, created_at: b.created_at || b.scheduled_at, total_amount: b.total_amount, status: b.status, item_count: itemCount, total_net: totalNet });
@@ -3394,10 +3405,21 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     if (!vendorId) return res.status(401).send('Vendor authentication required');
     if (!batchId) return res.status(400).send('batch id required');
 
-    const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    // Use service role client to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    let db = supabase;
+    if (serviceRoleKey && SUPABASE_URL) {
+      const { createClient } = require('@supabase/supabase-js');
+      db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
+    const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     // Include product info from order.products to show product names
-    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
-    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
+    const { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+
+    console.log('[VENDOR] Invoice - batch:', batch?.id, 'vendor:', vendor?.full_name, 'items:', items?.length || 0);
 
     if (!batch) return res.status(404).send('batch_not_found');
     if (!vendor) return res.status(404).send('vendor_not_found');
@@ -5931,24 +5953,20 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     const orderId = req.params.id;
     if (!orderId) return res.status(400).send('order id required');
 
-    // Ensure we have a supabase client (lazy-require if global not set)
+    // Use service role client to bypass RLS restrictions
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
     let sb = supabase;
-    try {
-      if (!sb) {
-        const sbModule = require('./supabase');
-        sb = sbModule && sbModule.supabase ? sbModule.supabase : sbModule;
-        console.log('[INVOICE] Using lazy-loaded supabase client');
-      }
-    } catch (e) {
-      console.error('[INVOICE] Failed to load supabase client:', e?.message || e);
-      const accept = req.headers.accept || '';
-      if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'Invoice service unavailable (DB client missing)' });
-      return res.status(500).send('Invoice service unavailable (DB client missing)');
+    if (serviceRoleKey && SUPABASE_URL) {
+      const { createClient } = require('@supabase/supabase-js');
+      sb = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      console.log('[INVOICE] Using service role client for invoice generation');
     }
 
+    // First fetch the order
     const { data: order, error } = await sb
       .from('orders')
-      .select(`id, order_code, total_amount, created_at, buyer_id, vendor_id, product:products(name, code), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone), delivery_address`)
+      .select('id, order_code, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -5966,10 +5984,33 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
       return res.status(404).send('Order not found');
     }
 
+    // Fetch buyer and vendor profiles separately to avoid FK join issues
+    let buyer = null;
+    let vendor = null;
+    let product = null;
+
+    if (order.buyer_id) {
+      const { data: buyerData } = await sb.from('profiles').select('full_name, phone, address').eq('id', order.buyer_id).maybeSingle();
+      buyer = buyerData;
+    }
+
+    if (order.vendor_id) {
+      const { data: vendorData } = await sb.from('profiles').select('company_name, full_name, phone').eq('id', order.vendor_id).maybeSingle();
+      vendor = vendorData;
+    }
+
+    // Try to fetch product info if product_id exists
+    if (order.product_id) {
+      const { data: productData } = await sb.from('products').select('name, code').eq('id', order.product_id).maybeSingle();
+      product = productData;
+    }
+
+    console.log('[INVOICE] Fetched data - buyer:', buyer, 'vendor:', vendor, 'product:', product);
+
     // Normalize delivery_address to buyer profile address when available
-    const finalAddress = (order.buyer && order.buyer.address) ? order.buyer.address : (order.delivery_address || '-');
-    const vendorName = order.vendor?.company_name || order.vendor?.full_name || 'Vendeur inconnu';
-    const buyerName = order.buyer?.full_name || 'Acheteur inconnu';
+    const finalAddress = (buyer && buyer.address) ? buyer.address : (order.delivery_address || 'Adresse à définir');
+    const vendorName = vendor?.company_name || vendor?.full_name || 'Vendeur inconnu';
+    const buyerName = buyer?.full_name || 'Acheteur inconnu';
 
     const rows = [{ order_code: order.order_code || order.id, gross: Number(order.total_amount || 0), commission: 0, net: Number(order.total_amount || 0) }];
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
@@ -5984,8 +6025,9 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
   <body>
     <h2>Facture - Commande ${order.order_code || order.id}</h2>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
-    <p><strong>Vendeur:</strong> ${vendorName} ${order.vendor?.phone ? '('+order.vendor.phone+')' : ''}</p>
-    <p><strong>Acheteur:</strong> ${buyerName} ${order.buyer?.phone ? '('+order.buyer.phone+')' : ''}</p>
+    <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
+    <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
+    ${product ? `<p><strong>Produit:</strong> ${product.name || '-'}${product.code ? ' (' + product.code + ')' : ''}</p>` : ''}
     <h3>Détails</h3>
     <table>
       <thead><tr><th>Commande</th><th>Brut (FCFA)</th></tr></thead>
