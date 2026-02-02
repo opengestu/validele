@@ -99,6 +99,20 @@ type PayoutBatchItem = {
   order?: { id: string; order_code?: string } | null;
 };
 
+// Admin transfers (withdrawals from Pixpay)
+type AdminTransfer = {
+  id: string;
+  amount?: number;
+  phone?: string;
+  wallet_type?: 'wave-senegal' | 'orange-senegal';
+  note?: string | null;
+  status?: string;
+  provider_transaction_id?: string | null;
+  provider_response?: Record<string, unknown> | null;
+  created_by?: string | null;
+  created_at?: string;
+};
+
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
   const { session, userProfile } = useAuth();
@@ -113,7 +127,15 @@ const AdminDashboard: React.FC = () => {
   const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'transfers'>('orders');
+
+  // Admin transfers state
+  const [transfers, setTransfers] = useState<AdminTransfer[]>([]);
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferPhone, setTransferPhone] = useState('');
+  const [transferWalletType, setTransferWalletType] = useState<'wave-senegal' | 'orange-senegal'>('wave-senegal');
+  const [transferNote, setTransferNote] = useState('');
+  const [transferProcessing, setTransferProcessing] = useState(false);
 
 
 
@@ -257,6 +279,17 @@ const AdminDashboard: React.FC = () => {
       if (batchesRes.ok) {
         setBatches(batchesJson.batches || []);
         setBatchItems(batchesJson.items || []);
+      }
+
+      // Fetch admin transfers
+      try {
+        const transfersRes = await fetch(apiUrl('/api/admin/transfers'), { headers, credentials: 'include' });
+        if (transfersRes.ok) {
+          const transfersJson = await transfersRes.json();
+          setTransfers(transfersJson.transfers || []);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch transfers:', e);
       }
     } catch (error) {
       // Try to load cached admin data when offline
@@ -470,11 +503,12 @@ const AdminDashboard: React.FC = () => {
       )}
 
       <div>
-        <div className="flex gap-4 mb-4">
+        <div className="flex gap-4 mb-4 flex-wrap">
           <button className={`px-3 py-2 rounded ${activeTab === 'orders' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('orders')}>Commandes</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
+          <button className={`px-3 py-2 rounded ${activeTab === 'transfers' ? 'bg-green-700 text-white' : 'bg-green-100 text-green-800'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
         </div>
 
         {activeTab === 'orders' && (
@@ -696,6 +730,176 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'transfers' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>💸 Transferts / Retraits</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Transférer de l'argent de votre compte Pixpay vers un compte Wave ou Orange Money de votre choix.
+              </p>
+
+              {/* Transfer Form */}
+              <div className="bg-slate-50 p-4 rounded-lg mb-6">
+                <h4 className="font-semibold mb-3">Nouveau transfert</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Montant (FCFA) *</label>
+                    <input
+                      type="number"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="Ex: 50000"
+                      className="w-full px-3 py-2 border rounded"
+                      min="100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Numéro de téléphone *</label>
+                    <input
+                      type="tel"
+                      value={transferPhone}
+                      onChange={(e) => setTransferPhone(e.target.value)}
+                      placeholder="Ex: 774254729"
+                      className="w-full px-3 py-2 border rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1" htmlFor="transfer-wallet-type">Type de wallet *</label>
+                    <select
+                      id="transfer-wallet-type"
+                      title="Type de wallet"
+                      value={transferWalletType}
+                      onChange={(e) => setTransferWalletType(e.target.value as 'wave-senegal' | 'orange-senegal')}
+                      className="w-full px-3 py-2 border rounded"
+                    >
+                      <option value="wave-senegal">🌊 Wave Sénégal</option>
+                      <option value="orange-senegal">🟠 Orange Money Sénégal</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Note (optionnel)</label>
+                    <input
+                      type="text"
+                      value={transferNote}
+                      onChange={(e) => setTransferNote(e.target.value)}
+                      placeholder="Ex: Retrait mensuel"
+                      className="w-full px-3 py-2 border rounded"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    onClick={async () => {
+                      if (!transferAmount || parseInt(transferAmount) <= 0) {
+                        toast({ title: 'Erreur', description: 'Montant invalide', variant: 'destructive' });
+                        return;
+                      }
+                      if (!transferPhone) {
+                        toast({ title: 'Erreur', description: 'Numéro de téléphone requis', variant: 'destructive' });
+                        return;
+                      }
+                      if (!confirm(`Confirmer le transfert de ${parseInt(transferAmount).toLocaleString()} FCFA vers ${transferPhone} (${transferWalletType === 'wave-senegal' ? 'Wave' : 'Orange Money'}) ?`)) {
+                        return;
+                      }
+                      
+                      setTransferProcessing(true);
+                      try {
+                        const res = await fetch(apiUrl('/api/admin/transfers'), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                          credentials: 'include',
+                          body: JSON.stringify({
+                            amount: parseInt(transferAmount),
+                            phone: transferPhone,
+                            walletType: transferWalletType,
+                            note: transferNote || undefined
+                          })
+                        });
+                        const json = await res.json();
+                        if (!res.ok) {
+                          throw new Error(json?.error || 'Erreur lors du transfert');
+                        }
+                        toast({ 
+                          title: json.success ? 'Transfert initié' : 'Attention', 
+                          description: json.success 
+                            ? `Transfert de ${parseInt(transferAmount).toLocaleString()} FCFA en cours de traitement` 
+                            : (json.transfer?.message || 'Le transfert a été soumis'),
+                          variant: json.success ? 'default' : 'destructive'
+                        });
+                        // Reset form
+                        setTransferAmount('');
+                        setTransferPhone('');
+                        setTransferNote('');
+                        // Refresh data
+                        fetchData();
+                      } catch (err: unknown) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        toast({ title: 'Erreur', description: message, variant: 'destructive' });
+                      } finally {
+                        setTransferProcessing(false);
+                      }
+                    }}
+                    disabled={transferProcessing || !transferAmount || !transferPhone}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    {transferProcessing ? 'Transfert en cours...' : '💸 Effectuer le transfert'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Transfer History */}
+              <h4 className="font-semibold mb-3">Historique des transferts</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Montant</TableHead>
+                    <TableHead>Téléphone</TableHead>
+                    <TableHead>Wallet</TableHead>
+                    <TableHead>Note</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead>Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transfers.map(t => (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-mono text-xs">{t.id}</TableCell>
+                      <TableCell className="font-semibold">{(t.amount || 0).toLocaleString()} FCFA</TableCell>
+                      <TableCell>{t.phone || '-'}</TableCell>
+                      <TableCell>
+                        {t.wallet_type === 'wave-senegal' ? '🌊 Wave' : t.wallet_type === 'orange-senegal' ? '🟠 Orange' : t.wallet_type || '-'}
+                      </TableCell>
+                      <TableCell>{t.note || '-'}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          t.status === 'paid' || t.status === 'SUCCESSFUL' || t.status === 'SUCCESS' 
+                            ? 'bg-green-100 text-green-800' 
+                            : t.status === 'processing' || t.status === 'PENDING1' || t.status === 'PENDING2'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : t.status === 'failed' || t.status === 'FAILED'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {t.status || '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell>{t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {transfers.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-gray-500">Aucun transfert effectué</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

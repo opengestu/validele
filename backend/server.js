@@ -2875,6 +2875,130 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
   }
 });
 
+// ---------- Admin Transfers (Withdraw from Pixpay to Wave/Orange Money) ----------
+// GET /api/admin/transfers - List admin transfers history
+app.get('/api/admin/transfers', requireAdmin, async (req, res) => {
+  try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let db = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
+    const { data: transfers, error } = await db
+      .from('admin_transfers')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      // Table might not exist yet - return empty array
+      console.warn('[ADMIN] transfers table query error:', error.message);
+      return res.json({ success: true, transfers: [] });
+    }
+
+    return res.json({ success: true, transfers: transfers || [] });
+  } catch (err) {
+    console.error('[ADMIN] list transfers error:', err);
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/transfers - Create a new admin transfer (withdraw from Pixpay)
+app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
+  try {
+    const { amount, phone, walletType, note } = req.body || {};
+
+    // Validation
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Montant invalide (doit être > 0)' });
+    }
+    if (!phone) {
+      return res.status(400).json({ success: false, error: 'Numéro de téléphone requis' });
+    }
+    if (!walletType || !['wave-senegal', 'orange-senegal'].includes(walletType)) {
+      return res.status(400).json({ success: false, error: 'Type de wallet invalide (wave-senegal ou orange-senegal)' });
+    }
+
+    const adminUserId = req.adminUser?.id || 'admin';
+    const transferId = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
+    console.log('[ADMIN] Initiating admin transfer:', { transferId, amount, phone, walletType, adminUserId });
+
+    // Execute transfer via PixPay
+    const pixpayResult = await pixpaySendMoney({
+      amount: parseInt(amount),
+      phone,
+      orderId: transferId, // Use transferId as reference
+      type: 'admin_withdrawal',
+      walletType
+    });
+
+    console.log('[ADMIN] PixPay transfer result:', pixpayResult);
+
+    // Use service role to record transfer
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let db = supabase;
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
+    // Try to insert into admin_transfers table
+    const transferRecord = {
+      id: transferId,
+      amount: parseInt(amount),
+      phone,
+      wallet_type: walletType,
+      note: note || null,
+      status: pixpayResult.success ? (pixpayResult.state || 'processing') : 'failed',
+      provider_transaction_id: pixpayResult.transaction_id || null,
+      provider_response: pixpayResult.raw || null,
+      created_by: adminUserId,
+      created_at: new Date().toISOString()
+    };
+
+    const { error: insertErr } = await db.from('admin_transfers').insert(transferRecord);
+    if (insertErr) {
+      console.warn('[ADMIN] Failed to record transfer in admin_transfers table:', insertErr.message);
+      // Still return success if PixPay worked
+    }
+
+    // Also record in payment_transactions for unified tracking
+    const { error: txErr } = await db.from('payment_transactions').insert({
+      transaction_id: pixpayResult.transaction_id || transferId,
+      provider: 'pixpay',
+      amount: parseInt(amount),
+      phone,
+      status: pixpayResult.state || 'PENDING1',
+      transaction_type: 'admin_withdrawal',
+      raw_response: pixpayResult.raw,
+      provider_transaction_id: pixpayResult.transaction_id || null
+    });
+    if (txErr) {
+      console.warn('[ADMIN] Failed to record transfer in payment_transactions:', txErr.message);
+    }
+
+    return res.json({
+      success: pixpayResult.success,
+      transfer: {
+        id: transferId,
+        amount,
+        phone,
+        walletType,
+        status: pixpayResult.success ? 'processing' : 'failed',
+        provider_transaction_id: pixpayResult.transaction_id,
+        message: pixpayResult.message
+      },
+      pixpayResult
+    });
+  } catch (err) {
+    console.error('[ADMIN] transfer error:', err);
+    res.status(500).json({ success: false, error: String(err.message || err) });
+  }
+});
+
 // ---------- Payout Batches (admin) ----------
 // Create a payout batch from delivered orders with payout_status = 'requested'
 app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
