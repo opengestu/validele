@@ -1219,10 +1219,12 @@ const AdminDashboard: React.FC = () => {
                     <label className="block text-sm font-medium mb-1">Numéro de téléphone *</label>
                     <input
                       type="tel"
+                      inputMode="tel"
+                      pattern="[0-9+\s-]*"
                       value={transferPhone}
                       onChange={(e) => setTransferPhone(e.target.value)}
                       placeholder="Ex: 774254729"
-                      className="w-full px-3 py-2 border rounded"
+                      className="w-full px-3 py-2 border rounded text-lg h-12 md:text-base md:h-10"
                     />
                   </div>
                   <div>

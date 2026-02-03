@@ -300,4 +300,30 @@
   .order-amount {
     @apply text-[#2e7d32] text-[26px] font-bold mt-[16px];
   }
+
+  /* Clavier numérique agrandi sur mobile */
+  input[type="tel"],
+  input[type="number"],
+  input[inputmode="numeric"],
+  input[inputmode="tel"] {
+    @apply text-base;
+  }
+
+  @media (max-width: 768px) {
+    input[type="tel"],
+    input[type="number"],
+    input[inputmode="numeric"],
+    input[inputmode="tel"] {
+      font-size: 18px !important;
+      min-height: 48px !important;
+      padding: 14px 12px !important;
+    }
+    
+    /* Classe utilitaire pour inputs numériques */
+    .numeric-input-mobile {
+      font-size: 18px !important;
+      min-height: 48px !important;
+      padding: 14px 12px !important;
+    }
+  }
 }

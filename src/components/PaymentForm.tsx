@@ -151,10 +151,13 @@ export const PaymentForm = ({
             <Input
               id="phone"
               type="tel"
+              inputMode="tel"
+              pattern="[0-9+\s-]*"
               placeholder="+221 77 XXX XX XX"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               required
+              className="text-lg md:text-base h-12 md:h-10"
             />
             <p className="text-xs text-gray-500 mt-1">
               {paymentMethod === 'orange_money' 

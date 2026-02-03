@@ -1465,9 +1465,11 @@ const BuyerDashboard = () => {
               <label style={{ fontWeight: 500, fontSize: 14 }}>Téléphone</label>
               <input
                 type="tel"
+                inputMode="tel"
+                pattern="[0-9+\s-]*"
                 value={editProfile.phone}
                 onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
-                style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12 }}
+                style={{ width: '100%', padding: '14px 12px', fontSize: 18, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12, minHeight: 48 }}
                 placeholder="Votre numéro de téléphone"
               />
             </div>
@@ -1962,9 +1964,25 @@ const BuyerDashboard = () => {
               }}>
                 <Input name="fullName" placeholder="Nom complet" required defaultValue={userProfile?.full_name || ''} />
                 <Input name="email" type="email" placeholder="Email" required defaultValue={user?.email || ''} />
-                <Input name="phone" type="tel" placeholder="Téléphone" required defaultValue={userProfile?.phone || ''} />
+                <Input 
+                  name="phone" 
+                  type="tel" 
+                  inputMode="tel"
+                  pattern="[0-9+\s-]*"
+                  placeholder="Téléphone" 
+                  required 
+                  defaultValue={userProfile?.phone || ''} 
+                  className="text-lg h-12 md:text-base md:h-10"
+                />
                 {softPayType === 'orange_otp' && (
-                  <Input name="otp" placeholder="Code OTP Orange Money" required />
+                  <Input 
+                    name="otp" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Code OTP Orange Money" 
+                    required 
+                    className="text-lg h-12 md:text-base md:h-10"
+                  />
                 )}
                 {softPayError && <div className="text-red-600 text-sm">{softPayError}</div>}
                 <Button type="submit" className="w-full" disabled={softPayLoading}>
