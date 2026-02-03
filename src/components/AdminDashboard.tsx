@@ -588,6 +588,11 @@ const AdminDashboard: React.FC = () => {
         setBatchItems(batchesJson.items || []);
       }
 
+      // Set refunds
+      if (refundsRes.ok) {
+        setRefunds(refundsJson.refunds || []);
+      }
+
       // Fetch admin transfers
       try {
         const transfersRes = await fetch(apiUrl('/api/admin/transfers'), { headers, credentials: 'include' });

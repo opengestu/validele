@@ -4186,6 +4186,23 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
 
     console.log('[REFUND] Demande créée:', refundRequest.id);
 
+    // 5) Mettre à jour le statut de la commande à "cancelled"
+    const { error: orderUpdateError } = await supabaseAdmin
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason || 'Demande de remboursement par le client'
+      })
+      .eq('id', orderId);
+
+    if (orderUpdateError) {
+      console.error('[REFUND] Erreur mise à jour commande:', orderUpdateError);
+      // Ne pas échouer la requête si la demande a été créée
+    } else {
+      console.log('[REFUND] Commande marquée comme annulée:', orderId);
+    }
+
     return res.json({
       success: true,
       refund_request_id: refundRequest.id,
