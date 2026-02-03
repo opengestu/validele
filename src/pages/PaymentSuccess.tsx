@@ -46,14 +46,16 @@ const PaymentSuccess = () => {
       }
       setOrder(orderData);
       // 2. Récupère le profil acheteur
-      let buyerData = null;
+      let buyerData: any = null;
       try {
-        const res = await supabase
+        const { data, error } = await supabase
           .from('profiles')
-          .select('full_name, email')
+          .select('full_name')
           .eq('id', orderData.buyer_id)
           .single();
-        buyerData = res.data;
+        if (!error) {
+          buyerData = data;
+        }
       } catch (e) {
         console.warn('[PaymentSuccess] supabase get buyer profile failed, will try backend admin', e);
       }
@@ -145,32 +147,217 @@ const PaymentSuccess = () => {
   };
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh', background: '#f7fafc', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ 
+      position: 'fixed', 
+      top: 0, 
+      left: 0, 
+      width: '100vw', 
+      height: '100vh', 
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center', 
+      padding: '20px',
+      overflow: 'auto'
+    }}>
       <Confetti numberOfPieces={350} recycle={false} width={window.innerWidth} height={window.innerHeight} ref={confettiRef} />
-      <div style={{ background: 'white', borderRadius: 16, boxShadow: '0 4px 24px #0001', padding: 40, textAlign: 'center', maxWidth: 420 }}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
-        <h1 style={{ fontSize: 32, fontWeight: 700, color: '#2d7a46', marginBottom: 12 }}>Paiement réussi !</h1>
+      <div style={{ 
+        background: 'white', 
+        borderRadius: 24, 
+        boxShadow: '0 25px 80px rgba(0,0,0,0.35)', 
+        padding: '48px 40px', 
+        textAlign: 'center', 
+        maxWidth: 520, 
+        width: '90%',
+        margin: 'auto'
+      }}>
+        <div style={{ fontSize: 90, marginBottom: 24, animation: 'bounce 1s ease-in-out' }}>✓</div>
+        <h1 style={{ 
+          fontSize: 38, 
+          fontWeight: 800, 
+          background: 'linear-gradient(135deg, #16a34a 0%, #22c55e 100%)', 
+          WebkitBackgroundClip: 'text', 
+          WebkitTextFillColor: 'transparent', 
+          marginBottom: 18,
+          letterSpacing: '-0.5px'
+        }}>
+          Paiement réussi !
+        </h1>
         {loading ? (
-          <p style={{ fontSize: 18, marginBottom: 24 }}>Chargement de la commande...</p>
+          <div style={{ padding: '50px 0' }}>
+            <div style={{ 
+              width: 70, 
+              height: 70, 
+              border: '5px solid #f3f4f6', 
+              borderTop: '5px solid #667eea',
+              borderRadius: '50%',
+              margin: '0 auto 24px',
+              animation: 'spin 1s linear infinite'
+            }}></div>
+            <p style={{ fontSize: 17, color: '#666', fontWeight: 500 }}>Chargement de la commande...</p>
+          </div>
         ) : error ? (
           <>
-            <p style={{ color: 'red', fontSize: 16, marginBottom: 24 }}>{error}</p>
-            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 8 }}>
-              <Button onClick={handleGoToDashboard} variant="default">Retour au tableau de bord</Button>
+            <div style={{ 
+              background: '#fef2f2', 
+              border: '2px solid #fca5a5', 
+              borderRadius: 14, 
+              padding: 20, 
+              marginBottom: 28 
+            }}>
+              <p style={{ color: '#dc2626', fontSize: 16, fontWeight: 500 }}>{error}</p>
             </div>
+            <Button 
+              onClick={handleGoToDashboard} 
+              style={{ 
+                width: '100%', 
+                background: 'linear-gradient(135deg, #16a34a 0%, #22c55e 100%)', 
+                color: 'white', 
+                fontWeight: 700, 
+                fontSize: 17, 
+                padding: '16px 28px',
+                borderRadius: 14,
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 6px 20px rgba(34, 197, 94, 0.4)',
+                transition: 'all 0.3s',
+                letterSpacing: '0.3px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-3px)';
+                e.currentTarget.style.boxShadow = '0 10px 30px rgba(34, 197, 94, 0.5)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 6px 20px rgba(34, 197, 94, 0.4)';
+              }}
+            >
+              🏠 Retour au tableau de bord
+            </Button>
           </>
         ) : (
           <>
-            <p style={{ fontSize: 18, marginBottom: 24 }}>Votre paiement a été confirmé.<br />Merci pour votre confiance.</p>
-            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 8 }}>
-              <Button onClick={handleDownloadInvoice} disabled={!order} variant="outline">Télécharger la facture</Button>
-              <Button onClick={handleGoToDashboard} variant="default">Retour au tableau de bord</Button>
-            </div>
+            <p style={{ 
+              fontSize: 17, 
+              color: '#64748b', 
+              lineHeight: 1.6, 
+              marginBottom: 36,
+              fontWeight: 500
+            }}>
+              Votre paiement a été confirmé avec succès !<br />
+              <span style={{ fontSize: 15, color: '#94a3b8' }}>Merci pour votre confiance.</span>
+            </p>
+            
             {order && (
-              <div style={{ marginTop: 24, fontSize: 14, color: '#888' }}>
-                Montant: <b>{order.total_amount} FCFA</b>
+              <div style={{ 
+                background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', 
+                border: '1px solid #e2e8f0', 
+                borderRadius: 18, 
+                padding: 28, 
+                marginBottom: 36
+              }}>
+                <div style={{ 
+                  fontSize: 14, 
+                  color: '#64748b', 
+                  marginBottom: 10, 
+                  fontWeight: 600, 
+                  textTransform: 'uppercase', 
+                  letterSpacing: '0.5px'
+                }}>
+                  Montant payé
+                </div>
+                <div style={{ 
+                  fontSize: 32, 
+                  fontWeight: 800, 
+                  color: '#16a34a', 
+                  marginBottom: 20,
+                  letterSpacing: '-0.5px',
+                  paddingBottom: 20,
+                  borderBottom: '2px solid #e2e8f0'
+                }}>
+                  {order.total_amount.toLocaleString()} FCFA
+                </div>
+                {order.order_code && (
+                  <>
+                    <div style={{ 
+                      fontSize: 14, 
+                      color: '#64748b', 
+                      marginBottom: 8, 
+                      fontWeight: 600, 
+                      textTransform: 'uppercase', 
+                      letterSpacing: '0.5px' 
+                    }}>
+                      Code de commande
+                    </div>
+                    <div style={{ fontWeight: 700, color: '#1e293b', fontSize: 16 }}>
+                      {order.order_code}
+                    </div>
+                  </>
+                )}
               </div>
             )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <Button 
+                onClick={handleGoToDashboard}
+                style={{ 
+                  width: '100%', 
+                  background: 'linear-gradient(135deg, #16a34a 0%, #22c55e 100%)', 
+                  color: 'white', 
+                  fontWeight: 700, 
+                  fontSize: 17, 
+                  padding: '16px 28px',
+                  borderRadius: 14,
+                  border: 'none',
+                  cursor: 'pointer',
+                  boxShadow: '0 6px 20px rgba(34, 197, 94, 0.4)',
+                  transition: 'all 0.3s',
+                  letterSpacing: '0.3px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-3px)';
+                  e.currentTarget.style.boxShadow = '0 10px 30px rgba(34, 197, 94, 0.5)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 6px 20px rgba(34, 197, 94, 0.4)';
+                }}
+              >
+                🏠 Retour au tableau de bord
+              </Button>
+              <Button 
+                onClick={handleDownloadInvoice} 
+                disabled={!order}
+                style={{ 
+                  width: '100%', 
+                  background: 'white', 
+                  color: '#16a34a', 
+                  fontWeight: 700, 
+                  fontSize: 16, 
+                  padding: '14px 28px',
+                  borderRadius: 14,
+                  border: '2px solid #16a34a',
+                  cursor: order ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s',
+                  opacity: order ? 1 : 0.5,
+                  letterSpacing: '0.3px'
+                }}
+                onMouseEnter={(e) => {
+                  if (order) {
+                    e.currentTarget.style.background = '#f0fdf4';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (order) {
+                    e.currentTarget.style.background = 'white';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }
+                }}
+              >
+                📄 Télécharger la facture
+              </Button>
+            </div>
           </>
         )}
       </div>

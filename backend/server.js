@@ -4110,8 +4110,19 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
 
     console.log('[REFUND] Demande de remboursement:', { orderId, reason });
 
+    // Utiliser le service role client pour contourner RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = serviceRoleKey 
+      ? createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } })
+      : supabase;
+
+    if (!serviceRoleKey) {
+      console.warn('[REFUND] SUPABASE_SERVICE_ROLE_KEY manquante - utilisation du client RLS');
+    }
+
     // 1) Récupérer la commande avec les infos de l'acheteur
-    const { data: order, error: orderError } = await supabase
+    const { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
       .select(`
         id, status, total_amount, buyer_id, payment_method,
@@ -4137,7 +4148,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
     }
 
     // 3) Vérifier si une demande n'existe pas déjà
-    const { data: existingRequest } = await supabase
+    const { data: existingRequest } = await supabaseAdmin
       .from('refund_requests')
       .select('id, status')
       .eq('order_id', orderId)
@@ -4152,7 +4163,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
     }
 
     // 4) Créer la demande de remboursement
-    const { data: refundRequest, error: refundError } = await supabase
+    const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
       .insert({
         order_id: orderId,

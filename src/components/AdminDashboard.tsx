@@ -176,6 +176,16 @@ const AdminDashboard: React.FC = () => {
 
   // Batch details modal state
   const [selectedVendorForInvoice, setSelectedVendorForInvoice] = useState<string | null>(null);
+  
+  // Invoice viewer modal state (pour afficher les factures avec authentification)
+  const [invoiceViewerOpen, setInvoiceViewerOpen] = useState(false);
+  const [invoiceViewerHtml, setInvoiceViewerHtml] = useState<string | null>(null);
+  const [invoiceViewerTitle, setInvoiceViewerTitle] = useState<string>('');
+  const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
+  const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
 
   const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
   // If we have a userProfile, ensure it matches the admin id or the adminId param.
@@ -329,6 +339,155 @@ const AdminDashboard: React.FC = () => {
         variant: 'destructive' 
       });
     }
+  };
+
+  // Ouvrir une facture dans une modal avec authentification admin
+  const openInvoiceInModal = async (url: string, title = 'Facture') => {
+    try {
+      setInvoiceViewerLoading(true);
+      setInvoiceViewerTitle(title);
+      setInvoiceViewerHtml(null);
+      setInvoiceViewerFilename(null);
+
+      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      const authHeaders = getAuthHeader();
+      const headers: Record<string,string> = { 
+        'Accept': 'text/html, */*'
+      };
+      // Copier les headers d'auth s'ils existent
+      if (authHeaders && typeof authHeaders === 'object') {
+        Object.assign(headers, authHeaders);
+      }
+
+      const resp = await fetch(fullUrl, { 
+        method: 'GET', 
+        headers,
+        credentials: 'include' // Important pour envoyer les cookies admin
+      });
+
+      if (!resp.ok) {
+        if (resp.status === 403 || resp.status === 401) {
+          toast({ 
+            title: 'Non autorisé', 
+            description: 'Session admin expirée. Veuillez vous reconnecter.', 
+            variant: 'destructive' 
+          });
+          setIsAuthenticated(false);
+          setShowAdminLogin(true);
+          return;
+        }
+        throw new Error(`Erreur ${resp.status}`);
+      }
+
+      const text = await resp.text();
+      let filename = 'invoice.html';
+      const cd = resp.headers.get('content-disposition') || '';
+      const m = /filename\s*=\s*"?([^;"]+)"?/i.exec(cd);
+      if (m && m[1]) filename = m[1];
+
+      setInvoiceViewerFilename(filename);
+      setInvoiceViewerHtml(text);
+      setInvoiceViewerOpen(true);
+    } catch (err) {
+      console.error('[AdminDashboard] openInvoiceInModal error', err);
+      toast({ 
+        title: 'Erreur', 
+        description: 'Impossible d\'ouvrir la facture', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setInvoiceViewerLoading(false);
+    }
+  };
+
+  // Télécharger la facture visible dans la modal
+  const downloadVisibleInvoice = () => {
+    try {
+      if (!invoiceViewerHtml) return;
+      const blob = new Blob([invoiceViewerHtml], { type: 'text/html' });
+      const urlObj = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = urlObj;
+      a.download = invoiceViewerFilename || 'invoice.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(urlObj);
+      toast({ title: 'Téléchargé', description: 'Facture sauvegardée' });
+    } catch (err) {
+      console.error('[AdminDashboard] download error', err);
+      toast({ title: 'Erreur', description: 'Erreur lors du téléchargement', variant: 'destructive' });
+    }
+  };
+
+  // Filtrer les données selon la recherche
+  const filterOrders = (orders: OrderFull[]) => {
+    if (!searchQuery.trim()) return orders;
+    const q = searchQuery.toLowerCase();
+    return orders.filter(o => 
+      o.order_code?.toLowerCase().includes(q) ||
+      o.id?.toLowerCase().includes(q) ||
+      o.buyer?.full_name?.toLowerCase().includes(q) ||
+      o.buyer?.phone?.toLowerCase().includes(q) ||
+      o.vendor?.full_name?.toLowerCase().includes(q) ||
+      o.vendor?.phone?.toLowerCase().includes(q) ||
+      o.delivery?.full_name?.toLowerCase().includes(q) ||
+      o.status?.toLowerCase().includes(q) ||
+      o.payout_status?.toLowerCase().includes(q)
+    );
+  };
+
+  const filterTransactions = (transactions: Transaction[]) => {
+    if (!searchQuery.trim()) return transactions;
+    const q = searchQuery.toLowerCase();
+    return transactions.filter(t => 
+      t.id?.toLowerCase().includes(q) ||
+      t.transaction_id?.toLowerCase().includes(q) ||
+      t.order_id?.toLowerCase().includes(q) ||
+      t.batch_id?.toLowerCase().includes(q) ||
+      t.provider_transaction_id?.toLowerCase().includes(q) ||
+      t.status?.toLowerCase().includes(q) ||
+      t.transaction_type?.toLowerCase().includes(q)
+    );
+  };
+
+  const filterBatches = (batches: PayoutBatch[]) => {
+    if (!searchQuery.trim()) return batches;
+    const q = searchQuery.toLowerCase();
+    return batches.filter(b => 
+      b.id?.toLowerCase().includes(q) ||
+      b.status?.toLowerCase().includes(q) ||
+      b.created_by?.toLowerCase().includes(q)
+    );
+  };
+
+  const filterTransfers = (transfers: AdminTransfer[]) => {
+    if (!searchQuery.trim()) return transfers;
+    const q = searchQuery.toLowerCase();
+    return transfers.filter(t => 
+      t.id?.toLowerCase().includes(q) ||
+      t.phone?.toLowerCase().includes(q) ||
+      t.wallet_type?.toLowerCase().includes(q) ||
+      t.status?.toLowerCase().includes(q) ||
+      t.note?.toLowerCase().includes(q) ||
+      t.provider_transaction_id?.toLowerCase().includes(q)
+    );
+  };
+
+  const filterRefunds = (refunds: RefundRequest[]) => {
+    if (!searchQuery.trim()) return refunds;
+    const q = searchQuery.toLowerCase();
+    return refunds.filter(r => 
+      r.id?.toLowerCase().includes(q) ||
+      r.order_id?.toLowerCase().includes(q) ||
+      r.buyer_id?.toLowerCase().includes(q) ||
+      r.order?.order_code?.toLowerCase().includes(q) ||
+      r.buyer?.full_name?.toLowerCase().includes(q) ||
+      r.buyer?.phone?.toLowerCase().includes(q) ||
+      r.status?.toLowerCase().includes(q) ||
+      r.reason?.toLowerCase().includes(q) ||
+      r.rejection_reason?.toLowerCase().includes(q)
+    );
   };
 
   const handleApproveRefund = async (refundId: string) => {
@@ -679,6 +838,36 @@ const AdminDashboard: React.FC = () => {
           <button className={`px-3 py-2 rounded ${activeTab === 'refunds' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
         </div>
 
+        {/* Champ de recherche */}
+        <div className="mb-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={`🔍 Rechercher ${
+                activeTab === 'orders' ? 'commandes (code, nom, téléphone, statut...)' : 
+                activeTab === 'transactions' ? 'transactions (ID, order, batch, provider...)' : 
+                activeTab === 'transfers' ? 'transfers (téléphone, wallet, statut...)' : 
+                activeTab === 'refunds' ? 'remboursements (order, acheteur, statut...)' : 
+                'batches (ID, statut...)'
+              }`}
+              className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
+            <svg className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
         {activeTab === 'orders' && (
           <Card>
             <CardHeader>
@@ -688,7 +877,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Code</TableHead>
                     <TableHead>Acheteur</TableHead>
                     <TableHead>Vendeur</TableHead>
@@ -701,11 +890,11 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {orders
+                  {filterOrders(orders)
                     .filter(o => String(o.status).toLowerCase() === 'delivered')
                     .map((o: OrderFull) => (
                       <TableRow key={o.id}>
-                        <TableCell>{o.id}</TableCell>
+                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={o.id}>{o.id.substring(0, 8)}...</TableCell>
                         <TableCell>{o.order_code}</TableCell>
                         <TableCell>{o.buyer?.full_name || '-'}</TableCell>
                         <TableCell>{o.vendor?.full_name || '-'}</TableCell>
@@ -751,7 +940,7 @@ const AdminDashboard: React.FC = () => {
                       </TableRow>
                     ))}
 
-                  {orders.filter(o => String(o.status).toLowerCase() === 'delivered').length === 0 && (
+                  {filterOrders(orders).filter(o => String(o.status).toLowerCase() === 'delivered').length === 0 && (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center text-gray-500">Aucune commande livrée</TableCell>
                     </TableRow>
@@ -802,7 +991,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Order / Batch</TableHead>
                     <TableHead>Montant</TableHead>
                     <TableHead>Type</TableHead>
@@ -813,7 +1002,7 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {transactions.slice().sort((a,b) => {
+                  {filterTransactions(transactions).slice().sort((a,b) => {
                     const priority = (s?: string) => s === 'pending' ? 0 : s === 'queued' ? 1 : s === 'processing' ? 2 : s === 'failed' ? 3 : s === 'paid' ? 4 : 5;
                     const pa = priority(a.status);
                     const pb = priority(b.status);
@@ -821,7 +1010,7 @@ const AdminDashboard: React.FC = () => {
                     return (new Date(b.created_at || 0).getTime()) - (new Date(a.created_at || 0).getTime());
                   }).map((t: TransactionFull) => (
                     <TableRow key={t.id}>
-                      <TableCell>{t.transaction_id || t.id}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[80px]" title={t.transaction_id || t.id}>{(t.transaction_id || t.id).substring(0, 8)}...</TableCell>
                       <TableCell>{t.order?.order_code || t.order_id || (t.batch_id ? `batch:${t.batch_id}` : '-')}</TableCell>
                       <TableCell>{t.amount?.toLocaleString()} FCFA</TableCell>
                       <TableCell>{t.transaction_type}</TableCell>
@@ -841,7 +1030,7 @@ const AdminDashboard: React.FC = () => {
                     </TableRow>
                   ))}
 
-                  {transactions.length === 0 && (
+                  {filterTransactions(transactions).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-gray-500">Aucune transaction enregistrée</TableCell>
                     </TableRow>
@@ -889,7 +1078,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Scheduled</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Total</TableHead>
@@ -897,9 +1086,9 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {batches.filter(b => !['completed','failed','cancelled'].includes(b.status || '')).map(b => (
+                  {filterBatches(batches).filter(b => !['completed','failed','cancelled'].includes(b.status || '')).map(b => (
                     <TableRow key={b.id}>
-                      <TableCell>{b.id}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
                       <TableCell>
                         <span className={`px-2 py-1 rounded text-sm ${
@@ -928,7 +1117,7 @@ const AdminDashboard: React.FC = () => {
                     </TableRow>
                   ))}
 
-                  {batches.filter(b => !['completed','failed','cancelled'].includes(b.status || '')).length === 0 && (
+                  {filterBatches(batches).filter(b => !['completed','failed','cancelled'].includes(b.status || '')).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center text-gray-500">Aucun payout en attente</TableCell>
                     </TableRow>
@@ -949,7 +1138,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Scheduled</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Total</TableHead>
@@ -957,9 +1146,9 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {batches.filter(b => ['completed','failed','cancelled'].includes(b.status || '')).map(b => (
+                  {filterBatches(batches).filter(b => ['completed','failed','cancelled'].includes(b.status || '')).map(b => (
                     <TableRow key={b.id}>
-                      <TableCell>{b.id}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
                       <TableCell>
                         <span className={`px-2 py-1 rounded text-sm ${
@@ -1110,7 +1299,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Montant</TableHead>
                     <TableHead>Téléphone</TableHead>
                     <TableHead>Wallet</TableHead>
@@ -1120,9 +1309,9 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {transfers.map(t => (
+                  {filterTransfers(transfers).map(t => (
                     <TableRow key={t.id}>
-                      <TableCell className="font-mono text-xs">{t.id}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[80px]" title={t.id}>{t.id.substring(0, 8)}...</TableCell>
                       <TableCell className="font-semibold">{(t.amount || 0).toLocaleString()} FCFA</TableCell>
                       <TableCell>{t.phone || '-'}</TableCell>
                       <TableCell>
@@ -1145,7 +1334,7 @@ const AdminDashboard: React.FC = () => {
                       <TableCell>{t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</TableCell>
                     </TableRow>
                   ))}
-                  {transfers.length === 0 && (
+                  {filterTransfers(transfers).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-gray-500">Aucun transfert effectué</TableCell>
                     </TableRow>
@@ -1171,7 +1360,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Commande</TableHead>
                     <TableHead>Produit</TableHead>
                     <TableHead>Acheteur</TableHead>
@@ -1182,11 +1371,11 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {refunds
+                  {filterRefunds(refunds)
                     .filter(r => r.status === 'pending')
                     .map(r => (
                       <TableRow key={r.id}>
-                        <TableCell className="font-mono text-xs">{r.id.substring(0, 8)}...</TableCell>
+                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
                         <TableCell>{r.order?.order_code || r.order_id}</TableCell>
                         <TableCell>{r.order?.products?.name || '-'}</TableCell>
                         <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
@@ -1225,7 +1414,7 @@ const AdminDashboard: React.FC = () => {
                         </TableCell>
                       </TableRow>
                     ))}
-                  {refunds.filter(r => r.status === 'pending').length === 0 && (
+                  {filterRefunds(refunds).filter(r => r.status === 'pending').length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-gray-500">Aucune demande en attente</TableCell>
                     </TableRow>
@@ -1238,7 +1427,7 @@ const AdminDashboard: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead className="w-20">ID</TableHead>
                     <TableHead>Commande</TableHead>
                     <TableHead>Acheteur</TableHead>
                     <TableHead>Montant</TableHead>
@@ -1249,7 +1438,7 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {refunds
+                  {filterRefunds(refunds)
                     .filter(r => r.status !== 'pending')
                     .sort((a, b) => {
                       const dateA = a.reviewed_at || a.processed_at || a.requested_at || '';
@@ -1258,7 +1447,7 @@ const AdminDashboard: React.FC = () => {
                     })
                     .map(r => (
                       <TableRow key={r.id}>
-                        <TableCell className="font-mono text-xs">{r.id.substring(0, 8)}...</TableCell>
+                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
                         <TableCell>{r.order?.order_code || r.order_id}</TableCell>
                         <TableCell>{r.buyer?.full_name || '-'}</TableCell>
                         <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
@@ -1281,7 +1470,7 @@ const AdminDashboard: React.FC = () => {
                         <TableCell className="text-xs text-gray-500">{r.reviewed_by || '-'}</TableCell>
                       </TableRow>
                     ))}
-                  {refunds.filter(r => r.status !== 'pending').length === 0 && (
+                  {filterRefunds(refunds).filter(r => r.status !== 'pending').length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>
                     </TableRow>
@@ -1292,7 +1481,41 @@ const AdminDashboard: React.FC = () => {
           </Card>
         )}
       </div>
-    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={(vendorId) => window.open(apiUrl(`/api/admin/payout-batches/${selectedBatch?.id}/invoice?vendorId=${encodeURIComponent(vendorId)}`), '_blank')} />}
+    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={(vendorId) => openInvoiceInModal(`/api/admin/payout-batches/${selectedBatch?.id}/invoice?vendorId=${encodeURIComponent(vendorId)}`, `Facture Batch ${selectedBatch?.id?.slice(0, 8)} - Vendeur`)} />}
+    
+    {/* Modal Invoice Viewer */}
+    {invoiceViewerOpen && (
+      <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm">
+        <div className="bg-white rounded-lg w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col shadow-2xl">
+          <div className="p-4 border-b flex items-center justify-between">
+            <h3 className="text-lg font-semibold">{invoiceViewerTitle}</h3>
+            <div className="flex gap-2">
+              {invoiceViewerHtml && (
+                <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 text-white hover:bg-green-600">
+                  Télécharger
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setInvoiceViewerOpen(false)}>
+                Fermer
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto p-4">
+            {invoiceViewerLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Spinner size="lg" />
+              </div>
+            )}
+            {!invoiceViewerLoading && invoiceViewerHtml && (
+              <div dangerouslySetInnerHTML={{ __html: invoiceViewerHtml }} />
+            )}
+            {!invoiceViewerLoading && !invoiceViewerHtml && (
+              <p className="text-center text-gray-500">Aucun contenu</p>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 };

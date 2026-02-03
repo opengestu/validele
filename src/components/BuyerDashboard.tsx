@@ -102,6 +102,7 @@ const BuyerDashboard = () => {
   // ...existing code...
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -685,12 +686,14 @@ const BuyerDashboard = () => {
         } : undefined,
       };
       setSearchResult(normalizedProduct);
+      setSearchModalOpen(true);
       toast({
         title: "Produit trouvé",
         description: `${normalizedProduct.name} - ${normalizedProduct.price.toLocaleString()} FCFA`,
       });
     } catch (error) {
       setSearchResult(null);
+      setSearchModalOpen(false);
       toast({
         title: "Produit non trouvé",
         description: "Aucun produit trouvé avec ce code",
@@ -707,7 +710,7 @@ const BuyerDashboard = () => {
   // Polling du statut de la commande après paiement
   const pollOrderStatus = (orderId: string) => {
     let attempts = 0;
-    const maxAttempts = 30; // 30 x 2s = 1 minute
+    const maxAttempts = 60; // 60 x 2s = 2 minutes
     const interval = setInterval(async () => {
       attempts++;
       const { data: order, error } = await supabase
@@ -715,12 +718,23 @@ const BuyerDashboard = () => {
         .select('status')
         .eq('id', orderId)
         .single();
+      
       if (order?.status === 'paid') {
         clearInterval(interval);
+        toast({
+          title: '✅ Paiement confirmé !',
+          description: 'Votre commande a été payée avec succès',
+        });
         navigate(`/payment-success?order_id=${orderId}`);
       }
+      
       if (attempts >= maxAttempts) {
         clearInterval(interval);
+        toast({
+          title: '⏱️ Délai dépassé',
+          description: 'Vérifiez vos commandes pour voir le statut du paiement',
+          variant: 'destructive',
+        });
       }
     }, 2000);
   };
@@ -881,12 +895,20 @@ const BuyerDashboard = () => {
           await pixPayService.openPaymentLink(orangeResult.sms_link);
           
           toast({
-            title: 'Paiement Orange Money',
-            description: 'Validez le paiement sur la page qui s\'est ouverte',
+            title: '🔄 Paiement Orange Money en cours',
+            description: 'Veuillez compléter le paiement dans la page qui s\'est ouverte. Votre commande sera confirmée automatiquement une fois le paiement effectué.',
+            duration: 10000, // 10 secondes
           });
           
-          // Retourner à la recherche
+          // Démarrer le polling du statut de la commande
+          pollOrderStatus(createdOrderId);
+          
+          // Fermer le modal et retourner à la recherche
+          setSearchModalOpen(false);
           setSearchResult(null);
+          setPurchaseQuantity(1);
+          setPaymentMethod('wave');
+          setSearchCode('');
         } else {
           throw new Error(orangeResult.error || orangeResult.message || 'Erreur paiement Orange Money');
         }
@@ -978,12 +1000,20 @@ const BuyerDashboard = () => {
           await pixPayService.openPaymentLink(waveResult.sms_link);
           
           toast({
-            title: 'Paiement Wave',
-            description: waveResult.message || 'Validez le paiement dans l\'application Wave',
+            title: '🔄 Paiement Wave en cours',
+            description: 'Veuillez compléter le paiement dans l\'application Wave qui s\'est ouverte. Votre commande sera confirmée automatiquement une fois le paiement effectué.',
+            duration: 10000, // 10 secondes
           });
           
-          // Retourner à la recherche
+          // Démarrer le polling du statut de la commande
+          pollOrderStatus(createdOrderId);
+          
+          // Fermer le modal et retourner à la recherche
+          setSearchModalOpen(false);
           setSearchResult(null);
+          setPurchaseQuantity(1);
+          setPaymentMethod('wave');
+          setSearchCode('');
         } else {
           throw new Error(waveResult.error || waveResult.message || 'Erreur paiement Wave');
         }
@@ -1362,8 +1392,8 @@ const BuyerDashboard = () => {
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
-        <div className="fixed inset-0 z-[100] bg-white bg-opacity-90 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4">
+        <div className="fixed inset-0 z-[100] bg-black bg-opacity-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 bg-white rounded-lg px-8 py-6 shadow-xl">
             <Spinner size="xl" />
             <span className="text-lg font-semibold text-gray-700">Paiement en cours...</span>
           </div>
@@ -1501,142 +1531,6 @@ const BuyerDashboard = () => {
                 </form>
               </CardContent>
             </Card>
-
-            {/* Résultat de recherche */}
-            {searchResult && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Package className="h-5 w-5" />
-                    <span>Produit trouvé</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-lg font-semibold">{searchResult.name}</h3>
-                        <p className="text-gray-600">{searchResult.description}</p>
-                        <p className="text-sm text-gray-500">Vendeur(se): {searchResult.profiles?.full_name || searchResult.profiles?.company_name}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-green-600">{searchResult.price.toLocaleString()} FCFA</p>
-                        <p className="text-sm text-gray-500">Code: {searchResult.code}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm font-medium">Quantité:</label>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-10 w-10"
-                          onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
-                          disabled={purchaseQuantity <= 1}
-                          aria-label="Diminuer la quantité"
-                        >
-                          <Minus className="h-4 w-4" />
-                        </Button>
-                        <Input
-                          type="number"
-                          min="1"
-                          inputMode="numeric"
-                          value={purchaseQuantity}
-                          onChange={(e) => {
-                            const next = Number.parseInt(e.target.value, 10);
-                            setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
-                          }}
-                          onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
-                          className="w-24 h-10 text-center"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-10 w-10"
-                          onClick={() => setPurchaseQuantity(q => q + 1)}
-                          aria-label="Augmenter la quantité"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t">
-                      <p className="text-lg font-semibold">
-                        Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
-                      </p>
-                    </div>
-
-                    {/* Sélecteur de moyen de paiement */}
-                    <div className="mb-2">
-                      <Select value={paymentMethod} onValueChange={v => setPaymentMethod(v as PaymentMethod)}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Choisir un moyen de paiement" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="wave">
-                            <span className="flex items-center gap-3">
-                              <img src={waveLogo} alt="Wave" style={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 8, background: '#fff' }} />
-                              <span className="text-lg font-bold">Wave</span>
-                            </span>
-                          </SelectItem>
-                          <SelectItem value="orange_money">
-                            <span className="flex items-center gap-3">
-                              <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 8, background: '#fff' }} />
-                              <span className="text-lg font-bold">Orange Money</span>
-                            </span>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Indicateur de connexion serveur - masqué pour UX plus fluide */}
-                    {/* Le warm-up se fait en arrière-plan */}
-
-                    {/* Bouton de paiement */}
-                    {paymentMethod === 'wave' && (
-                      <>
-                        <Button 
-                          onClick={handleCreateOrderAndShowPayment}
-                          disabled={processingPayment}
-                          className="w-full bg-green-500 hover:bg-green-600"
-                        >
-                          Payer avec Wave
-                        </Button>
-                        <button
-                          type="button"
-                          className="w-full mt-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                          onClick={() => { setSearchResult(null); setPurchaseQuantity(1); setPaymentMethod('wave'); setSearchCode(''); }}
-                        >
-                          Annuler
-                        </button>
-                      </>
-                    )}
-                    {paymentMethod === 'orange_money' && (
-                      <>
-                        <Button
-                          onClick={handleCreateOrderAndShowPayment}
-                          disabled={processingPayment}
-                          className="w-full bg-green-600 hover:bg-orange-700"
-                        >
-                          Payer avec Orange Money
-                        </Button>
-                        <button
-                          type="button"
-                          className="w-full mt-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                          onClick={() => { setSearchResult(null); setPurchaseQuantity(1); setPaymentMethod('wave'); setSearchCode(''); }}
-                        >
-                          Annuler
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* Colonne de droite - Profil & Commandes */}
@@ -2266,6 +2160,176 @@ const BuyerDashboard = () => {
         onSuccess={handlePaymentWebViewSuccess}
         orderId={orderId || undefined}
       />
+
+      {/* Modal de résultat de recherche produit */}
+      {searchModalOpen && searchResult && (
+        <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
+            <div className="p-6 border-b flex items-center justify-between">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Package className="h-6 w-6 text-green-600" />
+                Produit trouvé
+              </h3>
+              <button
+                onClick={() => {
+                  setSearchModalOpen(false);
+                  setSearchResult(null);
+                  setPurchaseQuantity(1);
+                  setPaymentMethod('wave');
+                  setSearchCode('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Fermer la fenêtre"
+                title="Fermer"
+              >
+                <XCircle className="h-6 w-6" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1">
+                    <h3 className="text-2xl font-bold text-gray-900">{searchResult.name}</h3>
+                    <p className="text-gray-600 mt-2">{searchResult.description}</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      <span className="font-medium">Vendeur(se):</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-green-600">{searchResult.price.toLocaleString()} FCFA</p>
+                    <p className="text-sm text-gray-500 mt-1">Code: {searchResult.code}</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3 pt-4 border-t">
+                  <label className="text-base font-medium">Quantité:</label>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-10 w-10"
+                      onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
+                      disabled={purchaseQuantity <= 1}
+                      aria-label="Diminuer la quantité"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                    <Input
+                      type="number"
+                      min="1"
+                      inputMode="numeric"
+                      value={purchaseQuantity}
+                      onChange={(e) => {
+                        const next = Number.parseInt(e.target.value, 10);
+                        setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
+                      }}
+                      onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
+                      className="w-24 h-10 text-center text-lg font-semibold"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-10 w-10"
+                      onClick={() => setPurchaseQuantity(q => q + 1)}
+                      aria-label="Augmenter la quantité"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <p className="text-2xl font-bold text-gray-900">
+                    Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
+                  </p>
+                </div>
+
+                {/* Sélecteur de moyen de paiement */}
+                <div className="pt-4">
+                  <label className="text-base font-medium mb-2 block">Moyen de paiement</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('wave')}
+                      className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                        paymentMethod === 'wave' 
+                          ? 'border-green-500 bg-green-50' 
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                      <span className="text-sm font-semibold">Wave</span>
+                      {paymentMethod === 'wave' && (
+                        <div className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
+                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('orange_money')}
+                      className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                        paymentMethod === 'orange_money' 
+                          ? 'border-orange-500 bg-orange-50' 
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                      <span className="text-sm font-semibold">Orange Money</span>
+                      {paymentMethod === 'orange_money' && (
+                        <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
+                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t bg-gray-50">
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSearchModalOpen(false);
+                    setSearchResult(null);
+                    setPurchaseQuantity(1);
+                    setPaymentMethod('wave');
+                    setSearchCode('');
+                  }}
+                  className="flex-1"
+                >
+                  Annuler
+                </Button>
+                <Button
+                  onClick={handleCreateOrderAndShowPayment}
+                  disabled={processingPayment}
+                  className={`flex-1 ${paymentMethod === 'wave' ? 'bg-green-500 hover:bg-green-600' : 'bg-orange-600 hover:bg-orange-700'}`}
+                >
+                  {processingPayment ? (
+                    <>
+                      <Spinner size="sm" className="mr-2" />
+                      Traitement...
+                    </>
+                  ) : (
+                    <>
+                      Payer avec {paymentMethod === 'wave' ? 'Wave' : 'Orange Money'}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

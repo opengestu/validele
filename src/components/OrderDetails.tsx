@@ -301,8 +301,8 @@ const OrderDetails = () => {
 
       {/* Modal QR Code plein écran */}
       {showOnlyQR && order.qr_code && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded-lg max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-lg max-w-md w-full mx-4 shadow-2xl">
             <div className="text-center">
               <h3 className="text-lg font-semibold mb-4">QR Code de commande</h3>
               <OrderQRCode qrCode={order.qr_code} orderCode={''} productName={''} totalAmount={0} />
