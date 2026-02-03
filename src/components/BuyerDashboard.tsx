@@ -1469,7 +1469,7 @@ const BuyerDashboard = () => {
                 pattern="[0-9+\s-]*"
                 value={editProfile.phone}
                 onChange={e => setEditProfile(p => ({ ...p, phone: e.target.value }))}
-                style={{ width: '100%', padding: '14px 12px', fontSize: 18, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12, minHeight: 48 }}
+                style={{ width: '100%', padding: '16px 14px', fontSize: 20, borderRadius: 6, border: '1px solid #ddd', marginTop: 4, marginBottom: 12, minHeight: 56 }}
                 placeholder="Votre numéro de téléphone"
               />
             </div>
@@ -1972,7 +1972,8 @@ const BuyerDashboard = () => {
                   placeholder="Téléphone" 
                   required 
                   defaultValue={userProfile?.phone || ''} 
-                  className="text-lg h-12 md:text-base md:h-10"
+                  className="text-xl h-14 md:text-base md:h-10"
+                  style={{ fontSize: '20px' }}
                 />
                 {softPayType === 'orange_otp' && (
                   <Input 
@@ -1981,7 +1982,8 @@ const BuyerDashboard = () => {
                     pattern="[0-9]*"
                     placeholder="Code OTP Orange Money" 
                     required 
-                    className="text-lg h-12 md:text-base md:h-10"
+                    className="text-xl h-14 md:text-base md:h-10"
+                    style={{ fontSize: '20px' }}
                   />
                 )}
                 {softPayError && <div className="text-red-600 text-sm">{softPayError}</div>}
@@ -2244,7 +2246,8 @@ const BuyerDashboard = () => {
                         setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
                       }}
                       onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
-                      className="w-24 h-10 text-center text-lg font-semibold"
+                      className="w-24 h-12 text-center text-xl font-semibold md:h-10 md:text-lg"
+                      style={{ fontSize: '20px' }}
                     />
                     <Button
                       type="button"

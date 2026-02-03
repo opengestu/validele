@@ -1224,7 +1224,8 @@ const AdminDashboard: React.FC = () => {
                       value={transferPhone}
                       onChange={(e) => setTransferPhone(e.target.value)}
                       placeholder="Ex: 774254729"
-                      className="w-full px-3 py-2 border rounded text-lg h-12 md:text-base md:h-10"
+                      className="w-full px-3 py-2 border rounded text-xl h-14 md:text-base md:h-10"
+                      style={{ fontSize: '20px' }}
                     />
                   </div>
                   <div>

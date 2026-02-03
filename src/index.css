@@ -314,16 +314,30 @@
     input[type="number"],
     input[inputmode="numeric"],
     input[inputmode="tel"] {
-      font-size: 18px !important;
-      min-height: 48px !important;
-      padding: 14px 12px !important;
+      font-size: 20px !important; /* Augmenté de 18px à 20px pour forcer un clavier plus grand */
+      min-height: 52px !important; /* Augmenté de 48px à 52px */
+      padding: 16px 14px !important; /* Augmenté le padding */
+      -webkit-text-size-adjust: 100%; /* Empêche le zoom automatique sur iOS */
+      text-size-adjust: 100%;
     }
     
     /* Classe utilitaire pour inputs numériques */
     .numeric-input-mobile {
-      font-size: 18px !important;
-      min-height: 48px !important;
-      padding: 14px 12px !important;
+      font-size: 20px !important;
+      min-height: 52px !important;
+      padding: 16px 14px !important;
+    }
+  }
+  
+  /* Sur très petits écrans (smartphones), encore plus grand */
+  @media (max-width: 480px) {
+    input[type="tel"],
+    input[type="number"],
+    input[inputmode="numeric"],
+    input[inputmode="tel"] {
+      font-size: 22px !important; /* Encore plus grand sur petits écrans */
+      min-height: 56px !important;
+      padding: 18px 16px !important;
     }
   }
 }
