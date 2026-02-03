@@ -500,9 +500,13 @@ const AdminDashboard: React.FC = () => {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Erreur lors de l\'approbation');
-      toast({ title: 'Succès', description: 'Remboursement approuvé et traité' });
-      // Force reload after 500ms to ensure backend has processed
-      setTimeout(() => fetchData(), 500);
+      toast({ 
+        title: '✅ Remboursement approuvé', 
+        description: 'Le remboursement a été traité avec succès. Mise à jour des données...' 
+      });
+      // Reload immediately and then again after 1s to ensure backend has processed
+      await fetchData();
+      setTimeout(() => fetchData(), 1000);
     } catch (err: unknown) {
       toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
     } finally {
@@ -521,9 +525,13 @@ const AdminDashboard: React.FC = () => {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Erreur lors du rejet');
-      toast({ title: 'Succès', description: 'Demande de remboursement rejetée' });
-      // Force reload after 500ms to ensure backend has processed
-      setTimeout(() => fetchData(), 500);
+      toast({ 
+        title: '✅ Demande rejetée', 
+        description: 'La demande de remboursement a été rejetée. Mise à jour des données...' 
+      });
+      // Reload immediately and then again after 1s to ensure backend has processed
+      await fetchData();
+      setTimeout(() => fetchData(), 1000);
     } catch (err: unknown) {
       toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
     } finally {

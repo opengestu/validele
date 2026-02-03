@@ -4332,22 +4332,28 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     console.log('[REFUND] Résultat PixPay:', result);
 
     // 4) Mettre à jour la demande de remboursement
-    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', result.success ? 'processed' : 'approved');
-    const { error: updateRefundError } = await supabaseAdmin
+    const newStatus = result.success ? 'processed' : 'approved';
+    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', newStatus);
+    
+    const { data: updatedRefund, error: updateRefundError } = await supabaseAdmin
       .from('refund_requests')
       .update({
-        status: result.success ? 'processed' : 'approved',
+        status: newStatus,
         reviewed_at: new Date().toISOString(),
         reviewed_by: req.user?.id || 'admin',
         processed_at: result.success ? new Date().toISOString() : null,
         transaction_id: result.transaction_id
       })
-      .eq('id', refundId);
+      .eq('id', refundId)
+      .select()
+      .single();
 
     if (updateRefundError) {
-      console.error('[REFUND] Erreur mise à jour demande:', updateRefundError);
+      console.error('[REFUND] ❌ Erreur mise à jour demande:', updateRefundError);
+      // Continue quand même car l'argent a été envoyé
     } else {
       console.log('[REFUND] ✅ Demande mise à jour avec succès:', refundId);
+      console.log('[REFUND] Données mises à jour:', updatedRefund);
     }
 
     // 5) Mettre à jour le statut de la commande
@@ -4384,14 +4390,30 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
       if (txError) {
         console.error('[REFUND] Erreur enregistrement transaction:', txError);
+      } else {
+        console.log('[REFUND] ✅ Transaction enregistrée:', result.transaction_id);
       }
+    }
+
+    // 7) Vérifier la mise à jour finale du statut
+    const { data: finalRefund, error: checkError } = await supabaseAdmin
+      .from('refund_requests')
+      .select('status, reviewed_at, processed_at')
+      .eq('id', refundId)
+      .single();
+
+    if (checkError) {
+      console.error('[REFUND] Erreur vérification finale:', checkError);
+    } else {
+      console.log('[REFUND] État final de la demande:', finalRefund);
     }
 
     return res.json({
       success: result.success,
       transaction_id: result.transaction_id,
+      refund_status: finalRefund?.status || 'unknown',
       message: result.success 
-        ? `Remboursement de ${refundRequest.amount} FCFA initié vers ${buyerPhone}`
+        ? `Remboursement de ${refundRequest.amount} FCFA traité avec succès vers ${buyerPhone}`
         : result.message
     });
 
