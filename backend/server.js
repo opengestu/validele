@@ -4332,6 +4332,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     console.log('[REFUND] Résultat PixPay:', result);
 
     // 4) Mettre à jour la demande de remboursement
+    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', result.success ? 'processed' : 'approved');
     const { error: updateRefundError } = await supabaseAdmin
       .from('refund_requests')
       .update({
@@ -4345,9 +4346,12 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
     if (updateRefundError) {
       console.error('[REFUND] Erreur mise à jour demande:', updateRefundError);
+    } else {
+      console.log('[REFUND] ✅ Demande mise à jour avec succès:', refundId);
     }
 
     // 5) Mettre à jour le statut de la commande
+    console.log('[REFUND] Mise à jour commande:', refundRequest.order_id, 'status: cancelled');
     const { error: updateOrderError } = await supabaseAdmin
       .from('orders')
       .update({
@@ -4359,6 +4363,8 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
     if (updateOrderError) {
       console.error('[REFUND] Erreur mise à jour commande:', updateOrderError);
+    } else {
+      console.log('[REFUND] ✅ Commande mise à jour avec succès:', refundRequest.order_id);
     }
 
     // 6) Enregistrer la transaction de remboursement
