@@ -926,7 +926,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       <>
         {/* Desktop / tablet keypad (hidden on small screens) */}
         <div className="hidden sm:block mt-8 pb-3 sm:pb-0">
-<div className="grid grid-cols-3 gap-5 max-w-[280px] mx-auto">
+<div className="grid grid-cols-3 gap-5 max-w-[300px] mx-auto">
             {[1,2,3,4,5,6,7,8,9].map(n => (
               <button
                 key={n}
@@ -934,20 +934,20 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 aria-label={`Num ${n}`}
                 onPointerDown={provideHaptic}
                 onClick={() => handleKeypadDigit(String(n))}
-                className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all hover:bg-[#10b981] hover:text-white"
+                className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all hover:bg-[#10b981] hover:text-white"
                 style={{ border: '3px solid #10b981', color: '#10b981' }}
                 onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
                 onMouseLeave={(e) => e.currentTarget.style.color = '#10b981'}
               >{n}</button>
             ))}
             {/* Left cell intentionally left empty to keep 0 and X on the right */}
-            <div className="w-[70px] h-[70px]" />
+            <div className="w-[80px] h-[80px]" />
             <button 
               type="button" 
               aria-label="Num 0" 
               onPointerDown={provideHaptic} 
               onClick={() => handleKeypadDigit('0')} 
-              className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center transition-all active:scale-95 hover:bg-[#10b981] hover:text-white"
+              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center transition-all active:scale-95 hover:bg-[#10b981] hover:text-white"
               style={{ border: '3px solid #10b981', color: '#10b981' }}
               onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
               onMouseLeave={(e) => e.currentTarget.style.color = '#10b981'}
@@ -958,12 +958,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               title="Effacer"
               onPointerDown={provideHaptic}
               onClick={handleKeypadBackspace}
-              className="w-[70px] h-[70px] rounded-full bg-white text-xl font-semibold flex items-center justify-center active:scale-95 transition-all hover:bg-red-500 hover:text-white"
+              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all hover:bg-red-500 hover:text-white"
               style={{ border: '3px solid #ef4444', color: '#ef4444' }}
               onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
               onMouseLeave={(e) => e.currentTarget.style.color = '#ef4444'}
             >
-              <span className="text-2xl">⌫</span>
+              <span className="text-3xl">⌫</span>
             </button>
           </div>
 
@@ -988,9 +988,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         <div className="sm:hidden mt-8">
           <div className="flex justify-center">
             <div
-              className="bg-white/95 p-3 rounded-2xl w-full max-w-[280px]"
+              className="bg-white/95 p-3 rounded-2xl w-full max-w-[320px]"
             >
-              <div className="grid grid-cols-3 gap-4 max-w-[250px] mx-auto">
+              <div className="grid grid-cols-3 gap-5 max-w-[280px] mx-auto">
                 {[1,2,3,4,5,6,7,8,9].map(n => (
                   <button
                     key={`m-${n}`}
@@ -998,18 +998,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     aria-label={`Num ${n}`}
                     onPointerDown={provideHaptic}
                     onClick={() => handleKeypadDigit(String(n))}
-                    className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all"
-                    style={{ border: '2px solid #10b981', color: '#10b981' }}
+                    className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all"
+                    style={{ border: '3px solid #10b981', color: '#10b981' }}
                   >{n}</button>
                 ))}
-                <div className="w-[56px] h-[56px]" />
+                <div className="w-[75px] h-[75px]" />
                 <button 
                   type="button" 
                   aria-label="Num 0" 
                   onPointerDown={provideHaptic} 
                   onClick={() => handleKeypadDigit('0')} 
-                  className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center transition-all active:scale-95"
-                  style={{ border: '2px solid #10b981', color: '#10b981' }}
+                  className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center transition-all active:scale-95"
+                  style={{ border: '3px solid #10b981', color: '#10b981' }}
                 >0</button>
                 <button
                   type="button"
@@ -1017,10 +1017,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   title="Effacer"
                   onPointerDown={provideHaptic}
                   onClick={handleKeypadBackspace}
-                  className="w-[56px] h-[56px] rounded-full bg-white text-lg font-semibold flex items-center justify-center active:scale-95 transition-all"
-                  style={{ border: '2px solid #ef4444', color: '#ef4444' }}
+                  className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all"
+                  style={{ border: '3px solid #ef4444', color: '#ef4444' }}
                 >
-                  <span className="text-xl">⌫</span>
+                  <span className="text-3xl">⌫</span>
                 </button>
               </div>
 
