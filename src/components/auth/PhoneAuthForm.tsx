@@ -1081,7 +1081,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       )}
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
 
-      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 py-2 ${className ?? ''}`}>
+      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 pt-32 pb-8 ${className ?? ''}`}>
       <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none space-y-3 sm:pb-4" style={{ boxShadow: 'none', border: 'none' }}>
 
 
@@ -1090,7 +1090,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           <div className="space-y-2">
             <div className="w-full flex justify-center">
               <div className="w-full max-w-[280px]">
-                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 shadow-sm mb-4 sm:mb-10 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
+                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 mb-2 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
                   <div className="flex items-center gap-1 px-2 py-1 shrink-0 border-r border-muted/20">
                     <span className="text-base md:text-lg">🇸🇳</span>
                     <span className="text-base md:text-lg text-muted-foreground font-medium">+221</span>
