@@ -11,6 +11,20 @@ const STATUS_LABELS_FR: Record<string, string> = {
   refunded: 'Remboursée',
   failed: 'Échouée',
 };
+
+const getStatusBadgeColor = (status: string): string => {
+  switch (status) {
+    case 'cancelled': return '#dc2626'; // rouge
+    case 'failed': return '#dc2626'; // rouge
+    case 'delivered': return '#16a34a'; // vert
+    case 'in_delivery': return '#f59e0b'; // orange
+    case 'paid': return '#2563eb'; // bleu
+    case 'assigned': return '#8b5cf6'; // violet
+    case 'refunded': return '#6b7280'; // gris
+    default: return '#6b7280'; // gris par défaut
+  }
+};
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@/components/ui/spinner';
@@ -1369,7 +1383,7 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center mb-1 mt-2">
                         <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                        <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
+                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
                           {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                         </span>
                       </div>
@@ -1746,7 +1760,7 @@ const VendorDashboard = () => {
                                   {/* Statut tout en bas */}
                                   <div className="flex items-center mb-1 mt-2">
                                     <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                                    <span className="text-xs font-bold text-white" style={{background:'#2563eb',borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:'0 1px 4px #2563eb22', marginLeft: 8}}>
+                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
                                       {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                                     </span>
                                   </div>
