@@ -1081,7 +1081,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       )}
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
 
-      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 pt-0 transform translate-y-24 md:translate-y-24 pb-8 ${className ?? ''}`}>
+      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 pt-0 transform translate-y-12 md:translate-y-16 pb-8 ${className ?? ''}`}>
       <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none space-y-3 sm:pb-4" style={{ boxShadow: 'none', border: 'none' }}>
 
 
