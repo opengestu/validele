@@ -501,7 +501,8 @@ const AdminDashboard: React.FC = () => {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Erreur lors de l\'approbation');
       toast({ title: 'Succès', description: 'Remboursement approuvé et traité' });
-      fetchData();
+      // Force reload after 500ms to ensure backend has processed
+      setTimeout(() => fetchData(), 500);
     } catch (err: unknown) {
       toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
     } finally {
@@ -521,7 +522,8 @@ const AdminDashboard: React.FC = () => {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Erreur lors du rejet');
       toast({ title: 'Succès', description: 'Demande de remboursement rejetée' });
-      fetchData();
+      // Force reload after 500ms to ensure backend has processed
+      setTimeout(() => fetchData(), 500);
     } catch (err: unknown) {
       toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
     } finally {
