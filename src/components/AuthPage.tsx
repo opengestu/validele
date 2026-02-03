@@ -47,11 +47,11 @@ const AuthPage = () => {
   // Format d'affichage 7X XXX XX XX
 
   return (
-    <div className="flex flex-col min-h-screen items-center bg-white pt-6 md:pt-8">
+    <div className="flex flex-col min-h-screen items-center bg-white pt-16 md:pt-24">
       {authStep === 'phone' && (
-        <div className="w-full text-center mt-32 md:mt-36 mb-6 pt-0">
+        <div className="w-full text-center mt-0 mb-0 pt-0 transform translate-y-20 md:translate-y-28">
           <h2 className="text-2xl md:text-3xl font-extrabold">Bienvenue chez <span className="text-[#24BD5C] font-bold">Validèl</span> !</h2>
-          <p className="text-sm md:text-base text-muted-foreground mt-1">Entrez votre numéro pour commencer</p>
+          <p className="text-sm md:text-base text-muted-foreground mt-1 mb-0">Entrez votre numéro pour commencer</p>
         </div>
       )}
 
