@@ -1420,39 +1420,15 @@ const QRScanner = () => {
           </div>
         ) : !showScanSection ? (
           <div className="space-y-4">
-            {/* Recherche commande */}
+            {/* Bouton Scanner QR Commande - En haut */}
             <Card className="border-0 shadow-lg">
               <CardContent className="p-5">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                    <Package className="h-5 w-5 text-green-600" />
-                  </div>
-                  <span className="text-lg font-semibold text-gray-900">Rechercher une commande</span>
-                </div>
-                <div className="space-y-3">
-                  <Input
-                    type="text"
-                    className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-green-500 focus:ring-green-500"
-                    placeholder="Ex: CAB1234"
-                    value={orderCode}
-                    onChange={e => setOrderCode(e.target.value)}
-                  />
-                  <div className="flex flex-col gap-3">
-                    <Button 
-                      className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
-                      onClick={handleSearchOrder}
-                    >
-                      Rechercher
-                    </Button>
-                    <Button 
-                      className="w-full h-12 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-base font-semibold flex items-center justify-center gap-2" 
-                      onClick={handleScanVendorQR}
-                    >
-                      <QrCode className="h-5 w-5" />
-                      Scanner QR Commande
-                    </Button>
-                  </div>
-                </div>
+                <Button 
+                  className="w-full h-14 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-lg font-semibold flex items-center justify-center gap-2" 
+                  onClick={handleScanVendorQR}
+                >
+                  Scanner QR Commande
+                </Button>
               </CardContent>
             </Card>
 
@@ -1487,6 +1463,28 @@ const QRScanner = () => {
                     <span><strong>Scannez le QR sécurisé</strong> pour valider et libérer les fonds au vendeur</span>
                   </li>
                 </ol>
+              </CardContent>
+            </Card>
+
+            {/* Recherche manuelle par code - En bas */}
+            <Card className="border-0 shadow-lg">
+              <CardContent className="p-5">
+                <p className="text-sm text-gray-500 mb-3 text-center">Ou entrez le code commande manuellement :</p>
+                <div className="space-y-3">
+                  <Input
+                    type="text"
+                    className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-green-500 focus:ring-green-500"
+                    placeholder="Ex: CAB1234"
+                    value={orderCode}
+                    onChange={e => setOrderCode(e.target.value)}
+                  />
+                  <Button 
+                    className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
+                    onClick={handleSearchOrder}
+                  >
+                    Rechercher
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
