@@ -18,7 +18,7 @@ const PhoneLoginFlow: React.FC = () => {
     if (!phone) return toast.toast({ title: 'Erreur', description: 'Entrez un numéro de téléphone' });
     setChecking(true);
     try {
-      const res = await fetch(`${apiUrl}/auth/users/exists?phone=${encodeURIComponent(phone)}`);
+      const res = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(phone)}`));
       const data = await res.json();
       setChecking(false);
       if (res.ok && data.exists) {
@@ -37,7 +37,7 @@ const PhoneLoginFlow: React.FC = () => {
   const onPinComplete = async (pin: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/auth/login-pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, pin }) });
+      const res = await fetch(apiUrl('/auth/login-pin'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, pin }) });
       const data = await res.json();
       setLoading(false);
       if (res.ok && data.success) {

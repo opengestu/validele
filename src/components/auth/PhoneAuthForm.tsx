@@ -161,6 +161,17 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
+
+  // Fonction pour formater le numéro local au format "7X XXX XX XX"
+  const formatLocalPhone = (value: string): string => {
+    const digits = value.replace(/\D/g, '').slice(0, 9);
+    if (digits.length === 0) return '';
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 5) return `${digits.slice(0, 2)} ${digits.slice(2)}`;
+    if (digits.length <= 7) return `${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5)}`;
+    return `${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5, 7)} ${digits.slice(7)}`;
+  };
+
   // Ajout : gestion centralisée du clavier pour router les touches
   /* keypad helpers removed */
 
@@ -859,21 +870,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     refs[pos].current?.focus();
   };
 
-  const formatLocalPhone = (digitsOnly: string) => {
-    const parts: string[] = [];
-    if (digitsOnly.length > 0) parts.push(digitsOnly.slice(0,2));
-    if (digitsOnly.length > 2) parts.push(digitsOnly.slice(2,5));
-    if (digitsOnly.length > 5) parts.push(digitsOnly.slice(5,7));
-    if (digitsOnly.length > 7) parts.push(digitsOnly.slice(7,9));
-    return parts.join(' ');
-  };
-
   const handleKeypadDigit = (digit: string) => {
     if (step === 'phone') {
       const only = (formData.phone || '').toString().replace(/\D/g, '');
       if (only.length >= 9) return;
       const newDigits = only + digit;
-      setFormData(prev => ({ ...prev, phone: formatLocalPhone(newDigits) }));
+      setFormData(prev => ({ ...prev, phone: newDigits }));
       return;
     }
     if (step === 'otp') return addDigitToGroup(digit, otpDigits, setOtpDigits, otpRefs, handleVerifyOTP);
@@ -886,7 +888,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     if (step === 'phone') {
       const only = (formData.phone || '').toString().replace(/\D/g, '');
       const newDigits = only.slice(0, -1);
-      setFormData(prev => ({ ...prev, phone: formatLocalPhone(newDigits) }));
+      setFormData(prev => ({ ...prev, phone: newDigits }));
       return;
     }
     if (step === 'otp') return removeLastFromGroup(otpDigits, setOtpDigits, otpRefs);
@@ -1089,44 +1091,37 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'phone' && (
           <div className="space-y-2">
             <div className="w-full flex justify-center">
-              <div className="w-full max-w-[280px]">
-                <div className={`flex items-center gap-0 px-1 py-0 rounded-xl border bg-background/50 mb-2 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
+              <div className="w-full max-w-[300px]">
+                <div className={`flex items-center gap-0 px-2 py-0 rounded-xl border bg-background/50 mb-2 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
                   <div className="flex items-center gap-1 px-2 py-1 shrink-0 border-r border-muted/20">
                     <span className="text-base md:text-lg">🇸🇳</span>
                     <span className="text-base md:text-lg text-muted-foreground font-medium">+221</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center flex-1">
                     <Input
                       id="phone"
                       type="tel"
-                      value={formData.phone.replace('+221', '').replace(/^0/, '')}
-                      onChange={(e) => handleInputChange('phone', e.target.value)}
-                      placeholder="77 123 45 67"
+                      value={formatLocalPhone(formData.phone.replace('+221', '').replace(/^0/, ''))}
+                      onChange={(e) => {
+                        const rawDigits = e.target.value.replace(/\D/g, '');
+                        handleInputChange('phone', rawDigits);
+                      }}
+                      placeholder="7X XXX XX XX"
                       inputMode="none"
                       readOnly
-                      onPointerDown={(e) => { e.preventDefault(); provideHaptic(); }}
-                      onTouchStart={(e) => { e.preventDefault(); provideHaptic(); }}
-                      onFocus={(e) => e.currentTarget.blur()}
+                      onFocus={(e) => e.target.blur()}
+                      onPointerDown={(e) => { provideHaptic(); e.preventDefault(); }}
+                      onTouchStart={(e) => { provideHaptic(); e.preventDefault(); }}
                       onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
                         const pasted = e.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 9);
                         if (pasted) {
-                          setFormData(prev => ({ ...prev, phone: formatLocalPhone(pasted) }));
+                          setFormData(prev => ({ ...prev, phone: pasted }));
                         }
                         e.preventDefault();
                       }}
-                      className="flex-1 h-12 text-lg md:h-14 md:text-xl pl-2 border-0 bg-transparent placeholder:text-base md:placeholder:text-lg placeholder:text-muted-foreground caret-transparent select-none focus:outline-none"
+                      className="flex-1 h-12 text-lg md:h-14 md:text-xl px-3 border-0 bg-transparent placeholder:text-base md:placeholder:text-lg placeholder:text-muted-foreground focus:outline-none cursor-default"
                       maxLength={12}
                     />
-
-                    {/* Mobile-only paste button: reads clipboard and fills phone */}
-                    <button
-                      type="button"
-                      onClick={() => { /* intentionally no-op */ }}
-                      className="ml-2 w-6 h-6 sm:hidden opacity-0 bg-transparent rounded-md p-0 m-0 border-0"
-                      aria-label="Coller le numéro"
-                    >
-                      <span className="sr-only">Coller le numéro</span>
-                    </button>
                   </div>
                 </div>
                 <div className="mt-14 sm:mt-10 md:mt-12">{renderNumericKeypad()}</div>

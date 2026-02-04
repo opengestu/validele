@@ -93,6 +93,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
     };
 
+    const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 7000) => {
+      const controller = new AbortController();
+      const id = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        window.clearTimeout(id);
+      }
+    };
+
     const persistSupabaseSession = (activeSession: Session | null) => {
       if (!activeSession) {
         // Ne pas effacer automatiquement la dernière session connue ici.
@@ -291,7 +301,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             // Session SMS - charger le profil via l'endpoint admin pour éviter les RLS
             try {
-              const resp = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(smsSession.phone)}`));
+              const resp = await fetchWithTimeout(
+                apiUrl(`/auth/users/exists?phone=${encodeURIComponent(smsSession.phone)}`),
+                { method: 'GET' },
+                7000
+              );
               if (resp.ok) {
                 const json = await resp.json().catch(() => null);
                 if (json && json.exists && json.profile) {

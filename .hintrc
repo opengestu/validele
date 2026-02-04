@@ -14,7 +14,8 @@
       {
         "ignore": [
           "backdrop-filter",
-          "-webkit-overflow-scrolling"
+          "-webkit-overflow-scrolling",
+          "text-size-adjust"
         ]
       }
     ],

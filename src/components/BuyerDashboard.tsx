@@ -19,7 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { API_BASE, apiUrl, postProfileUpdate, getProfileById } from '@/lib/api';
+import { API_BASE, apiUrl, postProfileUpdate, getProfileById, safeJson } from '@/lib/api';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import useNetwork from '@/hooks/useNetwork';
@@ -36,7 +36,14 @@ async function fetchJsonWithTimeout<T = unknown>(url: string, init: RequestInit,
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
-    const data = await res.json();
+    const parsed = await safeJson(res);
+    if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
+      const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
+      err.status = res.status;
+      err.body = { raw: (parsed as { __raw: string }).__raw };
+      throw err;
+    }
+    const data = ((parsed ?? {}) as unknown) as T;
     return { res, data };
   } finally {
     clearTimeout(timeoutId);
@@ -1162,7 +1169,21 @@ const BuyerDashboard = () => {
           password: password,
         })
       });
-      const data = await response.json();
+      const parsed = await safeJson(response);
+      if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
+        const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
+        err.status = response.status;
+        err.body = { raw: (parsed as { __raw: string }).__raw };
+        throw err;
+      }
+      const data = (parsed ?? {}) as any;
+
+      if (!response.ok) {
+        const err = new Error(data?.message || data?.error || 'Erreur lors du paiement') as Error & { status?: number; body?: unknown };
+        err.status = response.status;
+        err.body = data;
+        throw err;
+      }
       if (data.status === 'success') {
         setShowDirectPaymentForm(false);
         setPendingOrderToken(null);
@@ -1313,8 +1334,22 @@ const BuyerDashboard = () => {
         }),
       });
 
-      const result = await response.json();
+      const parsed = await safeJson(response);
+      if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
+        const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
+        err.status = response.status;
+        err.body = { raw: (parsed as { __raw: string }).__raw };
+        throw err;
+      }
+      const result = (parsed ?? {}) as any;
       console.log('[REFUND] Résultat:', result);
+
+      if (!response.ok) {
+        const err = new Error(result?.error || result?.message || 'Erreur lors de la demande de remboursement') as Error & { status?: number; body?: unknown };
+        err.status = response.status;
+        err.body = result;
+        throw err;
+      }
 
       if (result.success) {
         toast({

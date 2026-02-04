@@ -59,7 +59,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let debounce: ReturnType<typeof setTimeout> | null = null;
+    let debounce: number | null = null;
     const update = () => {
       const w = el.clientWidth || (isMobileRef.current ? 360 : 600);
       const h = el.clientHeight || w;
@@ -426,7 +426,8 @@ function QRScanSection({
   isConfirmingDelivery,
   matchInfo,
   scanSessionId,
-  active
+  active,
+  scanVendorQRMode
 }) {
   // matchInfo: { type: 'order_code'|'qr_code'|'partial', code: string } | null
   const [cameraError, setCameraError] = useState(false);
@@ -483,7 +484,9 @@ function QRScanSection({
       <CardHeader>
         <CardTitle className="flex items-center text-xl">
           <QrCode className="h-5 w-5 mr-2 text-green-600" />
-          <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Scanner de validation</span>
+          <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+            {scanVendorQRMode ? 'Scanner QR Commande' : 'Scanner de validation'}
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -493,8 +496,16 @@ function QRScanSection({
             className={`rounded-2xl p-6 sm:p-8 text-center transition-opacity duration-300 ${(scanValid || hasScanned) ? 'opacity-0 pointer-events-none h-0 p-0 m-0' : 'opacity-100'} bg-gradient-to-br from-indigo-50 to-sky-50 ring-1 ring-indigo-100`}
             style={{ minHeight: (scanValid || hasScanned) ? 0 : 220 }}
           >
+            {/* Message différent selon le mode */}
+            {scanVendorQRMode && !scanValid && !hasScanned && (
+              <div className="mb-4 text-left bg-white/60 p-3 rounded-md">
+                <p className="text-sm font-medium text-gray-800">🛍️ Scanner le QR code de la commande</p>
+                <p className="text-xs text-gray-600 mt-1">Demandez au vendeur de vous présenter le <strong>QR code de la commande</strong> pour la récupérer.</p>
+              </div>
+            )}
+
             {/* Si on a déjà trouvé une correspondance via recherche manuelle, afficher une instruction */}
-            {matchInfo && !scanValid && !hasScanned && (
+            {matchInfo && !scanVendorQRMode && !scanValid && !hasScanned && (
               <div className="mb-4 text-left bg-white/60 p-3 rounded-md">
                 <p className="text-sm font-medium text-gray-800">✅ Commande {matchInfo.type === 'order_code' ? matchInfo.code : 'trouvée'}</p>
                 <p className="text-xs text-gray-600 mt-1">Veuillez maintenant scanner le <strong>QR code sécurisé</strong> présenté par le client pour valider la livraison.</p>
@@ -506,7 +517,9 @@ function QRScanSection({
             ) : null}
             {!scanValid && !hasScanned && (
               <>
-                <p className="text-gray-700 mt-4">Scannez le QR code du client avec la caméra</p>
+                <p className="text-gray-700 mt-4">
+                  {scanVendorQRMode ? 'Scannez le QR code de la commande' : 'Scannez le QR code du client avec la caméra'}
+                </p>
                 <p className="text-xs text-gray-500 mt-1">Astuce : placez le QR code bien au centre du cadre et assurez-vous d'une bonne lumière pour accélérer la détection.</p>
               </>
             )}
@@ -591,6 +604,8 @@ const QRScanner = () => {
   const [scanSessionId, setScanSessionId] = useState(0);
   // When navigating from DeliveryDashboard with ?autoStart=1 we want to automatically start delivery and show scanner
   const [autoOpenScanner, setAutoOpenScanner] = useState(false);
+  // Mode pour scanner le QR code vendeur
+  const [scanVendorQRMode, setScanVendorQRMode] = useState(false);
 
   // Open the scanner with a short delay so the DOM can settle (prevents media play() AbortError)
   const openScannerSafely = () => {
@@ -937,14 +952,103 @@ const QRScanner = () => {
         description: "Une erreur s'est produite lors de la recherche de la commande",
         variant: "destructive",
       });
+    } finally {
+      setIsScanning(false);
     }
+  };
+
+  // Fonction pour scanner le QR code vendeur
+  const handleScanVendorQR = () => {
+    setScanVendorQRMode(true);
+    setShowScanSection(true);
+    setScanSessionId(s => s + 1);
   };
 
   
 
   const handleScanQR = async (code, resetScan) => {
     const codeToCheck = code !== undefined ? code : scannedCode;
-    console.log('handleScanQR appelé, codeToCheck =', codeToCheck);
+    console.log('handleScanQR appelé, codeToCheck =', codeToCheck, 'scanVendorQRMode =', scanVendorQRMode);
+    
+    // Si on est en mode scan QR vendeur, chercher la commande PAR ORDER_CODE UNIQUEMENT
+    if (scanVendorQRMode) {
+      try {
+        const cleaned = codeToCheck.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+        
+        console.log('[QRScanner] 🔍 Recherche commande VENDEUR - code scanné:', codeToCheck);
+        console.log('[QRScanner] 🔍 Code nettoyé:', cleaned);
+        console.log('[QRScanner] ℹ️ Recherche UNIQUEMENT dans order_code (pas qr_code car QR vendeur = order_code)');
+        
+        // Debug: voir toutes les commandes avec ce order_code
+        const { data: allMatches, error: debugError } = await supabase
+          .from('orders')
+          .select('id, order_code, qr_code, status')
+          .eq('order_code', cleaned);
+        
+        console.log('[QRScanner] 📊 Commandes avec order_code =', cleaned, ':', allMatches);
+        
+        // IMPORTANT: Le QR vendeur contient order_code, donc chercher SEULEMENT dans order_code
+        let data: Order | null = null;
+        let error: any = null;
+        
+        // Recherche directe sur order_code avec les bons statuts
+        console.log('[QRScanner] 🔎 Recherche order_code exact avec statuts [paid, assigned, in_delivery]...');
+        const result = await supabase
+          .from('orders')
+          .select(`
+            *,
+            products(name, code),
+            buyer_profile:profiles!orders_buyer_id_fkey(full_name),
+            vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
+          `)
+          .eq('order_code', cleaned)
+          .in('status', ['paid', 'assigned', 'in_delivery'])
+          .maybeSingle();
+        
+        console.log('[QRScanner] Résultat recherche exacte:', { found: !!result.data, status: result.data?.status, error: result.error });
+        
+        data = result.data;
+        error = result.error;
+
+        if (error || !data) {
+          console.error('[QRScanner] ❌ Aucune commande trouvée après 3 méthodes. Erreur:', error);
+          console.error('[QRScanner] 💡 Suggestion: Vérifiez que le code scanné correspond bien à order_code ou qr_code dans la DB');
+          toast({
+            title: "Commande non trouvée",
+            description: `Code: ${codeToCheck}. Aucune commande "Payée" avec ce code.`,
+            variant: "destructive",
+          });
+          if (resetScan) resetScan();
+          return;
+        }
+        
+        console.log('[QRScanner] ✅ Commande trouvée:', { id: data.id, order_code: data.order_code, status: data.status });
+
+        // Commande trouvée via QR commande
+        setCurrentOrder(data as Order);
+        setLastMatchInfo({ type: 'order_code', code: data.order_code ?? '' });
+        setScanVendorQRMode(false);
+        setShowScanSection(false);
+        setOrderModalOpen(true);
+        
+        toast({
+          title: "Commande trouvée",
+          description: `Commande ${data.order_code} trouvée via QR code commande`,
+        });
+        return;
+      } catch (error) {
+        console.error('Erreur scan QR vendeur:', error);
+        toast({
+          title: "Erreur",
+          description: "Erreur lors de la recherche de la commande",
+          variant: "destructive",
+        });
+        if (resetScan) resetScan();
+        return;
+      }
+    }
+    
+    // Mode normal : scan du QR code client
     if (!codeToCheck.trim()) {
       toast({
         title: "Erreur",
@@ -1300,7 +1404,13 @@ const QRScanner = () => {
                     >
                       Rechercher
                     </Button>
-
+                    <Button 
+                      className="w-full h-12 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-base font-semibold flex items-center justify-center gap-2" 
+                      onClick={handleScanVendorQR}
+                    >
+                      <QrCode className="h-5 w-5" />
+                      Scanner QR Commande
+                    </Button>
                   </div>
                 </div>
               </CardContent>
@@ -1318,11 +1428,11 @@ const QRScanner = () => {
                 <ol className="space-y-3 text-gray-700 text-sm">
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                    <span><strong>Récupérez le code commande</strong> (format CAB1234) auprès du vendeur</span>
+                    <span><strong>Récupérez la commande</strong> auprès du vendeur en scannant son QR code OU en saisissant le code commande (format CAB1234)</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                    <span><strong>Tapez et recherchez</strong> ce code commande pour localiser la livraison</span>
+                    <span><strong>Démarrez la livraison</strong> en cliquant sur "Commencer à livrer"</span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
@@ -1352,6 +1462,7 @@ const QRScanner = () => {
             matchInfo={lastMatchInfo}
             scanSessionId={scanSessionId}
             active={showScanSection}
+            scanVendorQRMode={scanVendorQRMode}
           />
         )}
       </div>

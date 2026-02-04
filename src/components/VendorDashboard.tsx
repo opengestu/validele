@@ -40,7 +40,8 @@ import {
   DollarSign,
   Users,
   LogOut,
-  User
+  User,
+  QrCode
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -62,6 +63,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon } from './CustomIcons';
+import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
   phone: string | null;
@@ -180,6 +182,8 @@ const VendorDashboard = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callTarget, setCallTarget] = useState<{ phone: string; name?: string } | null>(null);
+  const [vendorQRModalOpen, setVendorQRModalOpen] = useState(false);
+  const [selectedOrderForQR, setSelectedOrderForQR] = useState<Order | null>(null);
 
   // Invoice viewer modal states
   const [invoiceViewerOpen, setInvoiceViewerOpen] = useState(false);
@@ -1144,6 +1148,11 @@ const VendorDashboard = () => {
     }
   };
 
+  const handleShowVendorQR = (order: Order) => {
+    setSelectedOrderForQR(order);
+    setVendorQRModalOpen(true);
+  };
+
   // Ouvre WhatsApp pour le client (même logique fallback que pour l'appel)
 
   // Calculate stats
@@ -1386,6 +1395,30 @@ const VendorDashboard = () => {
                         <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
                           {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                         </span>
+                      </div>
+
+                      {/* Boutons Facture et QR Code */}
+                      <div className="flex items-center mt-3 gap-2">
+                        {/* Bouton Voir facture */}
+                        <Button
+                          size="sm"
+                          onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                          className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
+                        >
+                          Voir facture
+                        </Button>
+                        
+                        {/* Bouton QR Code Commande */}
+                        {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
+                          <Button
+                            size="sm"
+                            onClick={() => handleShowVendorQR(order)}
+                            className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+                          >
+                            <QrCode className="h-4 w-4 mr-2" />
+                            QR Code Commande
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1765,15 +1798,27 @@ const VendorDashboard = () => {
                                     </span>
                                   </div>
                                   {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
-                                  <div className="flex items-center mt-2 space-x-2">
+                                  <div className="flex items-center mt-2 gap-2">
                                     {/* Order invoice (public endpoint) - open in modal */}
                                     <Button
                                       size="sm"
                                       onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                                      className="bg-gray-100 text-gray-800"
+                                      className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
                                     >
                                       Voir facture
                                     </Button>
+                                    
+                                    {/* Bouton QR Code Commande */}
+                                    {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleShowVendorQR(order)}
+                                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+                                      >
+                                        <QrCode className="h-4 w-4 mr-2" />
+                                        QR Code Commande
+                                      </Button>
+                                    )}
                                   </div>
                                 </CardContent>
                               </Card>
@@ -2164,6 +2209,52 @@ const VendorDashboard = () => {
             </Button>
             <Button className="bg-green-600 text-white" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
               Appeler
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* QR Code Commande Dialog */}
+      <Dialog open={vendorQRModalOpen} onOpenChange={setVendorQRModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] sm:w-full">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-green-600" />
+              QR Code Commande
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            {selectedOrderForQR && (
+              <>
+                <div className="text-center">
+                  <p className="text-sm text-gray-600 mb-4">
+                    Présentez ce QR code au livreur pour qu'il puisse récupérer la commande
+                  </p>
+                  <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-green-100">
+                    <SimpleQRCode value={selectedOrderForQR.order_code || selectedOrderForQR.id} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 200 : 240} />
+                  </div>
+                </div>
+                <div className="bg-green-50 p-3 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold text-gray-700">Code commande :</span>
+                    <span className="text-lg font-mono font-bold text-green-700">
+                      {selectedOrderForQR.order_code || selectedOrderForQR.id}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-gray-700">Produit :</span>
+                    <span className="text-sm text-gray-600">{selectedOrderForQR.products?.name}</span>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 text-center">
+                  Le livreur peut scanner ce QR code ou saisir le code commande manuellement
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setVendorQRModalOpen(false)} className="w-full">
+              Fermer
             </Button>
           </DialogFooter>
         </DialogContent>

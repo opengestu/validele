@@ -1,10 +1,31 @@
 // Service pour envoyer des notifications push via le backend
-import { apiUrl } from '@/lib/api';
+import { apiUrl, safeJson } from '@/lib/api';
 
 interface NotifyResult {
   success: boolean;
   sent?: boolean;
   error?: string;
+}
+
+async function postNotify(path: string, payload: Record<string, unknown>): Promise<NotifyResult> {
+  const response = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const parsed = await safeJson(response);
+  if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
+    return { success: false, error: 'Réponse invalide du serveur (JSON attendu).' };
+  }
+
+  const result = (parsed ?? {}) as any;
+
+  if (!response.ok) {
+    return { success: false, error: result?.error || result?.message || `Erreur serveur (${response.status})` };
+  }
+
+  return result as NotifyResult;
 }
 
 /**
@@ -18,12 +39,7 @@ export async function notifyVendorNewOrder(
   amount: number
 ): Promise<NotifyResult> {
   try {
-    const response = await fetch(apiUrl('/api/notify/new-order'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vendorId, orderId, buyerName, productName, amount })
-    });
-    return await response.json();
+    return await postNotify('/api/notify/new-order', { vendorId, orderId, buyerName, productName, amount });
   } catch (error) {
     console.error('[NOTIFY] Erreur new-order:', error);
     return { success: false, error: (error as Error).message };
@@ -39,12 +55,7 @@ export async function notifyBuyerOrderConfirmed(
   orderCode?: string
 ): Promise<NotifyResult> {
   try {
-    const response = await fetch(apiUrl('/api/notify/order-confirmed'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ buyerId, orderId, orderCode })
-    });
-    return await response.json();
+    return await postNotify('/api/notify/order-confirmed', { buyerId, orderId, orderCode });
   } catch (error) {
     console.error('[NOTIFY] Erreur order-confirmed:', error);
     return { success: false, error: (error as Error).message };
@@ -61,12 +72,7 @@ export async function notifyDeliveryPersonAssigned(
   productName: string
 ): Promise<NotifyResult> {
   try {
-    const response = await fetch(apiUrl('/api/notify/delivery-assigned'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deliveryPersonId, orderId, deliveryAddress, productName })
-    });
-    return await response.json();
+    return await postNotify('/api/notify/delivery-assigned', { deliveryPersonId, orderId, deliveryAddress, productName });
   } catch (error) {
     console.error('[NOTIFY] Erreur delivery-assigned:', error);
     return { success: false, error: (error as Error).message };
@@ -86,12 +92,7 @@ export async function notifyBuyerDeliveryStarted(
     const payload: Record<string, unknown> = { buyerId, orderId, orderCode };
     if (deliveryPersonPhone) payload.deliveryPersonPhone = deliveryPersonPhone;
 
-    const response = await fetch(apiUrl('/api/notify/delivery-started'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    return await response.json();
+    return await postNotify('/api/notify/delivery-started', payload);
   } catch (error) {
     console.error('[NOTIFY] Erreur delivery-started:', error);
     return { success: false, error: (error as Error).message };
@@ -108,12 +109,7 @@ export async function notifyDeliveryCompleted(
   orderCode?: string
 ): Promise<NotifyResult> {
   try {
-    const response = await fetch(apiUrl('/api/notify/delivery-completed'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vendorId, buyerId, orderId, orderCode })
-    });
-    return await response.json();
+    return await postNotify('/api/notify/delivery-completed', { vendorId, buyerId, orderId, orderCode });
   } catch (error) {
     console.error('[NOTIFY] Erreur delivery-completed:', error);
     return { success: false, error: (error as Error).message };
@@ -125,12 +121,7 @@ export async function notifyDeliveryCompleted(
  */
 export async function notifyWelcome(token: string): Promise<NotifyResult> {
   try {
-    const response = await fetch(apiUrl('/api/notify/welcome'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token })
-    });
-    return await response.json();
+    return await postNotify('/api/notify/welcome', { token });
   } catch (error) {
     console.error('[NOTIFY] Erreur welcome:', error);
     return { success: false, error: (error as Error).message };

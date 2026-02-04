@@ -1,6 +1,8 @@
 export function toFrenchErrorMessage(error: unknown, fallback: string): string {
   if (!error) return fallback;
 
+  const status = typeof (error as any)?.status === 'number' ? (error as any).status as number : undefined;
+
   const message =
     error instanceof Error
       ? error.message
@@ -36,6 +38,41 @@ export function toFrenchErrorMessage(error: unknown, fallback: string): string {
   // Abort (timeouts)
   if (lower.includes('aborted') || lower.includes('aborterror') || lower.includes('timeout')) {
     return "La requête a expiré. Vérifiez votre connexion puis réessayez.";
+  }
+
+  // HTTP status-based messages (when available on thrown errors).
+  // Only override when the error message is generic/unhelpful; otherwise keep the server-provided message.
+  if (typeof status === 'number') {
+    const isGenericMessage =
+      !normalized ||
+      normalized === fallback ||
+      lower === 'internal error' ||
+      lower === 'internal server error' ||
+      lower === 'not found' ||
+      lower === 'unauthorized' ||
+      lower === 'forbidden' ||
+      lower === 'unknown error' ||
+      lower === 'error' ||
+      lower === 'erreur' ||
+      lower === 'erreur inconnue' ||
+      lower === 'erreur serveur' ||
+      lower.startsWith('erreur lors') ||
+      lower.startsWith('error:');
+
+    if (isGenericMessage) {
+      if (status === 401 || status === 403) {
+        return "Accès refusé. Veuillez vous reconnecter puis réessayer.";
+      }
+      if (status === 404) {
+        return "Service introuvable. Le backend n'expose pas cet endpoint (ou l'URL est incorrecte).";
+      }
+      if (status === 429) {
+        return "Trop de tentatives. Veuillez patienter puis réessayer.";
+      }
+      if (status >= 500) {
+        return `Serveur indisponible (erreur ${status}). Réessayez dans quelques instants.`;
+      }
+    }
   }
 
   return normalized || fallback;
