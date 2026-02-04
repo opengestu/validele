@@ -194,6 +194,8 @@ async function sendMoney(params) {
   });
 
   try {
+    console.log('[PIXPAY] Calling API:', `${PIXPAY_CONFIG.base_url}/transaction/airtime`);
+    
     const response = await axios.post(
       `${PIXPAY_CONFIG.base_url}/transaction/airtime`,
       payload,
@@ -205,24 +207,41 @@ async function sendMoney(params) {
 
     console.log('[PIXPAY] Réponse complète:', JSON.stringify(response.data, null, 2));
 
+    // Check if Pixpay returned a successful status code
+    const isSuccess = response.data.statut_code === 200 || response.data.statut_code === '200';
+    
+    if (!isSuccess) {
+      console.error('[PIXPAY] API returned non-200 statut_code:', response.data.statut_code, response.data.message);
+    }
+
     return {
-      success: response.data.statut_code === 200,
+      success: isSuccess,
       transaction_id: response.data.data?.transaction_id,
       state: response.data.data?.state,
-      message: response.data.message,
-      sms_link: response.data.data?.sms_link, // Ajouter le lien SMS
+      message: response.data.message || (isSuccess ? 'Payout initiated' : 'Pixpay returned an error'),
+      sms_link: response.data.data?.sms_link,
       raw: response.data
     };
   } catch (error) {
     console.error('[PIXPAY] Erreur envoi:', {
       status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
       message: error.response?.data?.message || error.message
     });
 
-    throw new Error(
-      error.response?.data?.message || 
-      'Erreur lors de l\'envoi d\'argent PixPay'
-    );
+    // Return a structured error response instead of throwing
+    // This allows the caller to handle it gracefully
+    const errorMessage = error.response?.data?.message || error.message || 'Erreur lors de l\'envoi d\'argent PixPay';
+    
+    return {
+      success: false,
+      transaction_id: null,
+      state: 'FAILED',
+      message: errorMessage,
+      sms_link: null,
+      raw: error.response?.data || { error: errorMessage }
+    };
   }
 }
 

@@ -977,23 +977,23 @@ const QRScanner = () => {
         
         console.log('[QRScanner] 🔍 Recherche commande VENDEUR - code scanné:', codeToCheck);
         console.log('[QRScanner] 🔍 Code nettoyé:', cleaned);
-        console.log('[QRScanner] ℹ️ Recherche UNIQUEMENT dans order_code (pas qr_code car QR vendeur = order_code)');
+        console.log('[QRScanner] ℹ️ Recherche dans order_code ET qr_code avec ilike pour tolérance');
         
-        // Debug: voir toutes les commandes avec ce order_code
+        // Debug: voir toutes les commandes avec ce order_code (recherche flexible)
         const { data: allMatches, error: debugError } = await supabase
           .from('orders')
           .select('id, order_code, qr_code, status')
-          .eq('order_code', cleaned);
+          .or(`order_code.ilike.%${cleaned}%,qr_code.ilike.%${cleaned}%`);
         
-        console.log('[QRScanner] 📊 Commandes avec order_code =', cleaned, ':', allMatches);
+        console.log('[QRScanner] 📊 Commandes correspondant au code', cleaned, ':', allMatches);
         
-        // IMPORTANT: Le QR vendeur contient order_code, donc chercher SEULEMENT dans order_code
+        // Recherche tolérante: order_code OU qr_code avec ilike + statuts valides
         let data: Order | null = null;
         let error: any = null;
         
-        // Recherche directe sur order_code avec les bons statuts
+        // 1) D'abord, recherche exacte sur order_code
         console.log('[QRScanner] 🔎 Recherche order_code exact avec statuts [paid, assigned, in_delivery]...');
-        const result = await supabase
+        let result = await supabase
           .from('orders')
           .select(`
             *,
@@ -1010,12 +1010,52 @@ const QRScanner = () => {
         data = result.data;
         error = result.error;
 
+        // 2) Si pas trouvé, recherche avec ilike (tolérante) sur order_code ET qr_code
+        if (!data && !error) {
+          console.log('[QRScanner] 🔎 Recherche tolérante avec ilike...');
+          result = await supabase
+            .from('orders')
+            .select(`
+              *,
+              products(name, code),
+              buyer_profile:profiles!orders_buyer_id_fkey(full_name),
+              vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
+            `)
+            .or(`order_code.ilike.%${cleaned}%,qr_code.ilike.%${cleaned}%`)
+            .in('status', ['paid', 'assigned', 'in_delivery'])
+            .limit(1)
+            .maybeSingle();
+          
+          console.log('[QRScanner] Résultat recherche tolérante:', { found: !!result.data, status: result.data?.status, error: result.error });
+          data = result.data;
+          error = result.error;
+        }
+
+        // 3) Si toujours pas trouvé, fallback backend
+        if (!data && !error) {
+          console.log('[QRScanner] 🔎 Fallback vers backend /api/orders/search...');
+          try {
+            const resp = await fetch(apiUrl('/api/orders/search'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code: cleaned })
+            });
+            const json = await resp.json();
+            console.log('[QRScanner] Résultat backend:', json);
+            if (json && json.success && json.order) {
+              data = json.order as Order;
+            }
+          } catch (e) {
+            console.error('[QRScanner] Erreur fallback backend:', e);
+          }
+        }
+
         if (error || !data) {
-          console.error('[QRScanner] ❌ Aucune commande trouvée après 3 méthodes. Erreur:', error);
-          console.error('[QRScanner] 💡 Suggestion: Vérifiez que le code scanné correspond bien à order_code ou qr_code dans la DB');
+          console.error('[QRScanner] ❌ Aucune commande trouvée. Erreur:', error);
+          console.error('[QRScanner] 💡 Code scanné:', codeToCheck, '-> nettoyé:', cleaned);
           toast({
             title: "Commande non trouvée",
-            description: `Code: ${codeToCheck}. Aucune commande "Payée" avec ce code.`,
+            description: `Aucune commande ne correspond à ce QR code. Code scanné: ${cleaned.substring(0, 10)}...`,
             variant: "destructive",
           });
           if (resetScan) resetScan();

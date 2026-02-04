@@ -2651,8 +2651,21 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
     // Execute payout via PixPay
     const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
+    console.log('[ADMIN] payout-order Pixpay response:', JSON.stringify(result, null, 2));
+
+    // IMPORTANT: Check if Pixpay returned success before proceeding
+    if (!result || !result.success) {
+      const errorMsg = result?.message || result?.raw?.message || 'Pixpay returned an error';
+      console.error('[ADMIN] payout-order - Pixpay call failed:', errorMsg, result);
+      return res.status(500).json({ 
+        success: false, 
+        error: `Pixpay payout failed: ${errorMsg}`,
+        pixpay_response: result 
+      });
+    }
+
     // Record transaction
-    if (result && result.transaction_id) {
+    if (result.transaction_id) {
       const { error: txErr } = await supabase.from('payment_transactions').insert({
         transaction_id: result.transaction_id,
         provider: 'pixpay',
@@ -2692,6 +2705,8 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
       } catch (notifErr) {
         console.error('[ADMIN] Erreur notification payout:', notifErr);
       }
+    } else {
+      console.warn('[ADMIN] payout-order - Pixpay returned success but no transaction_id');
     }
 
     res.json({ success: result.success, result });
@@ -2874,7 +2889,20 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
 
     const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
-    if (payoutRes && payoutRes.transaction_id) {
+    console.log('[ADMIN] verify-and-payout Pixpay response:', JSON.stringify(payoutRes, null, 2));
+
+    // IMPORTANT: Check if Pixpay returned success before proceeding
+    if (!payoutRes || !payoutRes.success) {
+      const errorMsg = payoutRes?.message || payoutRes?.raw?.message || 'Pixpay returned an error';
+      console.error('[ADMIN] verify-and-payout - Pixpay call failed:', errorMsg, payoutRes);
+      return res.status(500).json({ 
+        success: false, 
+        error: `Pixpay payout failed: ${errorMsg}`,
+        pixpay_response: payoutRes 
+      });
+    }
+
+    if (payoutRes.transaction_id) {
       const { error: txErr } = await supabase.from('payment_transactions').insert({
         transaction_id: payoutRes.transaction_id,
         provider: 'pixpay',
@@ -2890,6 +2918,8 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
       // mark order as processing; final 'paid' will be set by webhook when provider confirms
       const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
       if (updateErr) console.error('[ADMIN] verify-and-payout - failed updating order payout_status:', updateErr);
+    } else {
+      console.warn('[ADMIN] verify-and-payout - Pixpay returned success but no transaction_id');
     }
 
     return res.json({ success: true, payout: payoutRes });
