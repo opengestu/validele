@@ -1,12 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Dialog } from "@capacitor/dialog";
+import { useAuth } from '@/hooks/useAuth';
 
 export default function ExitConfirmHandler() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
   const dialogOpenRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -18,7 +21,12 @@ export default function ExitConfirmHandler() {
       async ({ canGoBack }) => {
         if (dialogOpenRef.current) return;
 
-        if (canGoBack) {
+        const rootRoutes = ['/buyer', '/vendor', '/delivery', '/admin'];
+        const isRootRoute = rootRoutes.some(route =>
+          location.pathname === route || (route === '/admin' && location.pathname.startsWith('/admin'))
+        );
+
+        if (canGoBack && !(user && isRootRoute)) {
           navigate(-1);
           return;
         }
@@ -44,7 +52,7 @@ export default function ExitConfirmHandler() {
     return () => {
       listenerHandle?.remove?.();
     }; 
-  }, [navigate]);
+  }, [navigate, location.pathname, user]);
 
   return null;
 }

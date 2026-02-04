@@ -683,13 +683,9 @@ const QRScanner = () => {
           console.warn('Unable to dispatch delivery:started event', e);
         }
         console.log('Livraison démarrée avec succès (backend)', json);
-
-        // Close modal and open scanner safely to avoid race with camera start
-        openScannerSafely();
-
         toast({
-          title: "Livraison en cours",
-          description: "Veuillez scanner le QR code du client pour valider la livraison",
+          title: 'Commande récupérée',
+          description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
         });
 
       } catch (backendErr) {
@@ -709,9 +705,22 @@ const QRScanner = () => {
 
         setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
 
+        // Fallback client: envoyer la notification push au client (si backend indisponible)
+        try {
+          if (currentOrder?.buyer_id && currentOrder?.id) {
+            notifyBuyerDeliveryStarted(
+              String(currentOrder.buyer_id),
+              String(currentOrder.id),
+              currentOrder.order_code || undefined
+            ).catch(err => console.warn('[QRScanner] notifyBuyerDeliveryStarted failed:', err));
+          }
+        } catch (e) {
+          console.warn('[QRScanner] notifyBuyerDeliveryStarted error:', e);
+        }
+
         toast({
-          title: "Livraison en cours",
-          description: "Veuillez scanner le QR code du client pour valider la livraison",
+          title: 'Commande récupérée',
+          description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
         });
       }
     } catch (error) {
@@ -784,19 +793,19 @@ const QRScanner = () => {
             if (!error && data) {
               setCurrentOrder(data as Order);
               console.log('Commande chargée depuis URL par id:', data.id);
-              // If it's already in delivery and assigned to this user, open scanner
+              // If it's already in delivery and assigned to this user, show modal
               if (data.status === 'in_delivery' && String(data.delivery_person_id) === String(user?.id)) {
-                openScannerSafely();
+                setOrderModalOpen(true);
                 return;
               }
 
-              // If paid and autoStart, attempt to start delivery
-                if (data.status === 'paid' && autoStart) {
+              // If paid and autoStart, attempt to start delivery (without auto opening scanner)
+              if (data.status === 'paid' && autoStart) {
                 try {
                   // Use ref-stored handler to avoid recreating the effect when
                   // `handleStartDelivery` identity changes (prevents an infinite loop)
                   await handleStartDeliveryRef.current?.();
-                  openScannerSafely();
+                  setOrderModalOpen(true);
                   return;
                 } catch (e) {
                   console.warn('Auto start by id failed, will still try code fallback if provided', e);
@@ -820,14 +829,14 @@ const QRScanner = () => {
             console.log('Commande chargée depuis URL par code:', found.id);
 
             if (found.status === 'in_delivery' && String(found.delivery_person_id) === String(user?.id)) {
-              openScannerSafely();
+              setOrderModalOpen(true);
               return;
             }
 
             if (found.status === 'paid' && autoStart) {
               try {
                 await handleStartDeliveryRef.current?.();
-                openScannerSafely();
+                setOrderModalOpen(true);
                 return;
               } catch (e) {
                 console.warn('Auto start by code failed, falling back to modal', e);
@@ -1297,9 +1306,9 @@ const QRScanner = () => {
     if (!currentOrder) return;
 
     // Si la commande est déjà en cours et assignée à ce livreur,
-    // ne pas afficher la modale de détails ; ouvrir directement le scanner.
+    // afficher la modale de détails ; ne pas ouvrir le scanner automatiquement.
     if (currentOrder.status === 'in_delivery' && String(currentOrder.delivery_person_id) === String(user?.id)) {
-      openScannerSafely();
+      setOrderModalOpen(true);
       return;
     }
 
@@ -1307,15 +1316,15 @@ const QRScanner = () => {
     setOrderModalOpen(true);
   }, [currentOrder, user?.id]);
 
-  // If the URL requested auto-start scanning (e.g. ?autoStart=1), either start the delivery or open the scanner directly
+  // If the URL requested auto-start scanning (e.g. ?autoStart=1), start the delivery but do not open the scanner directly
   useEffect(() => {
     if (!autoOpenScanner || !currentOrder || !user?.id) return;
     (async () => {
       try {
-        // If the order is already in_delivery and assigned to *this* user, open scanner immediately
+        // If the order is already in_delivery and assigned to *this* user, show modal
         if (currentOrder.status === 'in_delivery') {
           if (String(currentOrder.delivery_person_id) === String(user.id)) {
-            openScannerSafely();
+            setOrderModalOpen(true);
           } else {
             // Order is in delivery by another person — inform and do not open scanner
             toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });
@@ -1324,11 +1333,10 @@ const QRScanner = () => {
           // Paid: attempt to start delivery (existing behavior)
           try {
             await handleStartDelivery();
-            // If start succeeded, ensure the scanner is shown (safely)
-            openScannerSafely();
+            setOrderModalOpen(true);
           } catch (startErr) {
-            console.warn('Auto-start delivery failed, opening scanner without server start:', startErr);
-            openScannerSafely();
+            console.warn('Auto-start delivery failed, keeping modal visible:', startErr);
+            setOrderModalOpen(true);
           }
         } else if (currentOrder.status === 'delivered') {
           // Already delivered: do not open scanner, inform the user
@@ -1400,9 +1408,9 @@ const QRScanner = () => {
                 <CheckCircle className="h-5 w-5 text-green-600" />
                 <span className="text-green-700 font-semibold text-lg">Livraison en cours</span>
               </div>
-              <p className="text-gray-600 mb-4">Veuillez scanner le QR code du client pour valider la livraison</p>
+              <p className="text-gray-600 mb-4">Cliquez sur le bouton pour scanner le QR code du client</p>
               <Button className="bg-green-600 hover:bg-green-700 w-full" onClick={() => { openScannerSafely(); }}>
-                <Camera className="h-4 w-4 mr-2" /> Scanner le QR code maintenant
+                Scanner Qrcode Client
               </Button>
             </div>
           )}
@@ -1429,40 +1437,6 @@ const QRScanner = () => {
                 >
                   Scanner QR Commande
                 </Button>
-              </CardContent>
-            </Card>
-
-            {/* Instructions */}
-            <Card className="border-0 shadow-lg">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                    <Info className="h-5 w-5 text-green-600" />
-                  </div>
-                  <span className="text-lg font-semibold text-gray-900">Instructions d'utilisation</span>
-                </div>
-                <ol className="space-y-3 text-gray-700 text-sm">
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                    <span><strong>Récupérez la commande</strong> auprès du vendeur en scannant son QR code OU en saisissant le code commande (format CAB1234)</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                    <span><strong>Démarrez la livraison</strong> en cliquant sur "Commencer à livrer"</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
-                    <span><strong>Rendez-vous chez le client</strong> à l'adresse indiquée</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">4</span>
-                    <span><strong>Demandez le QR code sécurisé</strong> affiché dans l'app du client</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">5</span>
-                    <span><strong>Scannez le QR sécurisé</strong> pour valider et libérer les fonds au vendeur</span>
-                  </li>
-                </ol>
               </CardContent>
             </Card>
 

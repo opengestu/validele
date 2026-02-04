@@ -51,7 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { apiUrl, postProfileUpdate } from '@/lib/api';
+import { apiUrl, postProfileUpdate, getProfileById } from '@/lib/api';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -170,6 +170,33 @@ const VendorDashboard = () => {
     return { groups, sortedKeys };
   };
 
+  const normalizeBuyerName = React.useCallback((name?: string) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return '';
+    const lower = trimmed.toLowerCase();
+    if (['client', 'client anonyme', 'anonyme', 'anonymous'].includes(lower)) return '';
+    return trimmed;
+  }, []);
+
+  const getOrderBuyerId = React.useCallback((order: Order | any) => {
+    return (
+      order?.buyer_id ||
+      order?.buyer?.id ||
+      (typeof order?.buyer === 'string' ? order.buyer : null)
+    );
+  }, []);
+
+  const getOrderBuyerName = React.useCallback((order: Order | any) => {
+    return normalizeBuyerName(
+      order?.buyer?.full_name ||
+      order?.buyer_full_name ||
+      order?.profiles?.full_name ||
+      order?.customer_name ||
+      order?.buyer_name ||
+      ''
+    );
+  }, [normalizeBuyerName]);
+
   // ...existing code...
   // States
   const [products, setProducts] = useState<Product[]>([]);
@@ -256,6 +283,7 @@ const VendorDashboard = () => {
   const [batchesModalOpen, setBatchesModalOpen] = useState(false);
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [vendorBatches, setVendorBatches] = useState<Array<{id: string; created_at?: string; total_amount?: number; status?: string; item_count?: number; total_net?: number}>>([]);
+  const [vendorBatchesShowAll, setVendorBatchesShowAll] = useState(false);
 
   async function fetchVendorBatches() {
     try {
@@ -283,6 +311,7 @@ const VendorDashboard = () => {
   async function showVendorBatches() {
     try {
       setBatchesModalOpen(true);
+      setVendorBatchesShowAll(false);
       if (!vendorBatches || vendorBatches.length === 0) {
         await fetchVendorBatches();
       }
@@ -378,12 +407,65 @@ const VendorDashboard = () => {
         delivered_at: o.delivered_at ?? undefined,
         token: o.token ?? undefined,
         // Propager le numéro de l'acheteur s'il est exposé comme buyer_phone
-        profiles: (o.profiles || o.buyer_phone || o.buyer_full_name || (o.buyer && o.buyer.phone)) ? {
+        profiles: (o.profiles || o.buyer_phone || o.buyer_full_name || (o.buyer && (o.buyer.full_name || o.buyer.phone))) ? {
           full_name: (o.profiles && o.profiles.full_name) ? o.profiles.full_name : (o.buyer_full_name ?? (o.buyer ? (o.buyer.full_name || '') : '')),
           phone: (o.profiles && o.profiles.phone) ? o.profiles.phone : (o.buyer_phone ?? (o.buyer ? o.buyer.phone : undefined))
+        } : undefined,
+        // Normaliser un objet buyer si le backend expose la structure `buyer` ou des champs buyer_*
+        buyer: (o.buyer || o.buyer_full_name || o.buyer_phone || o.buyer_address) ? {
+          full_name: o.buyer?.full_name ?? o.buyer_full_name ?? undefined,
+          phone: o.buyer?.phone ?? o.buyer_phone ?? undefined,
+          address: o.buyer?.address ?? o.buyer_address ?? undefined
         } : undefined
       })) as Order[];
-      const filtered = mappedOrders.filter(order => order.status !== 'pending');
+      let filtered = mappedOrders.filter(order => order.status !== 'pending');
+
+      // Enrich missing buyer names from profiles using buyer_id
+      try {
+        const missingNameBuyerIds = Array.from(new Set(
+          filtered
+            .filter(o => !getOrderBuyerName(o))
+            .map(o => getOrderBuyerId(o))
+            .filter(Boolean)
+        )) as string[];
+
+        if (missingNameBuyerIds.length > 0) {
+          type ProfileLike = { id?: string; full_name?: string; phone?: string; address?: string; [key: string]: unknown };
+          const buyerMap: Record<string, ProfileLike> = {};
+
+          await Promise.all(missingNameBuyerIds.map(async (id) => {
+            try {
+              const { ok, json } = await getProfileById(id);
+              if (ok && json) {
+                const profile = (json.profile ?? json) as ProfileLike;
+                if (profile && profile.id) buyerMap[id] = profile;
+              }
+            } catch (e) {
+              console.warn('[VendorDashboard] failed to fetch buyer profile', id, e);
+            }
+          }));
+
+          if (Object.keys(buyerMap).length > 0) {
+            filtered = filtered.map(o => {
+              const buyerId = getOrderBuyerId(o);
+              const profile = buyerId ? buyerMap[String(buyerId)] : undefined;
+              if (!profile?.full_name) return o;
+              const normalizedName = normalizeBuyerName(profile.full_name) || '';
+              if (!normalizedName) return o;
+              return {
+                ...o,
+                buyer: { ...(o as any).buyer, full_name: normalizeBuyerName((o as any).buyer?.full_name) || normalizedName },
+                profiles: (o as any).profiles
+                  ? { ...(o as any).profiles, full_name: normalizeBuyerName((o as any).profiles?.full_name) || normalizedName }
+                  : (o as any).profiles
+              };
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('[VendorDashboard] fetchOrders buyer name enrichment failed', e);
+      }
+
       setOrders(filtered);
       console.log('[VendorDashboard] fetchOrders success', filtered.length);
       try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
@@ -412,7 +494,7 @@ const VendorDashboard = () => {
       });
     }
    
-  }, [user, smsUser, toast]);
+  }, [user, smsUser, toast, getOrderBuyerName, getOrderBuyerId, normalizeBuyerName]);
 // ...existing code...
   const fetchProducts = useCallback(async () => {
     const caller = smsUser || user;
@@ -1159,6 +1241,8 @@ const VendorDashboard = () => {
   const totalProducts = products.length;
   const activeProducts = products.filter(p => p.is_available).length;
   const totalOrders = orders.length;
+  // Nombre de commandes non livrées (ex: paid, in_delivery)
+  const nonDeliveredCount = orders.filter(o => !['delivered','cancelled','refunded'].includes(o.status || '')).length;
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
@@ -1334,6 +1418,7 @@ const VendorDashboard = () => {
             <div className="flex items-center gap-1 whitespace-nowrap">
               <h3 className="text-xs md:text-sm font-semibold text-gray-900 m-0 leading-none">Commandes</h3>
               <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
+              <span className="ml-2 text-[11px] md:text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
             </div>
             <div>
               <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-[11px] px-2 py-0.5 rounded-md h-7">
@@ -1370,9 +1455,15 @@ const VendorDashboard = () => {
                         <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px', marginLeft: 8}}>{order.order_code || order.id}</span>
                       </div>
                       {/* ...statut déplacé en bas... */}
+                      {getOrderBuyerName(order) && (
+                        <div className="flex items-center text-sm text-gray-800 mb-1">
+                          <strong>Client :</strong>
+                          <span className="ml-2 font-medium text-gray-900">{getOrderBuyerName(order)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center text-sm text-gray-800 mb-1">
-                        <strong>Client :</strong>
-                        <div style={{ marginLeft: 8 }}>
+                        <strong>Contact :</strong>
+                        <div className="ml-2">
                           <button
                             type="button"
                             onClick={() => handleCallClient(order)}
@@ -1725,6 +1816,7 @@ const VendorDashboard = () => {
                   <div className="flex items-center gap-1 whitespace-nowrap">
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
                     <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
+                    <span className="ml-2 text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
                   </div>
                   <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7">
                     Facture paiement
@@ -1772,9 +1864,17 @@ const VendorDashboard = () => {
                                   <div className="flex items-center text-xs text-gray-500 mb-1">
                                     <span>🕐 {new Date(order.created_at || Date.now()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
                                   </div>
+                                  {getOrderBuyerName(order) && (
+                                    <div className="flex items-center text-sm text-gray-800 mb-1">
+                                      <strong>Client :</strong>
+                                      <span className="ml-2 font-medium text-gray-900">
+                                        {getOrderBuyerName(order)}
+                                      </span>
+                                    </div>
+                                  )}
                                   <div className="flex items-center text-sm text-gray-800 mb-1">
-                                    <strong>Client :</strong>
-                                    <div style={{ marginLeft: 8 }}>
+                                    <strong>Contact :</strong>
+                                    <div className="ml-2">
                                       <button
                                         type="button"
                                         onClick={() => handleCallClient(order)}
@@ -2034,8 +2134,8 @@ const VendorDashboard = () => {
               <div className="text-center py-6 text-gray-500">Aucune facture de batch disponible</div>
             )}
             {!batchesLoading && vendorBatches && vendorBatches.length > 0 && (
-              <div className="space-y-3">
-                {vendorBatches.map(b => (
+              <div className="space-y-3 max-h-[60vh] overflow-auto">
+                {(vendorBatchesShowAll ? vendorBatches : vendorBatches.slice(0,5)).map(b => (
                   <div key={b.id} className="flex items-center justify-between border p-2 rounded">
                     <div className="text-sm">
                       <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
@@ -2048,6 +2148,15 @@ const VendorDashboard = () => {
                     </div>
                   </div>
                 ))}
+                {vendorBatches.length > 5 && (
+                  <div className="flex justify-center mt-2">
+                    {!vendorBatchesShowAll ? (
+                      <Button size="sm" variant="outline" onClick={() => setVendorBatchesShowAll(true)}>Voir plus ({vendorBatches.length - 5} autres)</Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => setVendorBatchesShowAll(false)}>Afficher moins</Button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

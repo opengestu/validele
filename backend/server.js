@@ -1840,44 +1840,64 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               .single();
 
             if (orderDetails) {
-              // Notification acheteur
+              // Notification acheteur (push_tokens -> fallback profiles.push_token)
               const { data: buyerTokens } = await dbClient
                 .from('push_tokens')
                 .select('token')
                 .eq('user_id', orderDetails.buyer_id)
                 .eq('is_active', true);
 
-              if (buyerTokens && buyerTokens.length > 0) {
-                const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
-                  orderCode: orderDetails.order_code,
-                  amount: orderDetails.total_amount,
-                  orderId: orderId
-                });
+              const buyerNotif = getNotificationTemplate('PAYMENT_CONFIRMED', {
+                orderCode: orderDetails.order_code,
+                amount: orderDetails.total_amount,
+                orderId: orderId
+              });
 
+              if (buyerTokens && buyerTokens.length > 0) {
                 for (const { token } of buyerTokens) {
-                  await sendPushNotification(token, notif.title, notif.body, notif.data);
+                  await sendPushNotification(token, buyerNotif.title, buyerNotif.body, buyerNotif.data);
                 }
-                console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur');
+                console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur (push_tokens)');
+              } else {
+                const { data: buyerProfile } = await dbClient
+                  .from('profiles')
+                  .select('push_token')
+                  .eq('id', orderDetails.buyer_id)
+                  .single();
+                if (buyerProfile?.push_token) {
+                  await sendPushNotification(buyerProfile.push_token, buyerNotif.title, buyerNotif.body, buyerNotif.data);
+                  console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur (profiles.push_token)');
+                }
               }
 
-              // Notification vendeur
+              // Notification vendeur (push_tokens -> fallback profiles.push_token)
               const { data: vendorTokens } = await dbClient
                 .from('push_tokens')
                 .select('token')
                 .eq('user_id', orderDetails.vendor_id)
                 .eq('is_active', true);
 
-              if (vendorTokens && vendorTokens.length > 0) {
-                const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
-                  orderCode: orderDetails.order_code,
-                  amount: orderDetails.total_amount,
-                  orderId: orderId
-                });
+              const vendorNotif = getNotificationTemplate('PAYMENT_RECEIVED', {
+                orderCode: orderDetails.order_code,
+                amount: orderDetails.total_amount,
+                orderId: orderId
+              });
 
+              if (vendorTokens && vendorTokens.length > 0) {
                 for (const { token } of vendorTokens) {
-                  await sendPushNotification(token, notif.title, notif.body, notif.data);
+                  await sendPushNotification(token, vendorNotif.title, vendorNotif.body, vendorNotif.data);
                 }
-                console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur');
+                console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur (push_tokens)');
+              } else {
+                const { data: vendorProfile } = await dbClient
+                  .from('profiles')
+                  .select('push_token')
+                  .eq('id', orderDetails.vendor_id)
+                  .single();
+                if (vendorProfile?.push_token) {
+                  await sendPushNotification(vendorProfile.push_token, vendorNotif.title, vendorNotif.body, vendorNotif.data);
+                  console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur (profiles.push_token)');
+                }
               }
             }
           } catch (notifErr) {
@@ -6215,6 +6235,59 @@ app.post('/api/payment/webhook', async (req, res) => {
       return res.status(500).json({ error: 'Erreur lors de la mise à jour de la commande', details: error });
     }
 
+    // Notifications push (acheteur + vendeur) quand le paiement est confirmé
+    if (status === 'completed' || status === 'success') {
+      try {
+        const { data: orderDetails } = await supabase
+          .from('orders')
+          .select('buyer_id, vendor_id, order_code, total_amount')
+          .eq('id', orderId)
+          .single();
+
+        if (orderDetails) {
+          const { data: buyerTokens } = await supabase
+            .from('push_tokens')
+            .select('token')
+            .eq('user_id', orderDetails.buyer_id)
+            .eq('is_active', true);
+
+          if (buyerTokens && buyerTokens.length > 0) {
+            const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
+              orderCode: orderDetails.order_code,
+              amount: orderDetails.total_amount,
+              orderId
+            });
+
+            for (const { token } of buyerTokens) {
+              await sendPushNotification(token, notif.title, notif.body, notif.data);
+            }
+            console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
+          }
+
+          const { data: vendorTokens } = await supabase
+            .from('push_tokens')
+            .select('token')
+            .eq('user_id', orderDetails.vendor_id)
+            .eq('is_active', true);
+
+          if (vendorTokens && vendorTokens.length > 0) {
+            const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
+              orderCode: orderDetails.order_code,
+              amount: orderDetails.total_amount,
+              orderId
+            });
+
+            for (const { token } of vendorTokens) {
+              await sendPushNotification(token, notif.title, notif.body, notif.data);
+            }
+            console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');
+          }
+        }
+      } catch (notifErr) {
+        console.error('[PAYDUNYA] Erreur notifications paiement:', notifErr);
+      }
+    }
+
     res.status(200).json({ message: 'ok' });
   } catch (err) {
     console.error('Erreur lors du traitement de la notification paiement:', err);
@@ -6296,6 +6369,59 @@ app.post('/api/paydunya/notification', async (req, res) => {
     if (error) {
       console.error('Erreur lors de la mise à jour de la commande dans Supabase:', error);
       return res.status(500).json({ error: 'Erreur lors de la mise à jour de la commande', details: error });
+    }
+
+    // Notifications push (acheteur + vendeur) quand le paiement est confirmé
+    if (status === 'completed' || status === 'success') {
+      try {
+        const { data: orderDetails } = await supabase
+          .from('orders')
+          .select('buyer_id, vendor_id, order_code, total_amount')
+          .eq('id', orderId)
+          .single();
+
+        if (orderDetails) {
+          const { data: buyerTokens } = await supabase
+            .from('push_tokens')
+            .select('token')
+            .eq('user_id', orderDetails.buyer_id)
+            .eq('is_active', true);
+
+          if (buyerTokens && buyerTokens.length > 0) {
+            const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
+              orderCode: orderDetails.order_code,
+              amount: orderDetails.total_amount,
+              orderId
+            });
+
+            for (const { token } of buyerTokens) {
+              await sendPushNotification(token, notif.title, notif.body, notif.data);
+            }
+            console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
+          }
+
+          const { data: vendorTokens } = await supabase
+            .from('push_tokens')
+            .select('token')
+            .eq('user_id', orderDetails.vendor_id)
+            .eq('is_active', true);
+
+          if (vendorTokens && vendorTokens.length > 0) {
+            const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
+              orderCode: orderDetails.order_code,
+              amount: orderDetails.total_amount,
+              orderId
+            });
+
+            for (const { token } of vendorTokens) {
+              await sendPushNotification(token, notif.title, notif.body, notif.data);
+            }
+            console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');
+          }
+        }
+      } catch (notifErr) {
+        console.error('[PAYDUNYA] Erreur notifications paiement:', notifErr);
+      }
     }
 
     res.status(200).json({ message: 'ok' });

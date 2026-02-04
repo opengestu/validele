@@ -637,10 +637,20 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   };
   // Compléter le profil
   const handleCompleteProfile = async () => {
-    if (!formData.fullName) {
+    const fullNameTrimmed = formData.fullName.trim();
+    const fullNameParts = fullNameTrimmed.split(/\s+/).filter(Boolean);
+    if (!fullNameTrimmed) {
       toast({
         title: "Erreur",
         description: "Veuillez entrer votre nom",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (fullNameParts.length < 2) {
+      toast({
+        title: "Erreur",
+        description: "Veuillez saisir votre prénom et nom (au moins 2 mots)",
         variant: "destructive",
       });
       return;
@@ -656,7 +666,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          full_name: formData.fullName,
+          full_name: fullNameTrimmed,
           phone: formData.phone,
           role: formData.role,
           company_name: formData.companyName,
@@ -1393,7 +1403,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               type="button"
               onClick={handleCompleteProfile}
               className="w-full h-10 text-base rounded-xl"
-              disabled={loading || !formData.fullName}
+              disabled={loading || formData.fullName.trim().split(/\s+/).filter(Boolean).length < 2}
             >
               <div className="flex items-center gap-2">
                 <span>Terminer</span>

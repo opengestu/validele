@@ -41,6 +41,12 @@ export interface Order {
   };
   profiles?: {
     company_name?: string;
+    full_name?: string;
+    phone?: string;
+    address?: string;
+  };
+  buyer?: {
+    full_name?: string;
     phone?: string;
     address?: string;
   };

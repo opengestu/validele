@@ -5,12 +5,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import validelLogo from '@/assets/validel-logo.png';
 import { PhoneAuthForm } from './auth/PhoneAuthForm';
+import { Spinner } from '@/components/ui/spinner';
 
 const AuthPage = () => {
   const navigate = useNavigate();
   const { user, userProfile, loading: authLoading } = useAuth();
 
   const [authStep, setAuthStep] = React.useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
+
+  const hasCompleteProfile = Boolean(user && userProfile?.full_name && userProfile.full_name.trim() !== '');
 
   React.useEffect(() => {
     if (authLoading) return;
@@ -28,6 +31,16 @@ const AuthPage = () => {
                          userProfile.role === 'delivery' ? '/delivery' : '/buyer';
     navigate(redirectPath, { replace: true });
   }, [authLoading, navigate, user, userProfile]);
+
+  // Prevent auth UI flashes when redirecting or restoring session
+  if (authLoading || hasCompleteProfile) {
+    return (
+      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+        <Spinner size="xl" className="text-[#24BD5C]" />
+        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      </div>
+    );
+  }
 
   // UI inspirée de Wave pour la saisie du numéro
 
