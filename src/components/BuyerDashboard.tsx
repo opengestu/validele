@@ -40,7 +40,8 @@ async function fetchJsonWithTimeout<T = unknown>(url: string, init: RequestInit,
     if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
       const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
       err.status = res.status;
-      err.body = { raw: (parsed as { __raw: string }).__raw };
+      // parsed comes from safeJson and may not strictly match the expected shape; cast via unknown then access __raw safely
+      err.body = { raw: (parsed as unknown as { __raw?: string }).__raw || '' };
       throw err;
     }
     const data = ((parsed ?? {}) as unknown) as T;
@@ -1182,7 +1183,8 @@ const BuyerDashboard = () => {
       if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
         const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
         err.status = response.status;
-        err.body = { raw: (parsed as { __raw: string }).__raw };
+        // Use unknown cast to avoid TS conversion errors and default to empty string if missing
+        err.body = { raw: (parsed as unknown as { __raw?: string }).__raw || '' };
         throw err;
       }
       const data = (parsed ?? {}) as any;
@@ -1347,7 +1349,7 @@ const BuyerDashboard = () => {
       if (parsed && typeof parsed === 'object' && '__parseError' in parsed) {
         const err = new Error('Réponse invalide du serveur (JSON attendu).') as Error & { status?: number; body?: unknown };
         err.status = response.status;
-        err.body = { raw: (parsed as { __raw: string }).__raw };
+        err.body = { raw: (parsed as unknown as { __raw?: string }).__raw || '' };
         throw err;
       }
       const result = (parsed ?? {}) as any;
