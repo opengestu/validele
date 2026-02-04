@@ -1,7 +1,7 @@
 const rawBase =
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? '' : (import.meta.env.VITE_DEV_BACKEND || 'https://validele.onrender.com'));
+  (import.meta.env.DEV ? '' : 'https://validele.onrender.com');
 export const API_BASE = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
 
 export const apiUrl = (path: string) => {
