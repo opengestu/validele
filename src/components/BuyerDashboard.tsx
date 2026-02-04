@@ -639,21 +639,30 @@ const BuyerDashboard = () => {
   // (Synchronisation déjà gérée ci-dessus)
 
   useEffect(() => {
+    // Subscribe to orders for this buyer to get realtime status updates
+    const buyerId = user?.id || (() => { try { const smsRaw = localStorage.getItem('sms_auth_session'); return smsRaw ? (JSON.parse(smsRaw || '{}')?.profileId || null) : null; } catch (e) { return null; } })();
+    if (!buyerId) return;
+
+    const channelName = `buyer-orders-${buyerId}`;
     const channel = supabase
-      .channel('orders-changes-buyer')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
-        
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `buyer_id=eq.${buyerId}` }, payload => {
+        console.log('[BuyerDashboard] Realtime order event', payload);
         fetchOrders();
       })
+      // Keep transactions subscription but only trigger a light refresh
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, payload => {
-        
+        console.log('[BuyerDashboard] Realtime payment_transactions event', payload);
         fetchTransactions();
+        // Also refresh orders in case payment triggered an order status change
+        fetchOrders();
       })
       .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      try { supabase.removeChannel(channel); } catch (e) { console.warn('[BuyerDashboard] removeChannel failed', e); }
     };
-  }, [fetchOrders, fetchTransactions]);
+  }, [fetchOrders, fetchTransactions, user]);
 
   const handleSearch = async () => {
     if (!searchCode.trim()) {

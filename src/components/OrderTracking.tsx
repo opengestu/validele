@@ -22,6 +22,32 @@ const OrderTracking = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // Realtime updates: subscribe to changes on orders so we see status changes without refresh
+  useEffect(() => {
+    if (!user) return;
+
+    // If viewing a single order, subscribe to that order only; otherwise subscribe to buyer's orders
+    const filter = orderId ? `id=eq.${orderId}` : `buyer_id=eq.${user.id}`;
+    const channelName = orderId ? `order-${orderId}` : `buyer-orders-${user.id}`;
+
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter }, (payload) => {
+        console.log('[OrderTracking] Realtime payload:', payload);
+        // Re-fetch orders (simple and reliable) — cheap for single order or small list
+        fetchOrders();
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {
+        console.warn('Failed to remove realtime channel', e);
+      }
+    };
+  }, [user, orderId]);
+
   const fetchOrders = async () => {
     if (!user) return;
     try {

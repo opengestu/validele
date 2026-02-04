@@ -141,22 +141,25 @@ const DeliveryDashboard = () => {
     fetchDeliveries();
     fetchTransactions();
 
+    if (!user?.id) return;
+    const channelName = `delivery-orders-${user.id}`;
+
     const channel = supabase
-      .channel('orders-changes-delivery')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-        console.log('DeliveryDashboard: Changement orders détecté', payload);
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `delivery_person_id=eq.${user.id}` }, (payload) => {
+        console.log('DeliveryDashboard: Realtime order event', payload);
         fetchDeliveries();
         fetchTransactions();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, (payload) => {
-        console.log('DeliveryDashboard: Changement transactions détecté', payload);
+        console.log('DeliveryDashboard: Realtime transactions event', payload);
         fetchTransactions();
       })
       .subscribe();
     return () => {
-      supabase.removeChannel(channel);
+      try { supabase.removeChannel(channel); } catch (e) { console.warn('[DeliveryDashboard] removeChannel failed', e); }
     };
-  }, []);
+  }, [user]);
 
   // Listen to app-level event when a delivery is started so we can refresh immediately
   useEffect(() => {
@@ -645,7 +648,7 @@ const DeliveryDashboard = () => {
       if (!resp.ok || !json.success) {
         throw new Error(json?.error || 'Erreur lors du démarrage de la livraison');
       }
-      toast({ title: 'Livraison démarrée', description: 'Le client a été notifié par SMS.' });
+      toast({ title: 'Commande récupérée', description: 'Vous pouvez scanner le QR code du client pour finaliser.' });
       fetchDeliveries();
     } catch (error) {
       toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Impossible de démarrer la livraison'), variant: 'destructive' });
@@ -722,13 +725,14 @@ const DeliveryDashboard = () => {
                   Démarrer la livraison
                 </Button>
               )}
-              <Button
-                className="w-full bg-green-500 hover:bg-green-600 text-white"
-                onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}&autoStart=1`)}
-              >
-                <QrCode className="h-4 w-4 mr-2" />
-                Marquer livré
-              </Button>
+              {delivery.status === 'in_delivery' && (
+                <Button
+                  className="w-full bg-green-500 hover:bg-green-600 text-white"
+                  onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}`)}
+                >
+                  Scanner Qrcode Client
+                </Button>
+              )}
             </div>
           )} 
           {variant === 'completed' && (
