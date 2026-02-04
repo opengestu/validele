@@ -1979,6 +1979,112 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
   }
 });
 
+// Admin: Manually confirm a payment as paid (when webhook fails)
+app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: 'orderId required' });
+    }
+
+    console.log('[ADMIN] confirm-payment: Confirming payment for order:', orderId);
+
+    // Create admin client with service role key to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      console.error('[ADMIN] confirm-payment: SUPABASE_SERVICE_ROLE_KEY missing');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration' });
+    }
+    const { createClient: createAdminClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    // Fetch the order
+    const { data: order, error: orderErr } = await supabaseAdmin
+      .from('orders')
+      .select('id, order_code, status, buyer_id, vendor_id, total_amount')
+      .eq('id', orderId)
+      .single();
+
+    if (orderErr || !order) {
+      console.error('[ADMIN] confirm-payment: Order not found:', orderErr);
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    // Check if already paid or delivered
+    if (['paid', 'in_delivery', 'delivered'].includes(order.status)) {
+      console.log('[ADMIN] confirm-payment: Order already in status:', order.status);
+      return res.json({ success: true, message: `Order already ${order.status}`, order });
+    }
+
+    // Update order status to paid
+    const { error: updateErr } = await supabaseAdmin
+      .from('orders')
+      .update({
+        status: 'paid',
+        payment_confirmed_at: new Date().toISOString(),
+        qr_code: order.order_code // Use order_code as QR code
+      })
+      .eq('id', orderId);
+
+    if (updateErr) {
+      console.error('[ADMIN] confirm-payment: Update error:', updateErr);
+      return res.status(500).json({ success: false, error: 'Failed to update order: ' + updateErr.message });
+    }
+
+    console.log('[ADMIN] ✅ Order', orderId, 'manually confirmed as paid');
+
+    // Notify buyer and vendor
+    try {
+      // Notification to buyer
+      const { data: buyerTokens } = await supabaseAdmin
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', order.buyer_id)
+        .eq('is_active', true);
+
+      if (buyerTokens && buyerTokens.length > 0) {
+        const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
+          orderCode: order.order_code,
+          amount: order.total_amount,
+          orderId: orderId
+        });
+
+        for (const { token } of buyerTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[ADMIN] Notification sent to buyer');
+      }
+
+      // Notification to vendor
+      const { data: vendorTokens } = await supabaseAdmin
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', order.vendor_id)
+        .eq('is_active', true);
+
+      if (vendorTokens && vendorTokens.length > 0) {
+        const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
+          orderCode: order.order_code,
+          amount: order.total_amount,
+          orderId: orderId
+        });
+
+        for (const { token } of vendorTokens) {
+          await sendPushNotification(token, notif.title, notif.body, notif.data);
+        }
+        console.log('[ADMIN] Notification sent to vendor');
+      }
+    } catch (notifErr) {
+      console.error('[ADMIN] Notification error:', notifErr);
+    }
+
+    return res.json({ success: true, message: 'Payment confirmed manually', orderId, orderCode: order.order_code });
+  } catch (error) {
+    console.error('[ADMIN] confirm-payment error:', error);
+    return res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
 // Envoyer de l'argent (payout vendeur(se)/livreur) - PROTÉGÉ : nécessite un admin
 app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
   try {
