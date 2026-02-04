@@ -1798,18 +1798,26 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     // Si paiement réussi, mettre à jour la commande
     // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts
     if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout') {
+      // Utiliser supabaseAdmin pour bypass RLS policies
+      const dbClient = supabaseAdmin || supabase;
+      
       // Récupérer l'order_code de la commande
-      const { data: orderData } = await supabase
+      const { data: orderData, error: fetchError } = await dbClient
         .from('orders')
         .select('order_code, status')
         .eq('id', orderId)
         .single();
+      
+      if (fetchError) {
+        console.error('[PIXPAY-WEBHOOK] ❌ Erreur fetch order:', fetchError);
+      }
 
       // Ne pas écraser le status si la commande est déjà delivered
       if (orderData?.status === 'delivered') {
-        console.log('[PIXPAY] ⚠️ Commande déjà livrée, status non modifié');
+        console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
       } else {
-        const { error: orderError } = await supabase
+        // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
+        const { error: orderError } = await dbClient
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
@@ -1819,13 +1827,13 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           .eq('id', orderId);
 
         if (orderError) {
-          console.error('[PIXPAY] Erreur update order:', orderError);
+          console.error('[PIXPAY-WEBHOOK] ❌ Erreur update order:', orderError);
         } else {
-          console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
+          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
           
           // Notifier l'acheteur et le vendeur du paiement confirmé
           try {
-            const { data: orderDetails } = await supabase
+            const { data: orderDetails } = await dbClient
               .from('orders')
               .select('buyer_id, vendor_id, order_code, total_amount')
               .eq('id', orderId)
@@ -1833,7 +1841,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 
             if (orderDetails) {
               // Notification acheteur
-              const { data: buyerTokens } = await supabase
+              const { data: buyerTokens } = await dbClient
                 .from('push_tokens')
                 .select('token')
                 .eq('user_id', orderDetails.buyer_id)
@@ -1853,7 +1861,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               }
 
               // Notification vendeur
-              const { data: vendorTokens } = await supabase
+              const { data: vendorTokens } = await dbClient
                 .from('push_tokens')
                 .select('token')
                 .eq('user_id', orderDetails.vendor_id)
