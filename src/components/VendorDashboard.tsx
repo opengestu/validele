@@ -25,6 +25,26 @@ const getStatusBadgeColor = (status: string): string => {
   }
 };
 
+const normalizeRefundTxStatus = (status?: string) => {
+  const s = String(status || '').toUpperCase();
+  if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(s)) return 'success';
+  if (['PENDING', 'PENDING1', 'PENDING2', 'PROCESSING', 'QUEUED'].includes(s)) return 'pending';
+  if (['FAILED', 'ERROR', 'CANCELLED'].includes(s)) return 'failed';
+  return s ? 'pending' : 'unknown';
+};
+
+const getEffectiveOrderStatus = (
+  order: Order,
+  orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>
+) => {
+  const current = order.status;
+  if (current === 'refunded' || current === 'cancelled') return current;
+  const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
+  if (!refundTx) return current;
+  const refundState = normalizeRefundTxStatus(refundTx.status);
+  return refundState === 'success' ? 'refunded' : 'cancelled';
+};
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@/components/ui/spinner';
@@ -1242,7 +1262,11 @@ const VendorDashboard = () => {
   const activeProducts = products.filter(p => p.is_available).length;
   const totalOrders = orders.length;
   // Nombre de commandes non livrées (ex: paid, in_delivery)
-  const nonDeliveredCount = orders.filter(o => !['delivered','cancelled','refunded'].includes(o.status || '')).length;
+  const nonDeliveredCount = orders.filter(o => {
+    const orderTransactions = transactions.filter(t => t.order_id === o.id);
+    const effectiveStatus = getEffectiveOrderStatus(o, orderTransactions);
+    return !['delivered', 'cancelled', 'refunded'].includes(effectiveStatus || '');
+  }).length;
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
@@ -1434,7 +1458,9 @@ const VendorDashboard = () => {
               <div className="space-y-4">
                 {orders.map((order) => {
                   // Trouver la transaction de paiement associée à cette commande
-                  const payoutTransaction = transactions.find(t => t.order_id === order.id);
+                  const orderTransactions = transactions.filter(t => t.order_id === order.id);
+                  const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
+                  const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
                   return (
                     <div
                       key={order.id}
@@ -1483,8 +1509,8 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center mb-1 mt-2">
                         <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
-                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
+                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
+                          {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
                         </span>
                       </div>
 
@@ -1500,7 +1526,7 @@ const VendorDashboard = () => {
                         </Button>
                         
                         {/* Bouton QR Code Commande */}
-                        {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
+                        {(effectiveStatus === 'paid' || effectiveStatus === 'assigned') && order.order_code && (
                           <Button
                             size="sm"
                             onClick={() => handleShowVendorQR(order)}
@@ -1843,7 +1869,10 @@ const VendorDashboard = () => {
                           
                           {/* Orders for this date */}
                           <div className="grid gap-4">
-                            {groups[dateKey].map((order) => (
+                            {groups[dateKey].map((order) => {
+                              const orderTransactions = transactions.filter(t => t.order_id === order.id);
+                              const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
+                              return (
                               <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
                                 <CardContent className="p-4">
                                   {/* Ligne 1 : Icône + nom produit + prix à droite */}
@@ -1893,8 +1922,8 @@ const VendorDashboard = () => {
                                   {/* Statut tout en bas */}
                                   <div className="flex items-center mb-1 mt-2">
                                     <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
-                                      {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
+                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
+                                      {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
                                     </span>
                                   </div>
                                   {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
@@ -1909,7 +1938,7 @@ const VendorDashboard = () => {
                                     </Button>
                                     
                                     {/* Bouton QR Code Commande */}
-                                    {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
+                                    {(effectiveStatus === 'paid' || effectiveStatus === 'assigned') && order.order_code && (
                                       <Button
                                         size="sm"
                                         onClick={() => handleShowVendorQR(order)}
@@ -1922,7 +1951,8 @@ const VendorDashboard = () => {
                                   </div>
                                 </CardContent>
                               </Card>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       ))}

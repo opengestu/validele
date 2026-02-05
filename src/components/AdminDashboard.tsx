@@ -490,25 +490,60 @@ const AdminDashboard: React.FC = () => {
     );
   };
 
+  // Helper: determine if a refund is truly pending (unreviewed and unprocessed)
+  // A refund is pending ONLY if:
+  // - status is 'pending' (not 'approved', 'processed', or 'rejected')
+  // - AND reviewed_at is null (hasn't been reviewed by admin yet)
+  // If reviewed_at exists, refund has been processed (approved or rejected) regardless of other fields
+  const isRefundPending = (r: RefundRequest) => {
+    // If reviewed_at is set, refund was definitely reviewed - it's in history
+    if (r.reviewed_at) return false;
+    
+    // Only show in pending section if status is 'pending' and has never been reviewed
+    return r.status === 'pending';
+  };
+
   const handleApproveRefund = async (refundId: string) => {
     setProcessing(true);
     try {
+      console.log('[AdminDashboard] Approving refund:', refundId);
+      
       const res = await fetch(apiUrl(`/api/admin/refund-requests/${refundId}/approve`), {
         method: 'POST',
         headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
         credentials: 'include'
       });
+      
+      console.log('[AdminDashboard] Approve response status:', res.status);
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Erreur lors de l\'approbation');
+      console.log('[AdminDashboard] Approve response:', json);
+      
+      if (!res.ok) {
+        throw new Error(json?.error || `Erreur lors de l\'approbation (${res.status})`);
+      }
+      
       toast({ 
         title: '✅ Remboursement approuvé', 
         description: 'Le remboursement a été traité avec succès. Mise à jour des données...' 
       });
-      // Reload immediately and then again after 1s to ensure backend has processed
+      
+      // Reload immediately to get updated data from backend
+      console.log('[AdminDashboard] Fetching updated data...');
       await fetchData();
-      setTimeout(() => fetchData(), 1000);
+      
+      // Also reload after delay to ensure backend fully processed
+      setTimeout(() => {
+        console.log('[AdminDashboard] Fetching data again after delay...');
+        fetchData();
+      }, 1500);
     } catch (err: unknown) {
-      toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[AdminDashboard] Approve error:', message);
+      toast({ 
+        title: 'Erreur lors de l\'approbation', 
+        description: message, 
+        variant: 'destructive' 
+      });
     } finally {
       setProcessing(false);
     }
@@ -517,23 +552,45 @@ const AdminDashboard: React.FC = () => {
   const handleRejectRefund = async (refundId: string, reason: string) => {
     setProcessing(true);
     try {
+      console.log('[AdminDashboard] Rejecting refund:', refundId, 'reason:', reason);
+      
       const res = await fetch(apiUrl(`/api/admin/refund-requests/${refundId}/reject`), {
         method: 'POST',
         headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ reason })
       });
+      
+      console.log('[AdminDashboard] Reject response status:', res.status);
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Erreur lors du rejet');
+      console.log('[AdminDashboard] Reject response:', json);
+      
+      if (!res.ok) {
+        throw new Error(json?.error || `Erreur lors du rejet (${res.status})`);
+      }
+      
       toast({ 
         title: '✅ Demande rejetée', 
         description: 'La demande de remboursement a été rejetée. Mise à jour des données...' 
       });
-      // Reload immediately and then again after 1s to ensure backend has processed
+      
+      // Reload immediately to get updated data from backend
+      console.log('[AdminDashboard] Fetching updated data...');
       await fetchData();
-      setTimeout(() => fetchData(), 1000);
+      
+      // Also reload after delay to ensure backend fully processed
+      setTimeout(() => {
+        console.log('[AdminDashboard] Fetching data again after delay...');
+        fetchData();
+      }, 1500);
     } catch (err: unknown) {
-      toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[AdminDashboard] Reject error:', message);
+      toast({ 
+        title: 'Erreur lors du rejet', 
+        description: message, 
+        variant: 'destructive' 
+      });
     } finally {
       setProcessing(false);
     }
@@ -1392,7 +1449,7 @@ const AdminDashboard: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filterRefunds(refunds)
-                    .filter(r => r.status === 'pending')
+                    .filter(isRefundPending)
                     .map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
@@ -1434,7 +1491,7 @@ const AdminDashboard: React.FC = () => {
                         </TableCell>
                       </TableRow>
                     ))}
-                  {filterRefunds(refunds).filter(r => r.status === 'pending').length === 0 && (
+                  {filterRefunds(refunds).filter(isRefundPending).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-gray-500">Aucune demande en attente</TableCell>
                     </TableRow>
@@ -1459,7 +1516,7 @@ const AdminDashboard: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filterRefunds(refunds)
-                    .filter(r => r.status !== 'pending')
+                    .filter(r => !isRefundPending(r))
                     .sort((a, b) => {
                       const dateA = a.reviewed_at || a.processed_at || a.requested_at || '';
                       const dateB = b.reviewed_at || b.processed_at || b.requested_at || '';
@@ -1490,7 +1547,7 @@ const AdminDashboard: React.FC = () => {
                         <TableCell className="text-xs text-gray-500">{r.reviewed_by || '-'}</TableCell>
                       </TableRow>
                     ))}
-                  {filterRefunds(refunds).filter(r => r.status !== 'pending').length === 0 && (
+                  {filterRefunds(refunds).filter(r => !isRefundPending(r)).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>
                     </TableRow>

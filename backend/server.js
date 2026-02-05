@@ -4535,17 +4535,20 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     console.log('[REFUND] Résultat PixPay:', result);
 
     // 4) Mettre à jour la demande de remboursement
+    // IMPORTANT: Always update reviewed_at when approve endpoint is called, regardless of pixpay success
     const newStatus = result.success ? 'processed' : 'approved';
-    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', newStatus);
+    const now = new Date().toISOString();
+    
+    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', newStatus, 'reviewed_at:', now);
     
     const { data: updatedRefund, error: updateRefundError } = await supabaseAdmin
       .from('refund_requests')
       .update({
         status: newStatus,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: req.user?.id || 'admin',
-        processed_at: result.success ? new Date().toISOString() : null,
-        transaction_id: result.transaction_id
+        reviewed_at: now,  // ALWAYS set - this marks refund as reviewed
+        reviewed_by: req.adminUser?.id || req.user?.id || 'admin',
+        processed_at: result.success ? now : null,
+        transaction_id: result.transaction_id || null
       })
       .eq('id', refundId)
       .select()
@@ -4553,7 +4556,12 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
     if (updateRefundError) {
       console.error('[REFUND] ❌ Erreur mise à jour demande:', updateRefundError);
-      // Continue quand même car l'argent a été envoyé
+      // Return error to frontend - don't silently fail
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la mise à jour de la demande de remboursement: ' + updateRefundError.message,
+        details: updateRefundError
+      });
     } else {
       console.log('[REFUND] ✅ Demande mise à jour avec succès:', refundId);
       console.log('[REFUND] Données mises à jour:', updatedRefund);

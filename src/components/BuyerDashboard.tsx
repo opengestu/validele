@@ -1319,6 +1319,7 @@ const BuyerDashboard = () => {
     else if (status === 'delivered') { bg = 'bg-green-100 text-green-700'; dot = 'bg-green-500'; }
     else if (status === 'pending') { bg = 'bg-yellow-100 text-yellow-700'; dot = 'bg-yellow-500'; }
     else if (status === 'cancelled') { bg = 'bg-red-100 text-red-700'; dot = 'bg-red-500'; }
+    else if (status === 'refunded') { bg = 'bg-gray-100 text-gray-700'; dot = 'bg-gray-500'; }
 
     return (
       <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${bg}`} role="status" aria-label={text}>
@@ -1326,6 +1327,26 @@ const BuyerDashboard = () => {
         <span className="leading-none">{text}</span>
       </span>
     );
+  };
+
+  const normalizeRefundTxStatus = (status?: string) => {
+    const s = String(status || '').toUpperCase();
+    if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(s)) return 'success';
+    if (['PENDING', 'PENDING1', 'PENDING2', 'PROCESSING', 'QUEUED'].includes(s)) return 'pending';
+    if (['FAILED', 'ERROR', 'CANCELLED'].includes(s)) return 'failed';
+    return s ? 'pending' : 'unknown';
+  };
+
+  const getEffectiveOrderStatus = (
+    order: Order,
+    orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>
+  ) => {
+    const current = order.status;
+    if (current === 'refunded' || current === 'cancelled') return current;
+    const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
+    if (!refundTx) return current;
+    const refundState = normalizeRefundTxStatus(refundTx.status);
+    return refundState === 'success' ? 'refunded' : 'cancelled';
   };
 
   // Fonction de demande de remboursement
@@ -1632,8 +1653,9 @@ const BuyerDashboard = () => {
                       {displayedOrders.map((order) => {
                         // Trouver les transactions associées à cette commande
                         const orderTransactions = transactions.filter(t => t.order_id === order.id);
-                        const paymentTransaction = orderTransactions.find(t => t.transaction_type !== 'payout');
                         const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
+                        const refundTransaction = orderTransactions.find(t => t.transaction_type === 'refund');
+                        const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
                         const isExpanded = expandedOrderIds.has(order.id);
                         const toggleDetails = () => {
                           setExpandedOrderIds((prev) => {
@@ -1752,19 +1774,19 @@ const BuyerDashboard = () => {
                             )}
 
                             {/* Affichage du remboursement si existant */}
-                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
+                            {refundTransaction && (
                               <div className="rounded-md bg-orange-50 p-2">
                                 <p className="text-xs font-medium text-orange-700">
                                   💸 Remboursement:
                                   <span
                                     className={
                                       `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
-                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                      (normalizeRefundTxStatus(refundTransaction.status) === 'success'
                                         ? 'bg-green-100 text-green-700'
                                         : 'bg-yellow-100 text-yellow-700')
                                     }
                                   >
-                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                    {normalizeRefundTxStatus(refundTransaction.status) === 'success'
                                       ? '✓ Effectué'
                                       : '⏳ En cours'}
                                   </span>
@@ -1808,7 +1830,7 @@ const BuyerDashboard = () => {
                             {isExpanded && (
                               <div className="flex flex-wrap gap-2">
                                 {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
-                                {(order.status === 'paid' || order.status === 'in_delivery') && (
+                                {(effectiveStatus === 'paid' || effectiveStatus === 'in_delivery') && (
                                   <button
                                     className="flex items-center gap-1 rounded-md border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 min-w-[32px]"
                                     onClick={() => openRefundModal(order)}
@@ -1825,7 +1847,7 @@ const BuyerDashboard = () => {
                             {/* Statut (déplacé en bas de la carte) */}
                             <div className="mt-4">
                               <div className="text-sm flex items-center gap-2">
-                                {renderStatusBadge(order.status)}
+                                {renderStatusBadge(effectiveStatus)}
                               </div>
                             </div>
                           </div>

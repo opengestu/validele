@@ -163,7 +163,8 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
 
         try {
           if (!isMounted || !active || !html5Qr.current) {
-            onError(new Error('L\'initialisation du scanner a été annulée'));
+            // If scanner is no longer active, this is an expected cleanup path
+            // and should not surface as a user-facing error.
             return;
           }
 
@@ -278,7 +279,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
                 try { await inst.stop(); } catch (e) { /* ignore */ }
                 try { inst.clear(); } catch (e) { /* ignore */ }
               }
-              if (!isMounted || !active) { onError(new Error('L\'initialisation du scanner a été annulée')); return; }
+              if (!isMounted || !active) { return; }
               html5Qr.current = new Html5Qrcode(divId);
               const inst2 = html5Qr.current;
               if (!inst2) { onError(new Error('Impossible de créer une instance du scanner')); return; }
@@ -455,6 +456,14 @@ function QRScanSection({
     let msg = 'Erreur d\'accès à la caméra. Vérifiez les permissions ou réessayez.';
 
     try {
+      const rawMsg = typeof err === 'string'
+        ? err
+        : (err && typeof err === 'object' && 'message' in err && typeof (err as { message?: unknown }).message === 'string')
+          ? (err as { message?: string }).message ?? ''
+          : '';
+      if (rawMsg && rawMsg.includes('initialisation du scanner a été annulée')) {
+        return;
+      }
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
         msg = "Permission caméra refusée. Autorisez la caméra via l'icône cadenas (Paramètres du site) puis rechargez la page.";
       } else if (name === 'NotFoundError') {
