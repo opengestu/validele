@@ -1389,15 +1389,21 @@ const BuyerDashboard = () => {
     
     // Si la commande est annulée, vérifier si elle a un remboursement approuvé
     if (current === 'cancelled') {
-      // Chercher le refund pour cette commande
+      // D'abord chercher si refundRequests a été chargé
       const refund = refundRequests?.find(r => r.order_id === order.id);
-      
-      // Si le refund a été reviewed_at (approuvé ou rejeté), montrer "Remboursée"
       if (refund && refund.reviewed_at) {
         return 'refunded';
       }
       
-      // Sinon, rester sur "Annulée"
+      // Fallback: si pas de refundRequests encore chargé, chercher une transaction de remboursement réussie
+      const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
+      if (refundTx) {
+        const txStatus = String(refundTx.status || '').toUpperCase();
+        if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(txStatus)) {
+          return 'refunded';
+        }
+      }
+      
       return 'cancelled';
     }
     

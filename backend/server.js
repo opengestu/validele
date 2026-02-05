@@ -4571,19 +4571,52 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
     // 5) Mettre à jour le statut de la commande
     console.log('[REFUND] Mise à jour commande:', refundRequest.order_id, 'status: cancelled');
-    const { error: updateOrderError } = await supabaseAdmin
+    
+    // DEBUG: Vérifier que order_id existe et n'est pas null
+    if (!refundRequest.order_id) {
+      console.error('[REFUND] ❌ ERREUR: order_id est NULL ou vide!');
+      console.error('[REFUND] refundRequest.order_id:', refundRequest.order_id);
+      console.error('[REFUND] refundRequest keys:', Object.keys(refundRequest));
+      return res.status(500).json({
+        success: false,
+        error: 'ERREUR CRITIQUE: order_id manquant dans refund_requests',
+        details: {
+          order_id: refundRequest.order_id,
+          keys: Object.keys(refundRequest)
+        }
+      });
+    }
+    
+    const { data: updatedOrder, error: updateOrderError } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
         cancellation_reason: refundRequest.reason || 'Remboursement approuvé par admin'
       })
-      .eq('id', refundRequest.order_id);
+      .eq('id', refundRequest.order_id)
+      .select()
+      .single();
 
     if (updateOrderError) {
-      console.error('[REFUND] Erreur mise à jour commande:', updateOrderError);
+      console.error('[REFUND] ❌ Erreur mise à jour commande:', updateOrderError);
+      console.error('[REFUND] Détails erreur:', {
+        message: updateOrderError.message,
+        code: updateOrderError.code,
+        details: updateOrderError.details,
+        order_id: refundRequest.order_id
+      });
+      // Don't just log - actually return error to frontend so we know what happened
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la mise à jour du statut de la commande: ' + updateOrderError.message,
+        stage: 'update_order_status',
+        order_id: refundRequest.order_id,
+        details: updateOrderError
+      });
     } else {
       console.log('[REFUND] ✅ Commande mise à jour avec succès:', refundRequest.order_id);
+      console.log('[REFUND] Données commande mises à jour:', updatedOrder);
     }
 
     // 6) Enregistrer la transaction de remboursement
