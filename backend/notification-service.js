@@ -3,11 +3,14 @@ async function sendD7SMSNotify(to, text) {
   const D7_API_KEY = process.env.D7_API_KEY_NOTIFY;
   const D7_SMS_URL = process.env.D7_SMS_URL || 'https://api.d7networks.com/messages/v1/send';
   if (!D7_API_KEY) throw new Error('D7_API_KEY_NOTIFY not configured');
+  // D7 attend un numéro sans symbole '+'
+  const formattedTo = String(to || '').replace(/[^0-9]/g, '');
+  if (!formattedTo) throw new Error('Numéro SMS invalide');
   const data = {
     messages: [
       {
         channel: "sms",
-        recipients: [to],
+        recipients: [formattedTo],
         content: text,
         msg_type: "text",
         data_coding: "text"
