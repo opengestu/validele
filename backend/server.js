@@ -1528,6 +1528,8 @@ app.post('/api/sms/register', async (req, res) => {
 
     // Créer le profil (id = userId) pour satisfaire la FK
     // Utiliser upsert pour éviter les erreurs de doublon
+    console.log('[SMS] Tentative upsert profile pour userId:', userId);
+    
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
@@ -1543,6 +1545,7 @@ app.post('/api/sms/register', async (req, res) => {
 
     if (profileError) {
       console.error('[SMS] Erreur création profile:', profileError);
+      console.error('[SMS] Client Supabase utilisé:', !!supabase, 'Service role key dispo:', !!SUPABASE_SERVICE_ROLE_KEY);
       // Best-effort cleanup: supprimer le user créé si le profil échoue
       try {
         await supabase.auth.admin.deleteUser(userId);
