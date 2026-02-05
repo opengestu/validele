@@ -93,7 +93,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
     };
 
-    const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 7000) => {
+    const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 15000) => {
       const controller = new AbortController();
       const id = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -298,6 +298,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (smsSessionStr) {
           try {
             const smsSession = JSON.parse(smsSessionStr);
+            const buildProfileFromSmsSession = (sessionLike: { profileId?: string; phone?: string; fullName?: string; role?: string }) => {
+              if (!sessionLike?.profileId) return null;
+              return {
+                id: sessionLike.profileId,
+                email: `${sessionLike.phone || ''}@sms.validele.app`,
+                full_name: sessionLike.fullName || '',
+                phone: sessionLike.phone || null,
+                role: (sessionLike.role ?? 'buyer') as 'buyer' | 'vendor' | 'delivery',
+                company_name: null,
+                vehicle_info: null,
+                walletType: null,
+                wallet_type: null
+              } as UserProfile;
+            };
 
             // Session SMS - charger le profil via l'endpoint admin pour éviter les RLS
             try {
@@ -343,9 +357,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                 }
               } else {
                 console.error('Erreur lors de la récupération du profil SMS via backend:', resp.status);
+                const fallbackProfile = buildProfileFromSmsSession(smsSession);
+                if (fallbackProfile && mounted) {
+                  authModeRef.current = 'sms';
+                  setUser({
+                    id: fallbackProfile.id,
+                    app_metadata: {},
+                    user_metadata: {},
+                    aud: 'authenticated',
+                    created_at: new Date().toISOString()
+                  } as User);
+                  setUserProfile(fallbackProfile);
+                  writeCachedProfile(fallbackProfile);
+                  setLoading(false);
+                  return;
+                }
               }
-            } catch (err) {
-              console.error('Erreur récupération profil SMS via backend:', err);
+            } catch (err: unknown) {
+              if (err && typeof err === 'object' && (err as { name?: string }).name === 'AbortError') {
+                console.warn('Récupération profil SMS via backend: délai dépassé (timeout)');
+              } else {
+                console.error('Erreur récupération profil SMS via backend:', err);
+              }
+              const fallbackProfile = buildProfileFromSmsSession(smsSession);
+              if (fallbackProfile && mounted) {
+                authModeRef.current = 'sms';
+                setUser({
+                  id: fallbackProfile.id,
+                  app_metadata: {},
+                  user_metadata: {},
+                  aud: 'authenticated',
+                  created_at: new Date().toISOString()
+                } as User);
+                setUserProfile(fallbackProfile);
+                writeCachedProfile(fallbackProfile);
+                setLoading(false);
+                return;
+              }
               // En hors-ligne, utiliser le cache si disponible
               if (typeof navigator !== 'undefined' && !navigator.onLine) {
                 const cached = readCachedProfile();
