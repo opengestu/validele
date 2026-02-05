@@ -1369,7 +1369,10 @@ const BuyerDashboard = () => {
           duration: 8000,
         });
         
-        // Fermer le modal et rafraîchir les commandes
+        // Optimistic UI update: mark the order as cancelled locally so buyer sees immediate feedback
+        setOrders((prev) => prev.map(o => (o.id === refundOrder.id ? { ...o, status: 'cancelled' } : o)));
+
+        // Fermer le modal et rafraîchir les commandes et transactions
         setShowRefundModal(false);
         setRefundOrder(null);
         setRefundReason('');
