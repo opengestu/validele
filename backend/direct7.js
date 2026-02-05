@@ -70,8 +70,16 @@ async function sendSMS(phone, message) {
 
 // Envoyer un OTP (stocké dans Supabase)
 async function sendOTP(phone) {
+  // Vérifier que supabase est bien initialisé avec service role
+  if (!supabase) {
+    console.error('[OTP] Client Supabase non initialisé');
+    throw new Error('Service OTP indisponible');
+  }
+  
   const otp = generateOTP();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // Expire dans 5 minutes
+
+  console.log('[OTP] Tentative insertion pour:', phone, '- Client Supabase disponible:', !!supabase);
 
   // Supprimer les anciens OTP pour ce numéro
   await supabase
