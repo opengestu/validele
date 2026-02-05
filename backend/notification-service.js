@@ -110,7 +110,7 @@ async function notifyVendorNewOrder(vendorId, orderDetails) {
   try {
     const result = await sendPushNotification(
       user.token,
-      '🛒 Nouvelle commande!',
+      '🛒 Nouvelle commande dans Validel!',
       `Commande de ${orderDetails.buyerName || 'un client'} - ${orderDetails.productName} (${orderDetails.amount} FCFA)`,
       { 
         type: 'new_order', 
@@ -137,7 +137,7 @@ async function notifyBuyerOrderConfirmed(buyerId, orderDetails) {
     const result = await sendPushNotification(
       user.token,
       '✅ Commande confirmée!',
-      `Votre commande ${orderDetails.orderCode || ''} a été confirmée par le vendeur(se).`,
+      `Votre commande ${orderDetails.productName || 'votre produit'} a été confirmée par le vendeur(se).`,
       { 
         type: 'order_confirmed', 
         orderId: orderDetails.orderId,
@@ -165,7 +165,7 @@ async function notifyBuyerPaymentFailed(buyerId, orderDetails) {
       pushResult = await sendPushNotification(
         user.token,
         '❌ Paiement échoué',
-        `Le paiement de votre commande ${orderDetails.orderCode || ''} a échoué. Veuillez réessayer dans l'application.`,
+        `Le paiement de votre commande ${orderDetails.productName || 'votre produit'} a échoué. Veuillez réessayer dans l'application.`,
         {
           type: 'payment_failed',
           orderId: orderDetails.orderId,
@@ -235,7 +235,7 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
       pushResult = await sendPushNotification(
         user.token,
         '🚗 Livraison en cours!',
-        `Votre commande ${orderDetails.orderCode || ''} est en route vers vous.`,
+        `Votre commande ${orderDetails.productName || 'votre produit'} est en route vers vous.`,
         { 
           type: 'delivery_started', 
           orderId: orderDetails.orderId,
@@ -276,7 +276,7 @@ async function notifyDeliveryCompleted(vendorId, buyerId, orderDetails) {
       results.vendor = await sendPushNotification(
         vendor.token,
         '✅ Livraison effectuée!',
-        `La commande ${orderDetails.orderCode || ''} a été livrée avec succès.`,
+        `La commande ${orderDetails.productName || 'le produit'} a été livrée avec succès.`,
         { 
           type: 'delivery_completed', 
           orderId: orderDetails.orderId,
@@ -296,7 +296,7 @@ async function notifyDeliveryCompleted(vendorId, buyerId, orderDetails) {
       results.buyer = await sendPushNotification(
         buyer.token,
         '🎉 Commande livrée!',
-        `Votre commande ${orderDetails.orderCode || ''} a été livrée. Merci pour votre confiance!`,
+        `Votre commande ${orderDetails.productName || 'votre produit'} a été livrée. Merci pour votre confiance!`,
         { 
           type: 'delivery_completed', 
           orderId: orderDetails.orderId,
@@ -323,7 +323,7 @@ async function notifyBuyerOrderReady(buyerId, orderDetails) {
     const result = await sendPushNotification(
       user.token,
       '📦 Commande prête!',
-      `Votre commande ${orderDetails.orderCode || ''} est prête et attend un livreur.`,
+      `Votre commande ${orderDetails.productName || 'votre produit'} est prête et attend un livreur.`,
       { 
         type: 'order_ready', 
         orderId: orderDetails.orderId,

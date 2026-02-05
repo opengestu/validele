@@ -232,6 +232,7 @@ const BuyerDashboard = () => {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState('');
+  const [refundOtherReason, setRefundOtherReason] = useState('');
   const [refundLoading, setRefundLoading] = useState(false);
   const [refundRequests, setRefundRequests] = useState<Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>>([]);
 
@@ -1436,7 +1437,9 @@ const BuyerDashboard = () => {
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           orderId: refundOrder.id,
-          reason: refundReason || 'Non satisfaction client'
+          reason: refundReason === 'Autre' && refundOtherReason 
+            ? `Autre: ${refundOtherReason}` 
+            : (refundReason || 'Non satisfaction client')
         }),
       });
 
@@ -1471,6 +1474,7 @@ const BuyerDashboard = () => {
         setShowRefundModal(false);
         setRefundOrder(null);
         setRefundReason('');
+        setRefundOtherReason('');
         fetchOrders();
         fetchTransactions();
       } else {
@@ -1492,6 +1496,7 @@ const BuyerDashboard = () => {
   const openRefundModal = (order: Order) => {
     setRefundOrder(order);
     setRefundReason('');
+    setRefundOtherReason('');
     setShowRefundModal(true);
   };
 
@@ -2277,6 +2282,29 @@ const BuyerDashboard = () => {
                 </select>
               </div>
 
+              {/* Champ texte pour "Autre" raison */}
+              {refundReason === 'Autre' && (
+                <div>
+                  <label htmlFor="refund-other-reason" className="block text-sm font-medium mb-2">
+                    Précisez la raison <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="refund-other-reason"
+                    placeholder="Ex: Produit endommagé, Mauvaise taille, etc."
+                    className="w-full border rounded-lg p-2"
+                    value={refundOtherReason}
+                    onChange={(e) => setRefundOtherReason(e.target.value)}
+                    maxLength={200}
+                  />
+                  {refundOtherReason.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {refundOtherReason.length}/200 caractères
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Boutons */}
               <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <Button 
@@ -2286,6 +2314,7 @@ const BuyerDashboard = () => {
                     setShowRefundModal(false);
                     setRefundOrder(null);
                     setRefundReason('');
+                    setRefundOtherReason('');
                   }}
                   disabled={refundLoading}
                 >
@@ -2294,7 +2323,7 @@ const BuyerDashboard = () => {
                 <Button 
                   className="w-full sm:flex-1 bg-red-600 hover:bg-red-700"
                   onClick={handleRequestRefund}
-                  disabled={refundLoading}
+                  disabled={refundLoading || (refundReason === 'Autre' && !refundOtherReason.trim())}
                 >
                   {refundLoading ? (
                     <>

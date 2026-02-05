@@ -1466,8 +1466,8 @@ const VendorDashboard = () => {
                   return (
                     <div
                       key={order.id}
-                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
-                      style={{ maxWidth: 350 }}
+                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm w-full"
+                      style={{ maxWidth: '100%' }}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
@@ -1540,9 +1540,9 @@ const VendorDashboard = () => {
                           <Button
                             size="sm"
                             onClick={() => handleShowVendorQR(order)}
-                            className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+                            className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs px-1.5 py-0.5 h-8"
                           >
-                            <QrCode className="h-4 w-4 mr-2" />
+                            <QrCode className="h-3 w-3 mr-0.5" />
                             QR Code Commande
                           </Button>
                         )}
@@ -1883,8 +1883,15 @@ const VendorDashboard = () => {
                               const orderTransactions = transactions.filter(t => t.order_id === order.id);
                               const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
                               return (
-                              <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
-                                <CardContent className="p-4">
+                              <Card 
+                                key={order.id} 
+                                className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm w-full overflow-hidden"
+                                style={{
+                                  maxWidth: "100%",
+                                  boxSizing: "border-box"
+                                }}
+                              >
+                                <CardContent className="p-3" style={{ boxSizing: "border-box" }}>
                                   {/* Ligne 1 : Icône + nom produit + prix à droite */}
                                   <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
@@ -1952,9 +1959,9 @@ const VendorDashboard = () => {
                                       <Button
                                         size="sm"
                                         onClick={() => handleShowVendorQR(order)}
-                                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+                                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs px-1.5 py-0.5 h-8"
                                       >
-                                        <QrCode className="h-4 w-4 mr-2" />
+                                        <QrCode className="h-3 w-3 mr-0.5" />
                                         QR Code Commande
                                       </Button>
                                     )}
