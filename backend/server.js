@@ -1798,8 +1798,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     }
 
     // Si paiement réussi, mettre à jour la commande
-    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts
-    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout') {
+    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts ou remboursements
+    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout' && transactionType !== 'refund') {
       // Utiliser supabaseAdmin pour bypass RLS policies
       const dbClient = supabaseAdmin || supabase;
       
