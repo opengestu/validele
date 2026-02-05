@@ -968,7 +968,7 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
       const { data, error } = await supabaseAdmin
         .from('orders')
-        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(phone, address), vendor_profile:profiles!orders_vendor_id_fkey(company_name, phone, address)`)
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor_profile:profiles!orders_vendor_id_fkey(company_name, phone, address)`)
         .eq('delivery_person_id', deliveryPersonId)
         .order('created_at', { ascending: false });
 
