@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Truck, QrCode, Package, CheckCircle, User, LogOut, Edit } from 'lucide-react';
+import { Truck, QrCode, Package, CheckCircle, User, LogOut, Edit, XCircle } from 'lucide-react';
 import { PhoneIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Card, CardContent } from '@/components/ui/card';
@@ -31,6 +31,18 @@ type DeliveryOrder = {
   delivery_address?: string | null;
   buyer_phone?: string | null;
   total_amount?: number | null;
+};
+
+// Mapping des statuts en français
+const STATUS_LABELS_FR: Record<string, string> = {
+  paid: 'Payée',
+  assigned: 'Assignée',
+  in_delivery: 'En livraison',
+  delivered: 'Livrée',
+  pending: 'En attente',
+  cancelled: 'Annulée',
+  refunded: 'Remboursée',
+  failed: 'Échouée',
 };
 
 const DeliveryDashboard = () => {
@@ -231,7 +243,7 @@ const DeliveryDashboard = () => {
                       setDeliveries([]);
                       const ordersFromSms = (j as { orders: DeliveryOrder[] }).orders;
                       // Ensure we only keep driver-relevant statuses
-                      const filteredSmsOrders = ordersFromSms.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+                      const filteredSmsOrders = ordersFromSms.filter(o => ['assigned','in_delivery','delivered','cancelled'].includes(String(o.status)));
                       setMyDeliveries(filteredSmsOrders);
                       return; 
                     } else if (!resp.ok) {
@@ -266,7 +278,7 @@ const DeliveryDashboard = () => {
                           ) {
                             setDeliveries([]);
                             const prodOrders = (prodJson as { orders: DeliveryOrder[] }).orders;
-                            const filteredProdOrders = prodOrders.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+                            const filteredProdOrders = prodOrders.filter(o => ['assigned','in_delivery','delivered','cancelled'].includes(String(o.status)));
                             setMyDeliveries(filteredProdOrders);
                             fallbackSucceeded = true; 
                           }
@@ -313,7 +325,7 @@ const DeliveryDashboard = () => {
           vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)
         `)
         .eq('delivery_person_id', user.id)
-        .in('status', ['assigned', 'in_delivery', 'delivered'])
+        .in('status', ['assigned', 'in_delivery', 'delivered', 'cancelled'])
         .order('created_at', { ascending: false });
 
       if (error2) console.warn('[DeliveryDashboard] myActiveDeliveries supabase error', error2);
@@ -357,7 +369,7 @@ const DeliveryDashboard = () => {
           if (resp.ok && j && typeof j === 'object' && 'orders' in (j as Record<string, unknown>) && Array.isArray((j as { orders?: unknown }).orders)) {
             finalMyDeliveries = (j as { orders: DeliveryOrder[] }).orders;
             // ensure only relevant statuses and dedupe
-            finalMyDeliveries = finalMyDeliveries.filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+            finalMyDeliveries = finalMyDeliveries.filter(o => ['assigned','in_delivery','delivered','cancelled'].includes(String(o.status)));
           } else if (!resp.ok) {
             console.warn('[DeliveryDashboard] backend /api/delivery/my-orders returned non-ok', resp.status, j);
           }
@@ -380,7 +392,7 @@ const DeliveryDashboard = () => {
 
       // Filter to only statuses relevant to a delivery person and dedupe by id
       try {
-        const filtered = (finalMyDeliveries || []).filter(o => ['assigned','in_delivery','delivered'].includes(String(o.status)));
+        const filtered = (finalMyDeliveries || []).filter(o => ['assigned','in_delivery','delivered','cancelled'].includes(String(o.status)));
         const deduped: Record<string, DeliveryOrder> = {};
         for (const o of filtered) deduped[o.id] = o;
         finalMyDeliveries = Object.values(deduped);
@@ -470,7 +482,7 @@ const DeliveryDashboard = () => {
     }
   };
 
-  const deliveriesInProgress = myDeliveries.filter(d => d.status === 'in_delivery' || d.status === 'assigned');
+  const deliveriesInProgress = myDeliveries.filter(d => d.status === 'in_delivery' || d.status === 'assigned' || d.status === 'cancelled');
   const deliveriesCompleted = myDeliveries.filter(d => d.status === 'delivered');
   const inProgressDeliveries = deliveriesInProgress.length;
   const completedDeliveries = deliveriesCompleted.length;
@@ -630,6 +642,8 @@ const DeliveryDashboard = () => {
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><Truck className="h-3 w-3 mr-1" />En cours</span>;
       case 'delivered':
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Livrée</span>;
+      case 'cancelled':
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Annulée</span>;
       default:
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{status}</span>;
     }

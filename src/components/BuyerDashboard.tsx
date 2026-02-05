@@ -1298,7 +1298,7 @@ const BuyerDashboard = () => {
   const getStatusTextFr = (status: string) => {
     switch (status) {
       case 'pending': return 'En attente';
-      case 'paid': return 'Payé';
+      case 'paid': return 'Payée';
       case 'in_delivery': return 'En cours de livraison';
       case 'delivered': return 'Livrée';
       case 'cancelled': return 'Annulée';
@@ -1336,9 +1336,21 @@ const BuyerDashboard = () => {
     try {
       console.log('[REFUND] Demande de remboursement pour commande:', refundOrder.id);
       
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
+      let token = sms?.access_token || sms?.token || sms?.jwt || '';
+      if (!token) {
+        try {
+          const sessRes = await supabase.auth.getSession();
+          token = sessRes?.data?.session?.access_token || '';
+        } catch (e) {
+          token = '';
+        }
+      }
+
       const response = await fetch(apiUrl('/api/payment/pixpay/refund'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           orderId: refundOrder.id,
           reason: refundReason || 'Non satisfaction client'

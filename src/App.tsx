@@ -11,12 +11,34 @@ import AppResumeRefresher from "@/components/AppResumeRefresher";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
+import { Spinner } from "@/components/ui/spinner";
 
 // Small helper to redirect /admin to /admin/:userId
 const AdminRedirect: React.FC = () => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/auth" replace />;
   return <Navigate to={`/admin/${user.id}`} replace />;
+};
+
+const AuthRoute: React.FC = () => {
+  const { user, userProfile, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
+        <Spinner size="xl" className="text-[#24BD5C]" />
+        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      </div>
+    );
+  }
+
+  if (user && userProfile?.full_name && userProfile.full_name.trim() !== '') {
+    const redirectPath = userProfile.role === 'vendor' ? '/vendor' :
+      userProfile.role === 'delivery' ? '/delivery' : '/buyer';
+    return <Navigate to={redirectPath} replace />;
+  }
+
+  return <AuthPage />;
 };
 
 import VendorDashboard from "@/components/VendorDashboard";
@@ -56,7 +78,7 @@ const App = () => (
             <PushNotificationSetup />
             <Routes>
               <Route path="/" element={<HomePage />} />
-              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/auth" element={<AuthRoute />} />
               <Route path="/colors" element={<ColorDemo />} />
               <Route path="/payment-success" element={<PaymentSuccess />} />
               {/* Protected Routes for Vendors */}

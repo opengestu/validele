@@ -1421,7 +1421,7 @@ const VendorDashboard = () => {
               <span className="ml-2 text-[11px] md:text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
             </div>
             <div>
-              <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-[11px] px-2 py-0.5 rounded-md h-7">
+              <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
                 Facture paiement
               </Button>
             </div>
@@ -1818,7 +1818,7 @@ const VendorDashboard = () => {
                     <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
                     <span className="ml-2 text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
                   </div>
-                  <Button size="sm" onClick={showVendorBatches} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-md h-7">
+                  <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
                     Facture paiement
                   </Button>
                 </div>

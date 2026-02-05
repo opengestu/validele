@@ -4274,15 +4274,26 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
 
     console.log('[REFUND] Demande de remboursement:', { orderId, reason });
 
-    // Utiliser le service role client pour contourner RLS
+    // Utiliser le service role client pour contourner RLS (ou un token utilisateur si fourni)
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = serviceRoleKey 
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const supabaseAdmin = serviceRoleKey
       ? createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } })
-      : supabase;
+      : (token
+          ? createClient(process.env.SUPABASE_URL, SUPABASE_ANON_KEY, {
+              global: { headers: { Authorization: `Bearer ${token}` } },
+              auth: { autoRefreshToken: false, persistSession: false }
+            })
+          : supabase);
 
-    if (!serviceRoleKey) {
-      console.warn('[REFUND] SUPABASE_SERVICE_ROLE_KEY manquante - utilisation du client RLS');
+    if (!serviceRoleKey && !token) {
+      console.warn('[REFUND] SUPABASE_SERVICE_ROLE_KEY manquante et aucun token utilisateur fourni');
+      return res.status(500).json({
+        success: false,
+        error: 'Configuration serveur manquante pour annuler la commande (service role ou token requis)'
+      });
     }
 
     // 1) Récupérer la commande avec les infos de l'acheteur
@@ -4303,8 +4314,8 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       });
     }
 
-    // 2) Vérifier que la commande peut être remboursée (status = paid ou in_delivery)
-    if (!['paid', 'in_delivery'].includes(order.status)) {
+    // 2) Vérifier que la commande peut être remboursée (status = paid, in_delivery, ou déjà cancelled)
+    if (!['paid', 'in_delivery', 'cancelled'].includes(order.status)) {
       return res.status(400).json({
         success: false,
         error: `Impossible de rembourser une commande avec le statut: ${order.status}`
@@ -4320,13 +4331,58 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       .single();
 
     if (existingRequest) {
-      return res.status(400).json({
-        success: false,
-        error: 'Une demande de remboursement existe déjà pour cette commande'
+      // S'assurer que la commande est bien marquée comme annulée
+      if (order.status !== 'cancelled') {
+        const { data: updatedOrder, error: orderUpdateError } = await supabaseAdmin
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+            cancellation_reason: reason || 'Demande de remboursement par le client'
+          })
+          .eq('id', orderId)
+          .select('id, status')
+          .single();
+
+        if (orderUpdateError || updatedOrder?.status !== 'cancelled') {
+          console.error('[REFUND] Erreur mise à jour commande (existing request):', orderUpdateError);
+          return res.status(500).json({
+            success: false,
+            error: 'Impossible de mettre à jour le statut de la commande'
+          });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        refund_request_id: existingRequest.id,
+        message: 'Une demande de remboursement existe déjà. La commande a été marquée comme annulée.'
       });
     }
 
-    // 4) Créer la demande de remboursement
+    // 4) Mettre à jour le statut de la commande à "cancelled"
+    if (order.status !== 'cancelled') {
+      const { data: updatedOrder, error: orderUpdateError } = await supabaseAdmin
+        .from('orders')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: reason || 'Demande de remboursement par le client'
+        })
+        .eq('id', orderId)
+        .select('id, status')
+        .single();
+
+      if (orderUpdateError || updatedOrder?.status !== 'cancelled') {
+        console.error('[REFUND] Erreur mise à jour commande:', orderUpdateError);
+        return res.status(500).json({
+          success: false,
+          error: 'Impossible de mettre à jour le statut de la commande'
+        });
+      }
+    }
+
+    // 5) Créer la demande de remboursement
     const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
       .insert({
@@ -4349,23 +4405,6 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
     }
 
     console.log('[REFUND] Demande créée:', refundRequest.id);
-
-    // 5) Mettre à jour le statut de la commande à "cancelled"
-    const { error: orderUpdateError } = await supabaseAdmin
-      .from('orders')
-      .update({
-        status: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-        cancellation_reason: reason || 'Demande de remboursement par le client'
-      })
-      .eq('id', orderId);
-
-    if (orderUpdateError) {
-      console.error('[REFUND] Erreur mise à jour commande:', orderUpdateError);
-      // Ne pas échouer la requête si la demande a été créée
-    } else {
-      console.log('[REFUND] Commande marquée comme annulée:', orderId);
-    }
 
     return res.json({
       success: true,
