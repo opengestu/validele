@@ -1427,7 +1427,7 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
 // Objectif: avoir un id présent dans auth.users pour satisfaire la FK profiles.id -> users.id.
 app.post('/api/sms/register', async (req, res) => {
   try {
-    const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin } = req.body || {};
+    const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin, address } = req.body || {};
 
     if (!full_name || !phone || !role || !pin) {
       return res.status(400).json({ success: false, error: 'Champs requis manquants' });
@@ -1540,6 +1540,7 @@ app.post('/api/sms/register', async (req, res) => {
         company_name: safeRole === 'vendor' ? (company_name || null) : null,
         vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
         wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
+        address: address || null,
         pin_hash: hashedPin
       }, { onConflict: 'id' });
 
