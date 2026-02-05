@@ -9,11 +9,12 @@ const NOTIFICATION_TEMPLATES = {
   // === NOTIFICATIONS ACHETEUR ===
   ORDER_CREATED: {
     title: '🛍️ Commande créée',
-    body: (data) => `Votre commande ${data.orderCode} a été créée avec succès. Montant: ${data.amount} FCFA`,
+    body: (data) => `Votre commande pour ${data.productName || data.orderCode} a été créée avec succès. Montant: ${data.amount} FCFA`,
     data: (data) => ({
       type: 'order_created',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       screen: 'OrderDetails'
     })
@@ -21,11 +22,12 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYMENT_CONFIRMED: {
     title: '✅ Paiement confirmé',
-    body: (data) => `Votre paiement de ${data.amount} FCFA a été confirmé. Commande ${data.orderCode} en traitement.`,
+    body: (data) => `Votre paiement de ${data.amount} FCFA pour ${data.productName || data.orderCode} a été confirmé.`,
     data: (data) => ({
       type: 'payment_confirmed',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       screen: 'OrderDetails'
     })
@@ -33,11 +35,12 @@ const NOTIFICATION_TEMPLATES = {
 
   ORDER_ASSIGNED_TO_DELIVERY: {
     title: '🚚 Livreur assigné',
-    body: (data) => `${data.deliveryName} va livrer votre commande ${data.orderCode}. Contact: ${data.deliveryPhone}`,
+    body: (data) => `${data.deliveryName} va livrer votre commande pour ${data.productName || data.orderCode}. Contact: ${data.deliveryPhone}`,
     data: (data) => ({
       type: 'delivery_assigned',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       delivery_name: data.deliveryName,
       delivery_phone: data.deliveryPhone,
       screen: 'OrderTracking'
@@ -46,33 +49,36 @@ const NOTIFICATION_TEMPLATES = {
 
   ORDER_IN_DELIVERY: {
     title: '📦 En cours de livraison',
-    body: (data) => `Votre commande ${data.orderCode} est en cours de livraison. Arrivée prévue sous peu.`,
+    body: (data) => `Votre commande pour ${data.productName || data.orderCode} est en cours de livraison. Arrivée prévue sous peu.`,
     data: (data) => ({
       type: 'in_delivery',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       screen: 'OrderTracking'
     })
   },
 
   ORDER_DELIVERED: {
     title: '🎉 Commande livrée',
-    body: (data) => `Votre commande ${data.orderCode} a été livrée avec succès! Merci pour votre confiance.`,
+    body: (data) => `Votre commande pour ${data.productName || data.orderCode} a été livrée avec succès! Merci pour votre confiance.`,
     data: (data) => ({
       type: 'order_delivered',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       screen: 'OrderDetails'
     })
   },
 
   ORDER_CANCELLED: {
     title: '❌ Commande annulée',
-    body: (data) => `Votre commande ${data.orderCode} a été annulée. ${data.reason || 'Raison non spécifiée'}`,
+    body: (data) => `Votre commande pour ${data.productName || data.orderCode} a été annulée. ${data.reason || 'Raison non spécifiée'}`,
     data: (data) => ({
       type: 'order_cancelled',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       reason: data.reason,
       screen: 'OrderDetails'
     })
@@ -94,11 +100,12 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYOUT_REQUESTED: {
     title: '💰 Demande de paiement',
-    body: (data) => `Demande de paiement pour ${data.orderCode}. Montant: ${data.amount} FCFA`,
+    body: (data) => `Demande de paiement pour ${data.productName || data.orderCode}. Montant: ${data.amount} FCFA`,
     data: (data) => ({
       type: 'payout_requested',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       screen: 'VendorPayouts'
     })
@@ -106,11 +113,12 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYOUT_PAID: {
     title: '✅ Paiement effectué',
-    body: (data) => `Vous avez reçu ${data.amount} FCFA pour la commande ${data.orderCode} via ${data.method}`,
+    body: (data) => `Vous avez reçu ${data.amount} FCFA pour ${data.productName || data.orderCode} via ${data.method}`,
     data: (data) => ({
       type: 'payout_paid',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       method: data.method,
       screen: 'VendorPayouts'
@@ -143,11 +151,12 @@ const NOTIFICATION_TEMPLATES = {
   // === NOTIFICATIONS LIVREUR ===
   NEW_DELIVERY_ASSIGNED: {
     title: '📦 Nouvelle livraison',
-    body: (data) => `Nouvelle livraison ${data.orderCode} assignée. Récupérer chez ${data.vendorName}`,
+    body: (data) => `Nouvelle livraison pour ${data.productName || data.orderCode} assignée. Récupérer chez ${data.vendorName}`,
     data: (data) => ({
       type: 'delivery_assigned',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       vendor_name: data.vendorName,
       vendor_phone: data.vendorPhone,
       buyer_address: data.buyerAddress,
@@ -157,11 +166,12 @@ const NOTIFICATION_TEMPLATES = {
 
   DELIVERY_REMINDER: {
     title: '⏰ Rappel de livraison',
-    body: (data) => `N'oubliez pas de livrer la commande ${data.orderCode}. Client: ${data.buyerPhone}`,
+    body: (data) => `N'oubliez pas de livrer ${data.productName || data.orderCode}. Client: ${data.buyerPhone}`,
     data: (data) => ({
       type: 'delivery_reminder',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       buyer_phone: data.buyerPhone,
       screen: 'DeliveryDetails'
     })
@@ -169,11 +179,12 @@ const NOTIFICATION_TEMPLATES = {
 
   DELIVERY_PAYMENT_RECEIVED: {
     title: '💰 Paiement reçu',
-    body: (data) => `Vous avez reçu ${data.amount} FCFA pour la livraison ${data.orderCode}`,
+    body: (data) => `Vous avez reçu ${data.amount} FCFA pour ${data.productName || data.orderCode}`,
     data: (data) => ({
       type: 'delivery_payment',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       screen: 'DeliveryPayouts'
     })
@@ -192,11 +203,12 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYMENT_FAILED: {
     title: '❌ Échec de paiement',
-    body: (data) => `Paiement échoué pour ${data.orderCode}. Montant: ${data.amount} FCFA`,
+    body: (data) => `Paiement échoué pour ${data.productName || data.orderCode}. Montant: ${data.amount} FCFA`,
     data: (data) => ({
       type: 'payment_failed',
       order_id: data.orderId,
       order_code: data.orderCode,
+      product_name: data.productName,
       amount: data.amount,
       error: data.error,
       screen: 'AdminOrders'
