@@ -233,6 +233,7 @@ const BuyerDashboard = () => {
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState('');
   const [refundLoading, setRefundLoading] = useState(false);
+  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>>([]);
 
   // États pour la WebView de paiement
   const [showPaymentWebView, setShowPaymentWebView] = useState(false);
@@ -433,13 +434,52 @@ const BuyerDashboard = () => {
     }
   }, [user, toast]);
 
+  const fetchRefundRequests = useCallback(async () => {
+    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (!user && !smsSessionStr) return;
+
+    try {
+      const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
+      if (!buyerId) return;
+
+      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
+      let token = sms?.access_token || sms?.token || sms?.jwt || '';
+      if (!token) {
+        try {
+          const sessRes = await supabase.auth.getSession();
+          const sess = sessRes.data?.session ?? null;
+          token = sess?.access_token || '';
+        } catch (e) {
+          token = '';
+        }
+      }
+
+      const url = apiUrl(`/api/buyer/refund-requests?buyer_id=${buyerId}`);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const resp = await fetch(url, { method: 'GET', headers });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json || !json.success) {
+        console.warn('[REFUND] Failed to fetch refund requests:', json?.error || resp.status);
+        return;
+      }
+
+      const refunds = (json.refund_requests || []) as Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>;
+      setRefundRequests(refunds);
+    } catch (error) {
+      console.error('[REFUND] Erreur lors du chargement des demandes de remboursement:', error);
+    }
+  }, [user]);
+
   useEffect(() => {
     // Wait for auth initialization to complete before fetching orders/txs.
     // This avoids empty results when the session is still being restored.
     if (loading) return;
     fetchOrders();
     fetchTransactions();
-  }, [fetchOrders, fetchTransactions, loading]);
+    fetchRefundRequests();
+  }, [fetchOrders, fetchTransactions, fetchRefundRequests, loading]);
 
   // Offline banner is rendered within the layout UI below
 
@@ -1339,14 +1379,30 @@ const BuyerDashboard = () => {
 
   const getEffectiveOrderStatus = (
     order: Order,
-    orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>
+    orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>,
+    refundRequests?: Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>
   ) => {
     const current = order.status;
-    if (current === 'refunded' || current === 'cancelled') return current;
-    const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
-    if (!refundTx) return current;
-    const refundState = normalizeRefundTxStatus(refundTx.status);
-    return refundState === 'success' ? 'refunded' : 'cancelled';
+    
+    // Si la commande est déjà marquée comme remboursée dans la base
+    if (current === 'refunded') return 'refunded';
+    
+    // Si la commande est annulée, vérifier si elle a un remboursement approuvé
+    if (current === 'cancelled') {
+      // Chercher le refund pour cette commande
+      const refund = refundRequests?.find(r => r.order_id === order.id);
+      
+      // Si le refund a été reviewed_at (approuvé ou rejeté), montrer "Remboursée"
+      if (refund && refund.reviewed_at) {
+        return 'refunded';
+      }
+      
+      // Sinon, rester sur "Annulée"
+      return 'cancelled';
+    }
+    
+    // Autres statuts ne changent pas
+    return current;
   };
 
   // Fonction de demande de remboursement
@@ -1655,7 +1711,7 @@ const BuyerDashboard = () => {
                         const orderTransactions = transactions.filter(t => t.order_id === order.id);
                         const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
                         const refundTransaction = orderTransactions.find(t => t.transaction_type === 'refund');
-                        const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
+                        const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions, refundRequests);
                         const isExpanded = expandedOrderIds.has(order.id);
                         const toggleDetails = () => {
                           setExpandedOrderIds((prev) => {

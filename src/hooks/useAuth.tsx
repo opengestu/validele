@@ -438,22 +438,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Vérifier la session initiale, puis écouter les changements
     checkSession();
 
-    // Watchdog: si le bootstrap d'auth reste bloqué (>12s), sortir du mode loading
+    // Watchdog: si le bootstrap d'auth reste bloqué (>5s), sortir du mode loading
+    // avec autoRefreshToken désactivé, le timeout peut être plus court
     const authWatchdog = setTimeout(() => {
       if (mounted && initializedRef.current === false) {
         console.warn('Auth bootstrap timeout — forçant la fin du chargement');
         setLoading(false);
         initializedRef.current = true;
       }
-    }, 12000);
+    }, 5000);
 
     // Configurer l'écoute des changements d'état
+    // Note: avec autoRefreshToken=false, onAuthStateChange n'essaiera pas de rafraîchir directement
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, activeSession) => {
-      // Pendant l'initialisation, ignorer les événements (surtout ceux avec session null)
-      // pour éviter une redirection prématurée vers /auth.
-      if (!initializedRef.current) {
-        return;
-      }
+      try {
+        // Pendant l'initialisation, ignorer les événements (surtout ceux avec session null)
+        // pour éviter une redirection prématurée vers /auth.
+        if (!initializedRef.current) {
+          return;
+        }
 
       // Si on est connecté via SMS (user virtuel), ignorer les événements Supabase
       // qui indiquent une session nulle (sinon ça "déconnecte" l'utilisateur).
@@ -500,6 +503,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         hadSupabaseSessionRef.current = false;
       }
       applySupabaseAuthState(event, activeSession);
+      } catch (error) {
+        // Ignorer les erreurs CORS ou NetworkError pendant le bootstrap
+        const errorMsg = (error as any)?.message || String(error);
+        if (errorMsg.includes('CORS') || errorMsg.includes('NetworkError') || errorMsg.includes('Failed to fetch')) {
+          console.warn('[useAuth] Erreur CORS/Network lors du bootstrap d\'auth, continuant avec cache:', errorMsg);
+          // Continuer sans crash - le watchdog gérera le reste
+          return;
+        }
+        // Autres erreurs: logger mais ne pas crash
+        console.error('[useAuth] Erreur dans onAuthStateChange:', error);
+      }
     });
 
     return () => {

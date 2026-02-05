@@ -674,6 +674,8 @@ app.post('/api/vendor/orders', async (req, res) => {
           created_at,
           updated_at,
           delivery_address,
+          cancelled_at,
+          cancellation_reason,
           products(*),
           buyer:profiles!orders_buyer_id_fkey(phone, address),
           delivery:profiles!orders_delivery_person_id_fkey(phone),
@@ -5733,6 +5735,58 @@ app.get('/api/buyer/transactions', async (req, res) => {
     return res.json({ success: true, transactions: data || [] });
   } catch (err) {
     console.error('[BUYER] /api/buyer/transactions error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
+// GET refund requests for a buyer
+app.get('/api/buyer/refund-requests', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let buyerId = req.query.buyer_id;
+    let userId = null;
+
+    // 1) Try JWT (SMS sessions)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) {
+          userId = decoded.sub;
+        }
+      } catch (e) {
+        // not a JWT we issued, try Supabase
+        try {
+          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+          if (!authErr && user) userId = user.id;
+        } catch (e2) {
+          // ignore
+        }
+      }
+    }
+
+    // fallback to buyer_id query param (dev/test)
+    if (!userId && buyerId) userId = buyerId;
+
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise' });
+
+    console.log('[REFUND] fetching refund requests for buyer:', userId);
+
+    // Récupérer les demandes de remboursement de l'acheteur
+    const { data, error } = await supabase
+      .from('refund_requests')
+      .select('id, order_id, reviewed_at, status')
+      .eq('buyer_id', userId)
+      .order('requested_at', { ascending: false });
+
+    if (error) {
+      console.error('[REFUND] Error fetching refund requests:', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+
+    return res.json({ success: true, refund_requests: data || [] });
+  } catch (err) {
+    console.error('[REFUND] /api/buyer/refund-requests error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });

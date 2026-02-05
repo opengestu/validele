@@ -39,7 +39,9 @@ export const supabase: SupabaseClient<Database> = _win && _win.__SUPABASE_CLIENT
       auth: {
         storage: typeof window !== 'undefined' ? localStorage : undefined,
         persistSession: true,
-        autoRefreshToken: true,
+        autoRefreshToken: false,  // Disable direct refresh - use backend proxy instead
+        detectSessionInUrl: true,
+        flowType: 'implicit',
       }
     });
 

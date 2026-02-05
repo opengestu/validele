@@ -33,16 +33,18 @@ const normalizeRefundTxStatus = (status?: string) => {
   return s ? 'pending' : 'unknown';
 };
 
+// Pour VendorDashboard: les commandes annulées restent "Annulées" peu importe l'état du remboursement
+// (le vendeur ne doit pas voir le statut "Remboursée")
 const getEffectiveOrderStatus = (
   order: Order,
   orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>
 ) => {
   const current = order.status;
-  if (current === 'refunded' || current === 'cancelled') return current;
-  const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
-  if (!refundTx) return current;
-  const refundState = normalizeRefundTxStatus(refundTx.status);
-  return refundState === 'success' ? 'refunded' : 'cancelled';
+  // Pour le vendeur: une commande annulée reste "Annulée" même après remboursement
+  // (le remboursement ne change pas le statut affiché au vendeur)
+  if (current === 'cancelled') return 'cancelled';
+  if (current === 'refunded') return 'refunded';
+  return current;
 };
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -1513,6 +1515,14 @@ const VendorDashboard = () => {
                           {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
                         </span>
                       </div>
+
+                      {/* Afficher la raison d'annulation si la commande est annulée */}
+                      {effectiveStatus === 'cancelled' && (order as any).cancellation_reason && (
+                        <div className="flex items-start text-xs text-gray-600 mb-1 bg-red-50 rounded p-2">
+                          <span className="font-semibold mr-1">Raison :</span>
+                          <span>{(order as any).cancellation_reason}</span>
+                        </div>
+                      )}
 
                       {/* Boutons Facture et QR Code */}
                       <div className="flex items-center mt-3 gap-2">
