@@ -906,12 +906,8 @@ const AdminDashboard: React.FC = () => {
           <button className={`px-3 py-2 rounded ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
           <button className={`px-3 py-2 rounded ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'transfers' ? 'bg-green-700 text-white' : 'bg-green-100 text-green-800'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'refunds' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
-        </div>
-
-        {/* Champ de recherche */}
-        <div className="mb-4">
+          <button className={`px-3 py-2 rounded ${activeTab === 'refunds' ? 'bg-pink-700 text-white' : 'bg-pink-100 text-pink-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
+          <button className={`px-3 py-2 rounded ${activeTab === 'transfers' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
           <div className="relative">
             <input
               type="text"
@@ -997,7 +993,7 @@ const AdminDashboard: React.FC = () => {
                             onClick={() => handlePayout(o.id)} 
                             disabled={!(o.status === 'delivered' && o.payout_status === 'requested') || processing}
                             className={
-                              o.payout_status === 'paid' ? 'bg-green-600 hover:bg-green-600 cursor-default' : 
+                              o.payout_status === 'paid' ? 'bg-primary text-primary-foreground cursor-default' : 
                               o.payout_status === 'scheduled' ? 'bg-purple-600 hover:bg-purple-600 cursor-default' :
                               o.payout_status === 'processing' ? 'bg-blue-600 hover:bg-blue-600 cursor-default' :
                               ''
@@ -1364,7 +1360,7 @@ const AdminDashboard: React.FC = () => {
                       }
                     }}
                     disabled={transferProcessing || !transferAmount || !transferPhone}
-                    className="bg-green-600 hover:bg-green-700"
+                    className="bg-primary text-primary-foreground"
                   >
                     {transferProcessing ? 'Transfert en cours...' : '💸 Effectuer le transfert'}
                   </Button>
@@ -1464,7 +1460,7 @@ const AdminDashboard: React.FC = () => {
                             <Button 
                               size="sm" 
                               variant="default"
-                              className="bg-green-600 hover:bg-green-700"
+                              className="bg-primary text-primary-foreground"
                               onClick={() => {
                                 if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name}?`)) {
                                   handleApproveRefund(r.id);
@@ -1568,7 +1564,7 @@ const AdminDashboard: React.FC = () => {
             <h3 className="text-lg font-semibold">{invoiceViewerTitle}</h3>
             <div className="flex gap-2">
               {invoiceViewerHtml && (
-                <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 text-white hover:bg-green-600">
+                <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">
                   Télécharger
                 </Button>
               )}

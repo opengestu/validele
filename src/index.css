@@ -4,114 +4,114 @@
 
 @layer base {
   :root {
-    /* Couleurs de base */
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Palette Validèl (desktop) — basée sur votre validel-palette.html */
+    --background: 0 0% 100%;            /* #FFFFFF */
+    --foreground: 222 39% 11%;          /* #111827 */
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 222 39% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 222 39% 11%;
 
-    /* Palette Validèl Security - Couleurs principales */
-    --primary: 142 76% 36%;          /* Vert sécurité #22c55e */
+    /* Couleurs principales */
+    --primary: 0 0% 10%;                /* Noir adouci (moins intense) */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 213 94% 68%;        /* Bleu confiance #3b82f6 */
-    --secondary-foreground: 0 0% 100%;
-
-    /* Couleurs spécifiques par rôle */
-    --validel-vendor: 24 95% 53%;    /* Orange vendeur(se) #f97316 */
-    --validel-vendor-foreground: 0 0% 100%;
-    
-    --validel-buyer: 142 76% 36%;    /* Vert acheteur #22c55e */
-    --validel-buyer-foreground: 0 0% 100%;
-    
-    --validel-delivery: 262 83% 58%; /* Violet livreur #a855f7 */
-    --validel-delivery-foreground: 0 0% 100%;
-
-    /* Couleurs d'accent et utilitaires */
-    --accent: 199 89% 48%;           /* Bleu accent #0ea5e9 */
+    --accent: 0 0% 10%;                /* Noir Doux #1A1A1A */
     --accent-foreground: 0 0% 100%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    /* Statuts / fonctionnels */
+    --success: 142 76% 36%;             /* #16A34A */
+    --success-foreground: 0 0% 100%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --warning: 39 96% 50%;              /* #F59E0B */
+    --warning-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 142 76% 36%;             /* Ring vert sécurité */
+    --danger: 0 72% 51%;                /* #DC2626 */
+    --danger-foreground: 0 0% 100%;
 
-    --radius: 0.75rem;               /* Bordures plus arrondies */
+    --info: 223 86% 53%;                /* #2563EB */
+    --info-foreground: 0 0% 100%;
 
-    --sidebar-background: 0 0% 98%;
+    /* Nuances UI */
+    --muted: 0 0% 98%;                  /* #F9FAFB */
+    --muted-foreground: 215 16% 47%;     /* proche de #6B7280 */
 
-    --sidebar-foreground: 240 5.3% 26.1%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
 
-    --sidebar-primary: 240 5.9% 10%;
+    --border: 214 18% 92%;              /* #E5E7EB */
+    --input: 214 18% 92%;
+    --ring: 223 86% 53%;                /* bleu info as ring */
 
-    --sidebar-primary-foreground: 0 0% 98%;
+    --radius: 0.75rem;
 
-    --sidebar-accent: 240 4.8% 95.9%;
+    /* Roles (kept for component utilities) */
+    --validel-vendor: 39 96% 50%;        /* orange #F59E0B */
+    --validel-vendor-foreground: 0 0% 100%;
+    --validel-buyer: 142 76% 36%;        /* vert #16A34A */
+    --validel-buyer-foreground: 0 0% 100%;
+    --validel-delivery: 262 83% 58%;     /* violet accent */
+    --validel-delivery-foreground: 0 0% 100%;
 
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 39% 11%;
+    --sidebar-primary: 0 0% 10%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 214 18% 92%;
+    --sidebar-ring: 223 86% 53%;
   }
 
   .dark {
-    /* Mode sombre Validèl */
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    /* Mode sombre (simple inversion/contrast) */
+    --background: 222 39% 11%;          /* sombre */
+    --foreground: 0 0% 100%;
 
-    --card: 217.2 32.6% 17.5%;
-    --card-foreground: 210 40% 98%;
+    --card: 222 39% 11%;
+    --card-foreground: 0 0% 100%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 222 39% 11%;
+    --popover-foreground: 0 0% 100%;
 
-    /* Couleurs principales mode sombre */
-    --primary: 142 69% 58%;          /* Vert plus clair #4ade80 */
-    --primary-foreground: 222.2 84% 4.9%;
+    --primary: 0 0% 10%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 213 94% 68%;        /* Bleu conservé #3b82f6 */
-    --secondary-foreground: 222.2 84% 4.9%;
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 100%;
 
-    /* Couleurs rôles mode sombre */
-    --validel-vendor: 24 95% 53%;    /* Orange conservé */
-    --validel-vendor-foreground: 222.2 84% 4.9%;
-    
-    --validel-buyer: 142 69% 58%;    /* Vert plus clair */
-    --validel-buyer-foreground: 222.2 84% 4.9%;
-    
-    --validel-delivery: 262 83% 58%; /* Violet conservé */
-    --validel-delivery-foreground: 222.2 84% 4.9%;
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
 
-    --accent: 199 89% 48%;           /* Bleu accent conservé */
-    --accent-foreground: 222.2 84% 4.9%;
+    --warning: 39 96% 50%;
+    --warning-foreground: 0 0% 100%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 0% 100%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --info: 223 86% 53%;
+    --info-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 142 69% 58%;             /* Ring vert mode sombre */
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --muted: 222 39% 11%;
+    --muted-foreground: 215 20% 65%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 222 39% 11%;
+    --input: 222 39% 11%;
+    --ring: 223 86% 53%;
+
+    --sidebar-background: 222 39% 11%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 10%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 39% 11%;
+    --sidebar-ring: 223 86% 53%;
   }
 }
 
@@ -126,7 +126,7 @@
   }
   
   h1, h2, h3, h4, h5, h6 {
-    @apply font-heading;
+    @apply font-sans font-semibold leading-tight;
   }
 }
 

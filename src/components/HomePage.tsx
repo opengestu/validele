@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/carousel";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-import validelLogo from "@/assets/validel-logo.png";
+const validelLogo = '/icons/validel-logo.svg';
 
 const ONBOARDING_STORAGE_KEY = "validele:onboarding_seen_v1";
 

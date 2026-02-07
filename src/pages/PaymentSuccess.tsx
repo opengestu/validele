@@ -5,7 +5,7 @@ import jsPDF from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { getProfileById } from '@/lib/api';
-import validelLogo from '@/assets/validel-logo.png';
+const validelLogo = '/icons/validel-logo.svg';
 import { notifyVendorNewOrder } from '@/services/notifications';
 
 const PaymentSuccess = () => {

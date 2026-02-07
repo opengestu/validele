@@ -69,7 +69,7 @@ const ProductSearch = () => {
               <Button 
                 onClick={handleSearch}
                 disabled={loading}
-                className="bg-green-600 hover:bg-green-700"
+                className="btn-buyer"
               >
                 <Search className="h-4 w-4 mr-2" />
                 {loading ? 'Recherche...' : 'Rechercher'}
@@ -122,7 +122,7 @@ const ProductSearch = () => {
                     </p>
                     
                     <Link to="/buyer">
-                      <Button className="w-full bg-green-600 hover:bg-green-700 text-lg py-3">
+                      <Button className="w-full btn-buyer text-lg py-3">
                         <ShoppingCart className="h-5 w-5 mr-2" />
                         Acheter maintenant
                       </Button>

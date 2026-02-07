@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Truck, QrCode, Package, CheckCircle, User, LogOut, Edit, XCircle } from 'lucide-react';
 import { PhoneIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
@@ -84,6 +84,23 @@ const DeliveryDashboard = () => {
       phone: ''
     }
   );
+
+  // Controlled tab state from URL query param (supports ?tab=in_progress|completed|profile)
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<'in_progress'|'completed'|'profile'>('in_progress');
+  const handleTabChange = (val: string) => {
+    if (!['in_progress','completed','profile'].includes(val)) return;
+    setActiveTab(val as any);
+    // update URL so external links can point to a specific section
+    navigate(`/delivery?tab=${encodeURIComponent(val)}`, { replace: true });
+  };
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    if (tab && ['in_progress','completed','profile'].includes(tab)) {
+      setActiveTab(tab as any);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
@@ -641,7 +658,7 @@ const DeliveryDashboard = () => {
       case 'in_delivery':
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><Truck className="h-3 w-3 mr-1" />En cours</span>;
       case 'delivered':
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Livrée</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary"><CheckCircle className="h-3 w-3 mr-1 text-primary" />Livrée</span>;
       case 'cancelled':
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Annulée</span>;
       default:
@@ -662,7 +679,9 @@ const DeliveryDashboard = () => {
       if (!resp.ok || !json.success) {
         throw new Error(json?.error || 'Erreur lors du démarrage de la livraison');
       }
-      toast({ title: 'Commande récupérée', description: 'Vous pouvez scanner le QR code du client pour finaliser.' });
+      // Immediately show the delivery dashboard 'En cours' section
+      navigate('/delivery?tab=in_progress');
+      toast({ title: 'Commande récupérée', description: 'Vous êtes redirigé vers vos livraisons en cours. Vous pouvez scanner le QR code du client pour finaliser.' });
       fetchDeliveries();
     } catch (error) {
       toast({ title: 'Erreur', description: toFrenchErrorMessage(error, 'Impossible de démarrer la livraison'), variant: 'destructive' });
@@ -674,16 +693,16 @@ const DeliveryDashboard = () => {
     const payoutTransaction = transactions.find(t => t.order_id === delivery.id && t.transaction_type === 'payout');
     
     return (
-      <Card key={delivery.id} className={`border ${variant === 'current' ? 'border-orange-200' : 'border-green-200'} shadow-sm`}>
+      <Card key={delivery.id} className={`border ${variant === 'current' ? 'border-orange-200' : 'border-primary/20'} shadow-sm`}>
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <span className={`font-mono text-xs px-2 py-0.5 rounded-full ${variant === 'current' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+            <span className={`font-mono text-xs px-2 py-0.5 rounded-full ${variant === 'current' ? 'bg-orange-100 text-orange-700' : 'bg-primary/10 text-primary'}`}>
               {delivery.order_code}
             </span>
             {getStatusBadge(delivery.status)}
           </div>
           <h3 className="text-base font-semibold text-gray-900 mb-2 flex items-center gap-2">
-            <Package className={`h-4 w-4 ${variant === 'current' ? 'text-green-500' : 'text-green-500'}`} />
+            <Package className="h-4 w-4 text-primary" />
             {delivery.products?.name}
           </h3>
           <div className="space-y-1 text-sm text-gray-600">
@@ -720,7 +739,7 @@ const DeliveryDashboard = () => {
               <p className="text-xs font-medium text-purple-900">
                 💰 Paiement vendeur(se): 
                 <span className={`ml-2 px-2 py-0.5 rounded ${
-                  payoutTransaction.status === 'SUCCESSFUL' ? 'bg-green-100 text-green-800' :
+                  payoutTransaction.status === 'SUCCESSFUL' ? 'bg-primary/10 text-primary' :
                   payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
                   'bg-red-100 text-red-800'
                 }`}>
@@ -731,14 +750,14 @@ const DeliveryDashboard = () => {
               </p>
             </div>
           )}
-          <div className="mt-3 text-lg font-bold text-green-600">
+          <div className="mt-3 text-lg font-bold text-primary">
             {delivery.total_amount?.toLocaleString()} FCFA
           </div>
           {variant === 'current' && (
             <div className="mt-4 space-y-2">
               {delivery.status === 'assigned' && (
                 <Button
-                  className="w-full bg-orange-500 hover:bg-orange-600 text-white"
+                  className="w-full btn-delivery"
                   onClick={() => handleStartDelivery(delivery)}
                 >
                   <Truck className="h-4 w-4 mr-2" />
@@ -747,7 +766,7 @@ const DeliveryDashboard = () => {
               )}
               {delivery.status === 'in_delivery' && (
                 <Button
-                  className="w-full bg-green-500 hover:bg-green-600 text-white"
+                  className="w-full btn-delivery"
                   onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}`)}
                 >
                   Scanner Qrcode Client
@@ -756,7 +775,7 @@ const DeliveryDashboard = () => {
             </div>
           )} 
           {variant === 'completed' && (
-            <div className="flex items-center gap-2 mt-4 text-green-700">
+            <div className="flex items-center gap-2 mt-4 text-primary">
               <CheckCircle className="h-4 w-4" />
               <span className="font-medium text-sm">Livraison terminée</span>
             </div>
@@ -775,7 +794,7 @@ const DeliveryDashboard = () => {
       {/* Dev diagnostics banner (only in development) */}
 
       {/* Header Moderne - Style similaire à VendorDashboard */}
-      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
@@ -789,7 +808,7 @@ const DeliveryDashboard = () => {
 
         {/* Navigation - Desktop Tabs */}
         <div className="hidden md:block">
-          <Tabs defaultValue="in_progress" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="in_progress" className="flex items-center space-x-2">
                 <Truck className="h-4 w-4" />
@@ -872,19 +891,19 @@ const DeliveryDashboard = () => {
                       <div>
                         <label className="text-sm font-medium text-gray-500">Statistiques</label>
                         <div className="grid grid-cols-2 gap-4 mt-2">
-                          <div className="bg-green-50 p-3 rounded-lg">
-                            <p className="text-2xl font-bold text-green-600">{inProgressDeliveries}</p>
-                            <p className="text-sm text-gray-600">En cours</p>
+                          <div className="bg-primary/10 p-3 rounded-lg">
+                            <p className="text-2xl font-bold text-primary">{inProgressDeliveries}</p>
+                            <p className="text-sm text-muted-foreground">En cours</p>
                           </div>
-                          <div className="bg-green-50 p-3 rounded-lg">
-                            <p className="text-2xl font-bold text-green-600">{completedDeliveries}</p>
-                            <p className="text-sm text-gray-600">Terminées</p>
+                          <div className="bg-primary/10 p-3 rounded-lg">
+                            <p className="text-2xl font-bold text-primary">{completedDeliveries}</p>
+                            <p className="text-sm text-muted-foreground">Terminées</p>
                           </div>
                         </div>
                       </div>
                       <Button 
                         onClick={() => setIsEditingProfile(true)}
-                        className="bg-green-500 hover:bg-green-600"
+                        className="btn-delivery"
                       >
                         <Edit className="h-4 w-4 mr-2" />
                         Modifier le profil
@@ -923,7 +942,7 @@ const DeliveryDashboard = () => {
                         <Button 
                           onClick={handleSaveProfile}
                           disabled={savingProfile}
-                          className="bg-green-500 hover:bg-green-600"
+                          className="btn-delivery"
                         >
                           {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                         </Button>
@@ -944,7 +963,7 @@ const DeliveryDashboard = () => {
 
         {/* Navigation Mobile - Bottom Navigation Bar */}
         <div className="md:hidden">
-          <Tabs defaultValue="in_progress" className="pb-20 px-0">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="pb-20 px-0">
             <div className="space-y-6">
               <TabsContent value="in_progress" className="mt-0">
                 <div className="space-y-4">
@@ -1014,26 +1033,26 @@ const DeliveryDashboard = () => {
                           <div>
                             <label className="text-sm font-medium text-gray-500">Statistiques</label>
                             <div className="grid grid-cols-2 gap-3 mt-2">
-                              <div className="bg-green-50 p-3 rounded-lg text-center">
-                                <p className="text-xl font-bold text-green-600">{inProgressDeliveries}</p>
-                                <p className="text-xs text-gray-600">En cours</p>
+                              <div className="bg-primary/10 p-3 rounded-lg text-center">
+                                <p className="text-xl font-bold text-primary">{inProgressDeliveries}</p>
+                                <p className="text-xs text-muted-foreground">En cours</p>
                               </div>
-                              <div className="bg-green-50 p-3 rounded-lg text-center">
-                                <p className="text-xl font-bold text-green-600">{completedDeliveries}</p>
-                                <p className="text-xs text-gray-600">Terminées</p>
+                              <div className="bg-primary/10 p-3 rounded-lg text-center">
+                                <p className="text-xl font-bold text-primary">{completedDeliveries}</p>
+                                <p className="text-xs text-muted-foreground">Terminées</p>
                               </div>
                             </div>
                           </div>
                           <Button 
                             onClick={() => setIsEditingProfile(true)}
-                            className="w-full bg-green-500 hover:bg-green-600"
+                            className="btn-delivery w-full"
                           >
                             <Edit className="h-4 w-4 mr-2" />
                             Modifier le profil
                           </Button>
                           <Button 
-                            variant="outline"
                             onClick={handleSignOut}
+                            variant="destructive"
                             className="w-full mt-2 flex items-center justify-center"
                           >
                             <LogOut className="h-4 w-4 mr-2" />
@@ -1064,7 +1083,7 @@ const DeliveryDashboard = () => {
                             <Button 
                               onClick={handleSaveProfile}
                               disabled={savingProfile}
-                              className="flex-1 bg-green-500 hover:bg-green-600"
+                              className="btn-delivery flex-1"
                             >
                               {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                             </Button>
@@ -1090,21 +1109,21 @@ const DeliveryDashboard = () => {
                 <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                   <TabsTrigger 
                     value="in_progress" 
-                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <Truck className="h-5 w-5" />
                     <span className="text-xs font-medium">En cours</span>
                   </TabsTrigger>
                   <TabsTrigger 
                     value="completed" 
-                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <CheckCircle className="h-5 w-5" />
                     <span className="text-xs font-medium">Terminées</span>
                   </TabsTrigger>
                   <TabsTrigger 
                     value="profile" 
-                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                    className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <User className="h-5 w-5" />
                     <span className="text-xs font-medium">Compte</span>
@@ -1125,7 +1144,7 @@ const DeliveryDashboard = () => {
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setCallModalOpen(false)}>Annuler</Button>
               <Button
-                className="bg-green-500 hover:bg-green-600"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
                 onClick={() => {
                   if (callTarget) {
                     window.location.href = `tel:${callTarget}`;

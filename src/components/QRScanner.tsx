@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info, Loader2 } from 'lucide-react';
-import valideLogo from '@/assets/validel-logo.png';
+const valideLogo = '/icons/validel-logo.svg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -492,8 +492,8 @@ function QRScanSection({
     <Card className="mb-8 rounded-3xl border-0 bg-white/80 backdrop-blur shadow-xl">
       <CardHeader>
         <CardTitle className="flex items-center text-xl">
-          <QrCode className="h-5 w-5 mr-2 text-green-600" />
-          <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+          <QrCode className="h-5 w-5 mr-2 text-primary" />
+          <span className="text-primary">
             {scanVendorQRMode ? 'Scanner QR Commande' : 'Scanner de validation'}
           </span>
         </CardTitle>
@@ -561,13 +561,13 @@ function QRScanSection({
           <div className={`transition-opacity duration-300 ${scanValid ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 p-0 m-0'} flex items-center justify-center min-h-[220px]`}
             style={{ minHeight: scanValid ? 220 : 0 }}>
             {validationResult && validationResult.status === 'valid' && (
-              <div className="flex flex-col items-center justify-center gap-5 w-full bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-6 ring-1 ring-emerald-100">
-                <div className="flex items-center gap-2 text-emerald-700 text-center">
-                  <CheckCircle className="h-6 w-6 text-emerald-600" />
+              <div className="flex flex-col items-center justify-center gap-5 w-full bg-primary/10 rounded-2xl p-6 ring-1 ring-primary/20">
+                <div className="flex items-center gap-2 text-primary text-center">
+                  <CheckCircle className="h-6 w-6 text-primary" />
                   <span className="font-semibold text-lg">QR code valide et correspond à la commande</span>
                 </div>
                 <Button
-                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white mt-2"
+                  className="bg-primary text-primary-foreground mt-2 w-full max-w-xs rounded-xl"
                   disabled={isConfirmingDelivery}
                   onClick={async () => {
                     await handleConfirmDelivery();
@@ -1372,11 +1372,11 @@ const QRScanner = () => {
   // }, [deliveryConfirmed, navigate]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
+    <div className="min-h-screen bg-primary/10">
       {/* Bandeau de progression paiement vendeur */}
 
       {/* Header */}
-      <div className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-sm">
+      <div className="w-full bg-primary shadow-sm">
         <div className="max-w-md mx-auto px-4">
           <div className="flex h-16 items-center justify-center gap-3">
             <img
@@ -1384,7 +1384,7 @@ const QRScanner = () => {
               alt="Validèl"
               className="h-8 w-8 object-contain"
             />
-            <h1 className="text-xl font-semibold tracking-tight text-white">Validèl</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-primary-foreground">Validèl</h1>
           </div>
         </div>
       </div>
@@ -1399,14 +1399,14 @@ const QRScanner = () => {
                 <span className="font-semibold">Client:</span> {currentOrder?.buyer_profile?.full_name}<br />
                 <span className="font-semibold">Adresse:</span> {currentOrder?.delivery_address}<br />
                 <span className="font-semibold">Téléphone:</span> {currentOrder?.buyer_phone}<br />
-                <span className="font-semibold">Code commande:</span> <span className="bg-green-100 text-green-800 text-sm font-medium px-3 py-1 rounded">{currentOrder?.order_code}</span>
+                <span className="font-semibold">Code commande:</span> <span className="bg-primary/10 text-primary text-sm font-medium px-3 py-1 rounded">{currentOrder?.order_code}</span>
               </div>
             </DialogDescription>
           </DialogHeader>
           {currentOrder?.status === 'paid' && (
             <div className="mt-2">
               <p className="text-gray-600 mb-4 text-center">Cliquez sur le bouton ci-dessous pour commencer la livraison</p>
-              <Button onClick={handleStartDelivery} className="w-full bg-green-600 hover:bg-green-700">
+              <Button onClick={handleStartDelivery} className="w-full bg-primary text-primary-foreground rounded-xl">
                 Commencer à livrer
               </Button>
             </div>
@@ -1414,11 +1414,11 @@ const QRScanner = () => {
           {currentOrder?.status === 'in_delivery' && currentOrder?.delivery_person_id === user?.id && (
             <div className="text-center mt-2">
               <div className="flex items-center justify-center gap-2 mb-2">
-                <CheckCircle className="h-5 w-5 text-green-600" />
-                <span className="text-green-700 font-semibold text-lg">Livraison en cours</span>
+                <CheckCircle className="h-5 w-5 text-primary" />
+                <span className="text-primary font-semibold text-lg">Livraison en cours</span>
               </div>
               <p className="text-gray-600 mb-4">Cliquez sur le bouton pour scanner le QR code du client</p>
-              <Button className="bg-green-600 hover:bg-green-700 w-full" onClick={() => { openScannerSafely(); }}>
+              <Button className="bg-primary text-primary-foreground w-full rounded-xl" onClick={() => { openScannerSafely(); }}>
                 Scanner Qrcode Client
               </Button>
             </div>
@@ -1429,19 +1429,19 @@ const QRScanner = () => {
       <div className="flex-1 w-full max-w-md mx-auto px-4 py-6">
         {deliveryConfirmed ? (
           <div className="w-full bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center">
-            <CheckCircle className="h-16 w-16 text-green-600 mb-4" />
-            <h2 className="text-xl font-bold text-green-700 mb-2 text-center">Commande livrée et confirmée !</h2>
-            <p className="text-green-800 text-base mb-2 text-center">La livraison a bien été validée. Le paiement au vendeur est en attente de validation par un administrateur.</p>
-            <Button className="mt-4 bg-green-600 hover:bg-green-700 text-white w-full" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
+            <CheckCircle className="h-16 w-16 text-primary mb-4" />
+            <h2 className="text-xl font-bold text-primary mb-2 text-center">Commande livrée et confirmée !</h2>
+            <p className="text-primary text-base mb-2 text-center">La livraison a bien été validée. Le paiement au vendeur est en attente de validation par un administrateur.</p>
+            <Button className="mt-4 bg-primary text-primary-foreground w-full rounded-xl" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
             <p className="text-sm text-gray-500 mt-2">Redirection automatique dans 3 secondes…</p>
           </div>
         ) : !showScanSection ? (
           <div className="space-y-4">
             {/* Bouton Scanner QR Commande - En haut */}
             <Card className="border-0 shadow-lg">
-              <CardContent className="p-5">
+              <CardContent className="p-5 flex items-center justify-center min-h-[120px]">
                 <Button 
-                  className="w-full h-14 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-lg font-semibold flex items-center justify-center gap-2" 
+                  className="w-full h-14 bg-primary text-primary-foreground rounded-xl text-lg font-semibold flex items-center justify-center gap-2 hover:bg-primary/90" 
                   onClick={handleScanVendorQR}
                 >
                   Scanner QR Commande
@@ -1451,22 +1451,24 @@ const QRScanner = () => {
 
             {/* Recherche manuelle par code - En bas */}
             <Card className="border-0 shadow-lg">
-              <CardContent className="p-5">
-                <p className="text-sm text-gray-500 mb-3 text-center">Ou entrez le code commande manuellement :</p>
-                <div className="space-y-3">
+              <CardContent className="p-5 flex flex-col items-center justify-center min-h-[160px] gap-4">
+                <p className="text-sm text-gray-500 mb-0 text-center">Ou entrez le code commande manuellement :</p>
+                <div className="w-full max-w-full">
                   <Input
                     type="text"
-                    className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-green-500 focus:ring-green-500"
+                    className="w-full h-12 rounded-xl px-4 text-base border-gray-200 focus:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
                     placeholder="Ex: CAB1234"
                     value={orderCode}
                     onChange={e => setOrderCode(e.target.value)}
                   />
-                  <Button 
-                    className="w-full h-12 bg-green-600 hover:bg-green-700 text-white rounded-xl text-base font-semibold" 
-                    onClick={handleSearchOrder}
-                  >
-                    Rechercher
-                  </Button>
+                  <div className="mt-3">
+                    <Button 
+                      className="w-full h-12 bg-primary text-primary-foreground text-base font-semibold rounded-xl" 
+                      onClick={handleSearchOrder}
+                    >
+                      Rechercher
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>

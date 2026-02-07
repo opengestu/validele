@@ -26,7 +26,7 @@ function getButtonBaseStyle(isMobile: boolean): React.CSSProperties {
     width: isMobile ? 90 : 70,
     height: isMobile ? 90 : 70,
     borderRadius: '50%',
-    border: '3px solid #10b981',
+    border: '3px solid hsl(var(--primary))',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -35,7 +35,7 @@ function getButtonBaseStyle(isMobile: boolean): React.CSSProperties {
     cursor: 'pointer',
     userSelect: 'none',
     background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
-    color: '#10b981',
+    color: 'hsl(var(--primary))',
     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
     transition: 'all 0.2s ease',
     WebkitTapHighlightColor: 'transparent', // Supprime la surbrillance tactile sur mobile
@@ -43,15 +43,15 @@ function getButtonBaseStyle(isMobile: boolean): React.CSSProperties {
 }
 
 const buttonHoverStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-  color: '#ffffff',
+  background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary)) 100%)',
+  color: 'hsl(var(--primary-foreground))',
   transform: 'scale(1.05)',
-  boxShadow: '0 6px 16px rgba(16, 185, 129, 0.3)',
+  boxShadow: '0 6px 16px rgba(0, 0, 0, 0.12)',
 };
 
 const buttonActiveStyle: React.CSSProperties = {
   transform: 'scale(0.95)',
-  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.2)',
+  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
 };
 
 function getDeleteButtonBaseStyle(isMobile: boolean): React.CSSProperties {
@@ -83,6 +83,8 @@ function DigitButton({ digit, onClick }: { digit: string; onClick: () => void })
 
   return (
     <div
+      tabIndex={-1}
+      onFocus={(e) => (e.currentTarget as HTMLDivElement).blur()}
       style={{
         ...buttonBaseStyle,
         ...(hover ? buttonHoverStyle : {}),
@@ -115,6 +117,8 @@ function DeleteButton({ onClick }: { onClick?: () => void }) {
 
   return (
     <div
+      tabIndex={-1}
+      onFocus={(e) => (e.currentTarget as HTMLDivElement).blur()}
       style={{
         ...deleteButtonBaseStyle,
         ...(hover ? deleteButtonHoverStyle : {}),
@@ -161,12 +165,12 @@ export default function NumericKeypad({ onDigit, onBack, onSubmit, showSubmit }:
             style={{ 
               padding: isMobile ? '14px 50px' : '10px 40px', 
               borderRadius: 28, 
-              background: '#10b981', 
+              background: 'hsl(var(--primary))', 
               border: 'none', 
               fontSize: isMobile ? 20 : 18, 
-              color: '#ffffff', 
+              color: 'hsl(var(--primary-foreground))', 
               fontWeight: '600',
-              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
               cursor: 'pointer'
             }}
           >

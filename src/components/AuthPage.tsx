@@ -3,7 +3,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
-import validelLogo from '@/assets/validel-logo.png';
+const validelLogo = '/icons/validel-logo.svg';
 import { PhoneAuthForm } from './auth/PhoneAuthForm';
 
 const AuthPage = () => {
@@ -51,7 +51,7 @@ const AuthPage = () => {
     <div className="flex flex-col min-h-screen items-center bg-white pt-0 md:pt-0">
       {authStep === 'phone' && (
         <div className="w-full text-center mt-0 mb-0 pt-0 transform translate-y-6 md:translate-y-10">
-          <h2 className="text-2xl md:text-3xl font-extrabold">Bienvenue chez <span className="text-[#24BD5C] font-bold">Validèl</span> !</h2>
+          <h2 className="text-2xl md:text-3xl font-extrabold">Bienvenue chez <span className="text-primary font-bold">Validèl</span> !</h2>
           <p className="text-sm md:text-base text-muted-foreground mt-1 mb-0">Entrez votre numéro pour commencer</p>
         </div>
       )}

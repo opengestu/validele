@@ -752,10 +752,16 @@ const BuyerDashboard = () => {
     } catch (error) {
       setSearchResult(null);
       setSearchModalOpen(false);
+      // Construire un message d'erreur lisible pour l'utilisateur (ne pas afficher du JSON brut)
+      const rawMessage = toFrenchErrorMessage(error, '');
+      // Retirer d'éventuels blocs JSON/objets du message pour éviter d'exposer du contenu technique
+      const sanitized = rawMessage.replace(/\{[\s\S]*\}/g, '').trim();
+      const userMessage = sanitized || `Aucun produit trouvé avec le code "${searchCode}"`;
       toast({
         title: "Produit non trouvé",
-        description: "Aucun produit trouvé avec ce code",
+        description: `${userMessage}. Vérifiez le code et réessayez ou contactez le vendeur.`,
         variant: "destructive",
+        duration: 7000,
       });
     } finally {
       setSearchLoading(false);
@@ -827,9 +833,10 @@ const BuyerDashboard = () => {
 
   const handlePaymentError = () => {
     toast({
-      title: "Erreur",
-      description: "Une erreur est survenue lors du paiement",
+      title: "Erreur paiement",
+      description: "Une erreur est survenue lors du processus de paiement. Vérifiez votre connexion, vos informations de paiement et réessayez. Si l'erreur persiste, contactez le support.",
       variant: "destructive",
+      duration: 7000,
     });
     setPaymentModalOpen(false);
   };
@@ -1195,10 +1202,12 @@ const BuyerDashboard = () => {
         errorMessage = 'Le serveur met trop de temps à répondre. Réessayez.';
       }
       
+      // Provide a clearer, actionable message to the user
       toast({
-        title: 'Erreur',
-        description: errorMessage,
+        title: 'Erreur création commande',
+        description: `${errorMessage}. Vérifiez votre connexion, le code produit, la disponibilité du produit, ou réessayez plus tard. Si le problème persiste, contactez le support.`,
         variant: 'destructive',
+        duration: 8000,
       });
     } finally {
       setProcessingPayment(false);
@@ -1549,8 +1558,8 @@ const BuyerDashboard = () => {
         </div>
       )}
 
-      {/* Header Client moderne - dégradé orange Validèl */}
-      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6 relative">
+      {/* Header Client moderne - application bar uses primary color */}
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 relative">
         <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-col items-center md:items-start">
             <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
@@ -1622,28 +1631,30 @@ const BuyerDashboard = () => {
                 placeholder="Votre numéro de téléphone"
               />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
               <div style={{ display: 'flex', gap: 12 }}>
-                <button
+                <Button
                   onClick={handleSaveProfile}
                   disabled={savingProfile}
-                  style={{ flex: 1, background: '#24BD5C', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer', opacity: savingProfile ? 0.7 : 1 }}
+                  className="btn-buyer flex-1"
                 >
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => setDrawerOpen(false)}
-                  style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer' }}
+                  variant="outline"
+                  className="flex-1"
                 >
                   Annuler
-                </button>
+                </Button>
               </div>
-              <button
+              <Button
                 onClick={handleSignOut}
-                style={{ width: '100%', background: '#e53e3e', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
+                variant="destructive"
+                className="w-full"
               >
                 Se déconnecter
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1878,7 +1889,7 @@ const BuyerDashboard = () => {
                               )}
 
                               <button
-                                className="rounded-md border border-green-500 px-3 py-1.5 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
+                                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground bg-muted hover:bg-muted/90 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
                                 onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                               >
@@ -1970,7 +1981,7 @@ const BuyerDashboard = () => {
             {!invoiceViewerLoading && invoiceViewerHtml && (
               <div>
                 <div className="flex justify-end gap-2 mb-2">
-                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="btn-buyer">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
                 <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
@@ -2215,7 +2226,7 @@ const BuyerDashboard = () => {
               <DialogTitle>Choisissez le mode de paiement Orange Money</DialogTitle>
             </DialogHeader>
             <div className="flex flex-col gap-4 mt-4">
-              <Button className="w-full bg-green-600 hover:bg-orange-700" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
+              <Button className="w-full btn-buyer" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
                 Payer par QR Code
               </Button>
               <Button className="w-full bg-yellow-500 hover:bg-yellow-600" onClick={() => onOrangeChoice && onOrangeChoice('otp')}>

@@ -1,6 +1,8 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Mapping des statuts en français
+import waveIcon from '@/assets/wave.png';
+import orangeMoneyIcon from '@/assets/orange-money.png';
 const STATUS_LABELS_FR: Record<string, string> = {
   paid: 'Payée',
   assigned: 'Assignée',
@@ -80,7 +82,7 @@ import {
   StatsCard,
   StatusBadge
 } from '@/components/dashboard';
-import validelLogo from '@/assets/validel-logo.png';
+const validelLogo = '/icons/validel-logo.svg';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
@@ -92,6 +94,7 @@ type ProfileRow = {
   wallet_type?: string | null;
 };
 const VendorDashboard = () => {
+
     const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
@@ -241,6 +244,46 @@ const VendorDashboard = () => {
   const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
   const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
 
+  const getVendorAuth = async () => {
+    let token = (smsUser as any)?.access_token || '';
+    if (!token) {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      if (raw) token = raw;
+    }
+    if (!token) {
+      try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch { token = ''; }
+    }
+    const vendorId = smsUser?.id || (user as any)?.id || (effectiveUser as any)?.id || '';
+    return { token, vendorId };
+  };
+
+  const appendVendorIdIfNeeded = (url: string, vendorId: string) => {
+    if (!vendorId) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}vendor_id=${encodeURIComponent(vendorId)}`;
+  };
+
+  const vendorFetch = async (url: string, options: RequestInit = {}, requiresAuth = false) => {
+    const { token, vendorId } = await getVendorAuth();
+    const headers: Record<string, string> = {
+      ...(options.headers ? (options.headers as Record<string, string>) : {}),
+    };
+    if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
+    const fullUrl = appendVendorIdIfNeeded(url, vendorId);
+    let resp = await fetch(fullUrl, { ...options, headers });
+
+    if (resp.status === 401) {
+      const newToken = resp.headers.get('x-new-access-token');
+      if (newToken) {
+        localStorage.setItem('auth_token', newToken);
+        headers['Authorization'] = `Bearer ${newToken}`;
+        resp = await fetch(fullUrl, { ...options, headers });
+      }
+    }
+
+    return resp;
+  };
+
   // Open an invoice URL and render it inside an in-app modal (supports auth for vendor endpoints)
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
     try {
@@ -249,16 +292,10 @@ const VendorDashboard = () => {
       setInvoiceViewerHtml(null);
       setInvoiceViewerFilename(null);
 
-      let token = (smsUser as any)?.access_token || '';
-      if (requiresAuth && !token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
-
       const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
-      if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
 
-      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
-      const resp = await fetch(fullUrl, { method: 'GET', headers });
+      const baseUrl = url.startsWith('http') ? url : apiUrl(url);
+      const resp = await vendorFetch(baseUrl, { method: 'GET', headers }, requiresAuth);
 
       if (!resp.ok) {
         if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
@@ -310,13 +347,8 @@ const VendorDashboard = () => {
   async function fetchVendorBatches() {
     try {
       setBatchesLoading(true);
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
       const headers: Record<string,string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
+      const resp = await vendorFetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers }, true);
       const json = await resp.json().catch(() => null);
       if (!resp.ok || !json || !json.success) {
         throw new Error(json?.error || `Backend returned ${resp.status}`);
@@ -368,6 +400,8 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  // Dropdown open state for custom wallet select
+  const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
 
   // (Global spinner overlay and body class logic removed)
 
@@ -673,14 +707,9 @@ const VendorDashboard = () => {
   // Download a vendor invoice (payout batch). Uses auth to fetch protected invoice endpoint and force download.
   async function handleDownloadInvoice(url: string) {
     try {
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
       const fullUrl = url.startsWith('http') ? url : apiUrl(url);
       const headers: Record<string, string> = { 'Accept': '*/*' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const resp = await fetch(fullUrl, { method: 'GET', headers });
+      const resp = await vendorFetch(fullUrl, { method: 'GET', headers }, true);
       if (!resp.ok) {
         toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
         return;
@@ -709,13 +738,8 @@ const VendorDashboard = () => {
   // Download the latest vendor payout batch invoice and force download
   async function handleDownloadLatestBatchInvoice() {
     try {
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
       const headers: Record<string,string> = { 'Accept': '*/*' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
+      const resp = await vendorFetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers }, true);
 
       if (resp.status === 404) {
         toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'default' });
@@ -1295,18 +1319,18 @@ const VendorDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
       {/* Header Moderne - Style similaire à BuyerDashboard */}
-      <header className="bg-green-600 rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
-          <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
+          <h1 className="text-3xl md:text-4xl font-extrabold text-primary-foreground drop-shadow-lg text-center tracking-tight">
             Validèl
           </h1>
-          <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
+          <p className="text-primary-foreground/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
       {/* Offline banner */}
       {!isOnline && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
+          <div className="bg-muted border-l-4 border-warning text-warning px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
         </div>
       )}
       {/* Main Content */}
@@ -1336,7 +1360,7 @@ const VendorDashboard = () => {
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
-                className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
+                className="bg-primary text-primary-foreground shadow-md flex-shrink-0 text-sm px-4 py-2"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Ajouter
@@ -1385,16 +1409,15 @@ const VendorDashboard = () => {
                   <div className="space-y-2 mb-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Prix:</span>
-                      <span className="font-semibold text-green-600">
+                      <span className="font-semibold text-primary">
                         {product.price?.toLocaleString()} CFA
                       </span>
                     </div>
                   </div>
-                  <div className="flex space-x-2">
+                    <div className="flex space-x-2">
                     <Button
-                      variant="outline"
                       size="sm"
-                      className="flex-1"
+                      className="bg-primary text-primary-foreground flex-1"
                       onClick={() => {
                         setEditProduct({
                           ...product,
@@ -1429,7 +1452,7 @@ const VendorDashboard = () => {
               <div className="mt-3">
                 <Button
                   onClick={() => setAddModalOpen(true)}
-                  className="bg-green-500 hover:bg-green-600 text-sm px-3 py-1"
+                  className="bg-primary text-primary-foreground text-sm px-3 py-1"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Ajouter un produit
@@ -1444,10 +1467,10 @@ const VendorDashboard = () => {
             <div className="flex items-center gap-1 whitespace-nowrap">
               <h3 className="text-xs md:text-sm font-semibold text-gray-900 m-0 leading-none">Commandes</h3>
               <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
-              <span className="ml-2 text-[11px] md:text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
+              <span className="ml-2 text-[11px] md:text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
             </div>
-            <div>
-              <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
+              <div>
+              <Button size="sm" onClick={showVendorBatches} className="bg-primary text-primary-foreground text-[11px] px-2 py-1 rounded-md h-7 shadow">
                 Facture paiement
               </Button>
             </div>
@@ -1471,7 +1494,7 @@ const VendorDashboard = () => {
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                          <span role="img" aria-label="box" className="text-primary text-lg">📦</span>
                           <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                         </div>
                         <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
@@ -1506,12 +1529,12 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
-                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
+                        <span className="text-muted-foreground" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
                       </div>
 
                       <div className="flex items-center mb-1 mt-2">
                         <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
+                        <span className="text-xs font-bold text-primary-foreground" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
                           {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
                         </span>
                       </div>
@@ -1530,7 +1553,7 @@ const VendorDashboard = () => {
                         <Button
                           size="sm"
                           onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                          className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
+                          className="flex-1 bg-muted text-muted-foreground hover:bg-muted/90"
                         >
                           Voir facture
                         </Button>
@@ -1540,7 +1563,7 @@ const VendorDashboard = () => {
                           <Button
                             size="sm"
                             onClick={() => handleShowVendorQR(order)}
-                            className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs px-1.5 py-0.5 h-8"
+                            className="flex-1 bg-primary text-primary-foreground text-xs px-1.5 py-0.5 h-8"
                           >
                             <QrCode className="h-3 w-3 mr-0.5" />
                             QR Code Commande
@@ -1568,7 +1591,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <TrendingUp className="h-5 w-5 mr-2 text-green-500" />
+                  <TrendingUp className="h-5 w-5 mr-2 text-primary" />
                   Performances
                 </CardTitle>
               </CardHeader>
@@ -1592,7 +1615,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-green-500" />
+                  <Users className="h-5 w-5 mr-2 text-primary" />
                   Clients
                 </CardTitle>
               </CardHeader>
@@ -1643,7 +1666,7 @@ const VendorDashboard = () => {
                     </div>
                     <Button
                       onClick={() => setIsEditingProfile(true)}
-                      className="bg-green-500 hover:bg-green-600"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90"
                     >
                       Modifier le profil
                     </Button>
@@ -1686,23 +1709,52 @@ const VendorDashboard = () => {
                     </div>
                     <div>
                       <label className="text-sm font-medium">Compte de paiement</label>
-                      <select
-                        name="wallet_type"
-                        value={editProfile.wallet_type}
-                        onChange={e => setEditProfile(p => ({ ...p, wallet_type: e.target.value }))}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 mt-1"
-                        title="Type de compte de paiement pour recevoir les paiements"
-                      >
-                        <option value="">Choisir un compte...</option>
-                        <option value="wave-senegal">Wave</option>
-                        <option value="orange-money">Orange Money</option>
-                      </select>
+                      <div>
+                        <label className="sr-only">Sélectionner un moyen de paiement</label>
+                        <div role="radiogroup" aria-label="Moyen de paiement" className="grid grid-cols-2 gap-3 mt-1">
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={editProfile.wallet_type === 'wave-senegal'}
+                            tabIndex={0}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' })); } }}
+                            onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' }))}
+                            className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'wave-senegal' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                          >
+                            <div className="relative w-full flex justify-center">
+                              <img src={waveIcon} alt="Wave" className="w-10 h-10" />
+                              {editProfile.wallet_type === 'wave-senegal' && (
+                                <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
+                              )}
+                            </div>
+                            <span className="text-sm font-medium">Wave</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={editProfile.wallet_type === 'orange-money'}
+                            tabIndex={0}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'orange-money' })); } }}
+                            onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
+                            className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'orange-money' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                          >
+                            <div className="relative w-full flex justify-center">
+                              <img src={orangeMoneyIcon} alt="Orange Money" className="w-10 h-10" />
+                              {editProfile.wallet_type === 'orange-money' && (
+                                <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
+                              )}
+                            </div>
+                            <span className="text-sm font-medium">Orange Money</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     <div className="flex space-x-2 mt-4">
                       <Button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
-                        className="bg-green-500 hover:bg-green-600"
+                        className="btn-vendor"
                       >
                         {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                       </Button>
@@ -1761,7 +1813,7 @@ const VendorDashboard = () => {
                   {products.length > 0 && (
                     <Button
                       onClick={() => setAddModalOpen(true)}
-                      className="bg-green-500 hover:bg-green-600 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
+                      className="bg-primary text-primary-foreground shadow-md flex-shrink-0 text-xs px-3 py-2"
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       Ajouter
@@ -1815,13 +1867,13 @@ const VendorDashboard = () => {
                               </span>
                             </div>
                             <div className="mt-2">
-                              <span className="text-sm font-medium text-green-600 whitespace-nowrap">{product.price} CFA</span>
+                              <span className="text-sm font-medium text-primary whitespace-nowrap">{product.price} CFA</span>
                             </div>
                           </div>
                         </div>
                         {/* Boutons en bas côte-à-côte sur mobile */}
                         <div className="mt-4 flex gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-green-500 hover:bg-green-600 text-sm">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground text-sm">
                             Modifier
                           </Button>
                           <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-sm">
@@ -1837,7 +1889,7 @@ const VendorDashboard = () => {
                     <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                     <p className="text-sm">Commencez par ajouter un produit.</p>
                     <div className="mt-3">
-                      <Button onClick={() => setAddModalOpen(true)} className="bg-green-500 hover:bg-green-600 text-sm px-3 py-1">
+                      <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground text-sm px-3 py-1">
                         <Plus className="h-4 w-4 mr-2" />
                         Ajouter un produit
                       </Button>
@@ -1852,9 +1904,9 @@ const VendorDashboard = () => {
                   <div className="flex items-center gap-1 whitespace-nowrap">
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
                     <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
-                    <span className="ml-2 text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
+                    <span className="ml-2 text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
                   </div>
-                  <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
+                  <Button size="sm" onClick={showVendorBatches} className="bg-primary text-primary-foreground text-[11px] px-2 py-1 rounded-md h-7 shadow">
                     Facture paiement
                   </Button>
                 </div>
@@ -1868,11 +1920,11 @@ const VendorDashboard = () => {
                         <div key={dateKey}>
                           {/* Date header */}
                           <div className="flex items-center gap-3 mb-3">
-                            <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1.5 rounded-lg shadow-sm">
+                            <div className="flex-shrink-0 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg shadow-sm">
                               <span className="text-sm font-semibold">{dateKey}</span>
                             </div>
-                            <div className="flex-grow h-px bg-gradient-to-r from-orange-200 to-transparent"></div>
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                            <div className="flex-grow h-px bg-muted"></div>
+                            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
                               {groups[dateKey].length} commande{groups[dateKey].length > 1 ? 's' : ''}
                             </span>
                           </div>
@@ -1895,7 +1947,7 @@ const VendorDashboard = () => {
                                   {/* Ligne 1 : Icône + nom produit + prix à droite */}
                                   <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
-                                      <span role="img" aria-label="box" className="text-green-600 text-lg">📦</span>
+                                      <span role="img" aria-label="box" className="text-primary text-lg">📦</span>
                                       <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                                     </div>
                                     <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
@@ -1943,6 +1995,13 @@ const VendorDashboard = () => {
                                       {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
                                     </span>
                                   </div>
+                                  {/* Afficher la raison d'annulation si la commande est annulée */}
+                                  {effectiveStatus === 'cancelled' && (order as any).cancellation_reason && (
+                                    <div className="flex items-start text-xs text-gray-600 mb-1 bg-red-50 rounded p-2">
+                                      <span className="font-semibold mr-1">Raison :</span>
+                                      <span>{(order as any).cancellation_reason}</span>
+                                    </div>
+                                  )}
                                   {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
                                   <div className="flex items-center mt-2 gap-2">
                                     {/* Order invoice (public endpoint) - open in modal */}
@@ -2006,13 +2065,25 @@ const VendorDashboard = () => {
                         </div>
                         <div>
                           <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
-                          <p className="text-lg">
-                            {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                          <p className="text-lg flex items-center gap-2">
+                            {userProfile?.wallet_type === 'wave-senegal' ? (
+                              <>
+                                <img src={waveIcon} alt="Wave" style={{ width: 24, height: 24 }} />
+                                <span>Wave</span>
+                              </>
+                            ) : userProfile?.wallet_type === 'orange-money' ? (
+                              <>
+                                <img src={orangeMoneyIcon} alt="Orange Money" style={{ width: 24, height: 24 }} />
+                                <span>Orange Money</span>
+                              </>
+                            ) : (
+                              'Non défini'
+                            )}
                           </p>
                         </div>
                         <Button
                           onClick={() => setIsEditingProfile(true)}
-                          className="w-full bg-green-500 hover:bg-green-600"
+                          className="w-full bg-primary text-primary-foreground hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
@@ -2048,24 +2119,50 @@ const VendorDashboard = () => {
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Wallet utilisé</label>
-                          <select
-                            name="wallet_type"
-                            value={editProfile.wallet_type}
-                            onChange={e => setEditProfile(p => ({ ...p, wallet_type: e.target.value }))}
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 mt-1"
-                            title="Type de wallet pour recevoir les paiements"
-                          >
-                            <option value="">Choisir un wallet...</option>
-                            <option value="wave-senegal">Wave</option>
-                            <option value="orange-money">Orange Money</option>
-                          </select>
+                          <label className="sr-only">Sélectionner un moyen de paiement</label>
+                          <div role="radiogroup" aria-label="Moyen de paiement" className="grid grid-cols-2 gap-3 mt-1">
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={editProfile.wallet_type === 'wave-senegal'}
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' })); } }}
+                              onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' }))}
+                              className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'wave-senegal' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                            >
+                              <div className="relative w-full flex justify-center">
+                                <img src={waveIcon} alt="Wave" className="w-10 h-10" />
+                                {editProfile.wallet_type === 'wave-senegal' && (
+                                  <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
+                                )}
+                              </div>
+                              <span className="text-sm font-medium">Wave</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={editProfile.wallet_type === 'orange-money'}
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'orange-money' })); } }}
+                              onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
+                              className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'orange-money' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                            >
+                              <div className="relative w-full flex justify-center">
+                                <img src={orangeMoneyIcon} alt="Orange Money" className="w-10 h-10" />
+                                {editProfile.wallet_type === 'orange-money' && (
+                                  <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
+                                )}
+                              </div>
+                              <span className="text-sm font-medium">Orange Money</span>
+                            </button>
+                          </div>
                         </div>
                         <div className="flex space-x-2">
                           <Button
                             onClick={handleSaveProfile}
                             disabled={savingProfile}
-                            className="flex-1 bg-green-500 hover:bg-green-600"
+                            className="btn-vendor flex-1"
                           >
                             {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                           </Button>
@@ -2078,7 +2175,7 @@ const VendorDashboard = () => {
                           </Button>
                         </div>
                         <Button
-                          variant="outline"
+                          variant="destructive"
                           onClick={signOut}
                           className="w-full mt-2 flex items-center justify-center"
                         >
@@ -2098,21 +2195,21 @@ const VendorDashboard = () => {
               <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                 <TabsTrigger
                   value="products"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
                   <Package className="h-5 w-5" />
                   <span className="text-xs font-medium">Produits</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="orders"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
                   <ShoppingCart className="h-5 w-5" />
                   <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="profile"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-green-50 data-[state=active]:text-green-600 rounded-xl transition-all"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
                   <User className="h-5 w-5" />
                   <span className="text-xs font-medium">Compte</span>
@@ -2134,7 +2231,7 @@ const VendorDashboard = () => {
               </DialogHeader>
               {typeof window !== 'undefined' && window.innerWidth <= 640 && (
                 <div className="flex gap-2 ml-2">
-                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
               )}
@@ -2147,7 +2244,7 @@ const VendorDashboard = () => {
                   {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
                   {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
                     <div className="flex justify-end gap-2 mb-2">
-                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-green-500 hover:bg-green-600 text-white">Télécharger</Button>
+                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                       <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                     </div>
                   )}
@@ -2182,19 +2279,21 @@ const VendorDashboard = () => {
             )}
             {!batchesLoading && vendorBatches && vendorBatches.length > 0 && (
               <div className="space-y-3 max-h-[60vh] overflow-auto">
-                {(vendorBatchesShowAll ? vendorBatches : vendorBatches.slice(0,5)).map(b => (
-                  <div key={b.id} className="flex items-center justify-between border p-2 rounded">
-                    <div className="text-sm">
-                      <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
-                      <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
-                      <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
+                {(vendorBatchesShowAll ? vendorBatches : vendorBatches.slice(0,5))
+                  .filter(b => b.status !== 'failed' && b.status !== 'échoué')
+                  .map(b => (
+                    <div key={b.id} className="flex items-center justify-between border p-2 rounded">
+                      <div className="text-sm">
+                        <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
+                        <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
+                        <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
+                        <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-primary text-primary-foreground">Télécharger</Button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
-                      <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-green-500 text-white">Télécharger</Button>
-                    </div>
-                  </div>
-                ))}
+                  ))}
                 {vendorBatches.length > 5 && (
                   <div className="flex justify-center mt-2">
                     {!vendorBatchesShowAll ? (
@@ -2262,7 +2361,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleAddProduct}
               disabled={adding}
-              className="bg-green-500 hover:bg-green-600"
+              className="bg-primary text-primary-foreground"
             >
               {adding ? 'Ajout...' : 'Ajouter'}
             </Button>
@@ -2320,7 +2419,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleEditProduct}
               disabled={editing}
-              className="bg-green-500 hover:bg-green-600"
+              className="bg-primary text-primary-foreground"
             >
               {editing ? 'Modification...' : 'Modifier'}
             </Button>
@@ -2363,7 +2462,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setCallModalOpen(false)}>
               Annuler
             </Button>
-            <Button className="bg-green-600 text-white" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
+            <Button className="bg-primary text-primary-foreground" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
               Appeler
             </Button>
           </DialogFooter>
@@ -2375,7 +2474,7 @@ const VendorDashboard = () => {
         <DialogContent className="max-w-md w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5 text-green-600" />
+              <QrCode className="h-5 w-5 text-primary" />
               QR Code Commande
             </DialogTitle>
           </DialogHeader>
@@ -2386,14 +2485,14 @@ const VendorDashboard = () => {
                   <p className="text-sm text-gray-600 mb-4">
                     Présentez ce QR code au livreur pour qu'il puisse récupérer la commande
                   </p>
-                  <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-green-100">
+                  <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-primary/20">
                     <SimpleQRCode value={selectedOrderForQR.order_code || selectedOrderForQR.id} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 200 : 240} />
                   </div>
                 </div>
-                <div className="bg-green-50 p-3 rounded-lg">
+                <div className="bg-primary/10 p-3 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-semibold text-gray-700">Code commande :</span>
-                    <span className="text-lg font-mono font-bold text-green-700">
+                    <span className="text-lg font-mono font-bold text-primary">
                       {selectedOrderForQR.order_code || selectedOrderForQR.id}
                     </span>
                   </div>

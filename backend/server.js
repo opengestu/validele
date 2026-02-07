@@ -1529,24 +1529,58 @@ app.post('/api/sms/register', async (req, res) => {
     // Créer le profil (id = userId) pour satisfaire la FK
     // Utiliser upsert pour éviter les erreurs de doublon
     console.log('[SMS] Tentative upsert profile pour userId:', userId);
-    
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: userId,
-        full_name,
-        phone: formattedPhone,
-        role: safeRole,
-        company_name: safeRole === 'vendor' ? (company_name || null) : null,
-        vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
-        wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
-        address: address || null,
-        pin_hash: hashedPin
-      }, { onConflict: 'id' });
+
+    // Préférer explicitement le "service role" client pour contourner les RLS côté serveur
+    let profileError = null;
+    try {
+      let adminClient = supabase;
+      if (SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
+          adminClient = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+          console.log('[SMS] Utilisation du client Supabase avec service role key pour l\'upsert du profil');
+        } catch (e) {
+          console.warn('[SMS] Impossible d\'initialiser le client service role, utilisation du client global (peut échouer si RLS actif):', e?.message || e);
+          adminClient = supabase;
+        }
+      } else {
+        console.warn('[SMS] SUPABASE_SERVICE_ROLE_KEY non configurée ; l\'upsert peut échouer à cause des RLS');
+      }
+
+      const { error } = await adminClient
+        .from('profiles')
+        .upsert({
+          id: userId,
+          full_name,
+          phone: formattedPhone,
+          role: safeRole,
+          company_name: safeRole === 'vendor' ? (company_name || null) : null,
+          vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
+          wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
+          address: address || null,
+          pin_hash: hashedPin
+        }, { onConflict: 'id' });
+
+      profileError = error;
+    } catch (err) {
+      profileError = err;
+    }
 
     if (profileError) {
       console.error('[SMS] Erreur création profile:', profileError);
       console.error('[SMS] Client Supabase utilisé:', !!supabase, 'Service role key dispo:', !!SUPABASE_SERVICE_ROLE_KEY);
+
+      // Si la clé service role est absente, renvoyer un message explicite pour l'admin
+      if (!SUPABASE_SERVICE_ROLE_KEY) {
+        // Best-effort cleanup
+        try {
+          await supabase.auth.admin.deleteUser(userId);
+        } catch (cleanupErr) {
+          console.error('[SMS] Erreur suppression user après échec profil:', cleanupErr);
+        }
+        return res.status(500).json({ success: false, error: 'Erreur serveur de configuration: SUPABASE_SERVICE_ROLE_KEY non configurée. Veuillez contacter l\'administrateur.' });
+      }
+
       // Best-effort cleanup: supprimer le user créé si le profil échoue
       try {
         await supabase.auth.admin.deleteUser(userId);
