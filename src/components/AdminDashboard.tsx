@@ -476,30 +476,61 @@ const AdminDashboard: React.FC = () => {
       setInvoiceViewerTitle(title);
       setInvoiceViewerHtml(null);
       setInvoiceViewerFilename(null);
-
-      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
       const authHeaders = getAuthHeader();
-      const headers: Record<string,string> = { 
+      const headers: Record<string,string> = {
         'Accept': 'text/html, */*'
       };
-      // Copier les headers d'auth s'ils existent
-      if (authHeaders && typeof authHeaders === 'object') {
-        Object.assign(headers, authHeaders);
+      if (authHeaders && typeof authHeaders === 'object') Object.assign(headers, authHeaders);
+
+      const tryFetch = async (candidate: string) => {
+        const full = candidate.startsWith('http') ? candidate : apiUrl(candidate);
+        try {
+          const r = await fetch(full, { method: 'GET', headers, credentials: 'include' });
+          return { resp: r, url: full };
+        } catch (e) {
+          return { resp: null as unknown as Response, url: full, err: e };
+        }
+      };
+
+      // First attempt: use provided URL as-is
+      let attempt = await tryFetch(url);
+
+      // If 404, try common alternative parameter names / path variants used by different backends
+      if (!attempt.resp || attempt.resp.status === 404) {
+        // try swap query param vendorId -> vendor_id and vendor
+        const qIdx = url.indexOf('?');
+        const base = qIdx >= 0 ? url.slice(0, qIdx) : url;
+        const qs = qIdx >= 0 ? url.slice(qIdx + 1) : '';
+        const params = new URLSearchParams(qs);
+        const vendorVal = params.get('vendorId') || params.get('vendor_id') || params.get('vendor');
+
+        const candidates: string[] = [];
+        // replace vendorId param name
+        if (vendorVal) {
+          const baseQs = params.toString();
+          candidates.push(`${base}?vendor_id=${encodeURIComponent(vendorVal)}`);
+          candidates.push(`${base}?vendor=${encodeURIComponent(vendorVal)}`);
+          // path param variant
+          candidates.push(`${base}/${encodeURIComponent(vendorVal)}`);
+        }
+        // also try vendorId query with different casing
+        if (params.get('vendorId')) {
+          candidates.push(`${base}?vendorId=${encodeURIComponent(params.get('vendorId') || '')}`);
+        }
+
+        for (const c of candidates) {
+          attempt = await tryFetch(c);
+          if (attempt.resp && attempt.resp.ok) break;
+        }
       }
 
-      const resp = await fetch(fullUrl, { 
-        method: 'GET', 
-        headers,
-        credentials: 'include' // Important pour envoyer les cookies admin
-      });
+      if (!attempt.resp) throw new Error('Aucun serveur réponse');
+
+      const resp = attempt.resp;
 
       if (!resp.ok) {
         if (resp.status === 403 || resp.status === 401) {
-          toast({ 
-            title: 'Non autorisé', 
-            description: 'Session admin expirée. Veuillez vous reconnecter.', 
-            variant: 'destructive' 
-          });
+          toast({ title: 'Non autorisé', description: 'Session admin expirée. Veuillez vous reconnecter.', variant: 'destructive' });
           setIsAuthenticated(false);
           setShowAdminLogin(true);
           return;
