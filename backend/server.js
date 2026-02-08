@@ -5600,6 +5600,78 @@ app.post('/api/orders', async (req, res) => {
 // ==========================================
 // Récupérer les commandes d'un acheteur (authentifié via Bearer token ou query param)
 app.get('/api/buyer/orders', async (req, res) => {
+  // Récupérer le détail d'une commande pour un acheteur (authentifié)
+  app.get('/api/buyer/orders/:id', async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      if (!orderId) return res.status(400).json({ success: false, error: 'order id required' });
+
+      const authHeader = req.headers.authorization;
+      let userId = null;
+
+      // 1) Try JWT (SMS sessions)
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET);
+          if (decoded && decoded.sub) {
+            userId = decoded.sub;
+          }
+        } catch (e) {
+          // not a JWT we issued, try Supabase
+          try {
+            const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+            if (!authErr && user) userId = user.id;
+          } catch (e2) {
+            // ignore
+          }
+        }
+      }
+
+      if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token)' });
+
+      // Utiliser le service role si dispo pour bypasser RLS et garantir les jointures
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      let sb = supabase;
+      if (serviceRoleKey && process.env.SUPABASE_URL) {
+        const { createClient } = require('@supabase/supabase-js');
+        sb = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      }
+
+      // On ne retourne la commande que si elle appartient à l'utilisateur authentifié
+      const { data: order, error } = await sb
+        .from('orders')
+        .select(`
+          id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+          product:products(id, name, price, description),
+          buyer:profiles!orders_buyer_id_fkey(id, address, full_name, phone),
+          vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address, full_name),
+          delivery:profiles!orders_delivery_person_id_fkey(id, phone, full_name),
+          qr_code, delivery_person_id
+        `)
+        .eq('id', orderId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('[BUYER] /api/buyer/orders/:id DB error:', error);
+        return res.status(500).json({ success: false, error: error.message || 'Erreur serveur' });
+      }
+      if (!order) {
+        return res.status(404).json({ success: false, error: 'Commande non trouvée' });
+      }
+      if (String(order.buyer?.id || order.buyer_id) !== String(userId)) {
+        return res.status(403).json({ success: false, error: 'Accès refusé à cette commande' });
+      }
+
+      // Normaliser l'adresse de livraison
+      const delivery_address = (order && order.buyer && order.buyer.address) ? order.buyer.address : order.delivery_address;
+      const result = { ...order, delivery_address };
+      return res.json({ success: true, order: result });
+    } catch (err) {
+      console.error('[BUYER] /api/buyer/orders/:id error:', err);
+      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  });
   try {
     const authHeader = req.headers.authorization;
     let buyerId = req.query.buyer_id;
