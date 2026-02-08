@@ -3830,7 +3830,7 @@ app.get('/api/buyer/orders', async (req, res) => {
           .select(`
             id, order_code, total_amount, status, vendor_id, product_id, created_at,
             product:products(id, name, price, description),
-            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type, company_name),
             delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
@@ -3845,7 +3845,7 @@ app.get('/api/buyer/orders', async (req, res) => {
           .select(`
             id, order_code, total_amount, status, vendor_id, product_id, created_at,
             product:products(id, name, price, description),
-            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type, company_name),
             delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
@@ -3863,6 +3863,16 @@ app.get('/api/buyer/orders', async (req, res) => {
     if (queryError) {
       console.error('[BUYER] Erreur récupération commandes:', queryError);
       return res.status(500).json({ success: false, error: queryError.message || 'Erreur serveur' });
+    }
+
+    // If debug=1 query param is provided, include a debug sample showing vendor/profile shapes
+    try {
+      if (String(req.query.debug || '').toLowerCase() === '1') {
+        const sample = (orders || []).slice(0, 10).map(o => ({ id: o.id, vendor_id: o.vendor_id, vendor: o.vendor || o.vendor_profile || o.profiles || o.vendorProfile || null }));
+        return res.json({ success: true, orders: orders || [], debug: { sample } });
+      }
+    } catch (e) {
+      // ignore debug errors
     }
 
     // Diagnostics: if an order has delivery_person_id but no delivery profile joined,

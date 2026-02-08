@@ -245,7 +245,7 @@ const OrderDetails = () => {
                 <div className="space-y-3">
                   <div>
                     <span className="text-gray-600 block mb-1">Nom:</span>
-                    <p className="font-medium">{order.profiles?.full_name || order.profiles?.company_name || 'N/A'}</p>
+                    <p className="font-medium">{order.profiles?.company_name || order.profiles?.full_name || 'N/A'}</p>
                   </div>
                   
                   {order.profiles?.phone && (

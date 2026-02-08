@@ -380,6 +380,16 @@ const BuyerDashboard = () => {
       // Cache les dernières commandes connues pour éviter le "flash" si le backend
       // renvoie temporairement une liste vide (problèmes de session / propagation).
       const cacheKey = `cached_buyer_orders_${buyerId}`;
+
+      // Debug: when debug=1 in URL, print vendor/profile info to help diagnose missing company_name
+      try {
+        if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1') {
+          try {
+            console.debug('[BUYER][DEBUG] sample normalized orders vendor info:', (normalizedOrders || []).slice(0,5).map(o => ({ id: o.id, vendor_id: o.vendor_id, profiles: (o as any).profiles || (o as any).vendor || (o as any).vendor_profile || null })));
+          } catch (e) { /* ignore debug safety */ }
+        }
+      } catch (e) { /* ignore */ }
+
       try {
         if (normalizedOrders.length > 0) {
           try { if (!opts?.silent) localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() })); } catch (e) { /* ignore */ }
@@ -1399,6 +1409,17 @@ const BuyerDashboard = () => {
     }
   };
 
+  // Helper to determine vendor display name from different payload shapes
+  const getVendorDisplayName = (order: Order) => {
+    // Try multiple possible locations for vendor profile depending on which API returned it
+    const p: any = (order as any).profiles || (order as any).vendor || (order as any).vendor_profile || (order as any).vendorProfile || null;
+    if (p) {
+      return p.company_name || p.companyName || p.full_name || p.fullName || 'N/A';
+    }
+    return 'N/A';
+  };
+
+
 
   const renderStatusBadge = (status?: string) => {
     if (!status) return null;
@@ -1808,7 +1829,7 @@ const BuyerDashboard = () => {
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{getVendorDisplayName(order)}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">
