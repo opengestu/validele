@@ -686,6 +686,20 @@ const QRScanner = () => {
         const updated = json.order ? json.order : { ...(currentOrder as Order), status: 'in_delivery', delivery_person_id: user?.id || currentOrder?.delivery_person_id };
         setCurrentOrder(updated as Order);
 
+        // Best-effort: notify buyer that delivery has started (in case backend missed SMS/push)
+        try {
+          if (updated?.buyer_id && updated?.id) {
+            notifyBuyerDeliveryStarted(
+              String(updated.buyer_id),
+              String(updated.id),
+              updated.order_code || undefined,
+              (user as any)?.phone || undefined
+            ).catch(err => console.warn('[QRScanner] notifyBuyerDeliveryStarted failed (post-backend):', err));
+          }
+        } catch (e) {
+          console.warn('[QRScanner] notifyBuyerDeliveryStarted error', e);
+        }
+
         try {
           window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
         } catch (e) {

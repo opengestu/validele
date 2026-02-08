@@ -1,6 +1,4 @@
-// Route /paymentsuccess moved below (after app initialization) to avoid ReferenceError when loading in production.
-// (original location removed)
-
+// ...existing code...
 // backend/server.js
 // INSPECT: server.js - checking DB and routes
 const express = require('express');
@@ -9,7 +7,6 @@ const axios = require('axios');
 require('dotenv').config();
 // Support both SUPABASE_ANON_KEY and VITE_SUPABASE_ANON_KEY used on Render
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_CLIENT_KEY || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_ANON_KEY_SOURCE = process.env.SUPABASE_ANON_KEY ? 'SUPABASE_ANON_KEY' : (process.env.VITE_SUPABASE_ANON_KEY ? 'VITE_SUPABASE_ANON_KEY' : (process.env.SUPABASE_KEY ? 'SUPABASE_KEY' : (process.env.SUPABASE_CLIENT_KEY ? 'SUPABASE_CLIENT_KEY' : null)));
 if (SUPABASE_ANON_KEY_SOURCE) {
   console.log('[ADMIN] Supabase anon key source:', SUPABASE_ANON_KEY_SOURCE);
@@ -20,23 +17,11 @@ const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-// Supabase helper: createClient may be needed in some routes; also expose global `supabase`
-const { createClient } = require('@supabase/supabase-js');
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-let supabase;
-try {
-  const sb = require('./supabase');
-  supabase = sb.supabase;
-} catch (e) {
-  // fail gracefully - some routes create a client on demand using createClient
-  console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
-}
 const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
-const { getNotificationTemplate } = require('./notification-templates');
 
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
@@ -253,17 +238,12 @@ app.post('/api/vendor/add-product', async (req, res) => {
     }
     // 2. Sinon, essayer comme token Supabase
     if (!userId) {
-      try {
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        console.log('[DEBUG] supabase.auth.getUser result:', { user: user ? { id: user.id, email: user.email } : null, authErr });
-        if (authErr || !user) {
-          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-        }
-        userId = user.id;
-      } catch (e) {
-        console.error('[DEBUG] supabase.auth.getUser threw for add-product:', e);
-        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser result:', { user: user ? { id: user.id, email: user.email } : null, authErr });
+      if (authErr || !user) {
+        return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
       }
+      userId = user.id;
     }
     // Debug log détaillé pour diagnostiquer le mismatch d'identifiants et de types
     console.log('[DEBUG] userId:', userId, typeof userId, '| vendor_id:', vendor_id, typeof vendor_id, '| ==', userId == vendor_id, '| ===', userId === vendor_id);
@@ -273,8 +253,10 @@ app.post('/api/vendor/add-product', async (req, res) => {
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
-    // Crée un client Supabase avec la clé service_role pour bypasser RLS (custom JWT, pas JWT Supabase)
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
     const { data, error } = await supabase
       .from('products')
       .insert({
@@ -336,106 +318,6 @@ app.all('/api/admin/test-sms', async (req, res) => {
   }
 });
 
-// Admin: test FCM push (POST JSON { userId | token, title, body, data })
-app.post('/api/admin/test-push', async (req, res) => {
-  try {
-    const { userId, token, title, body, data } = req.body || {};
-    if (!title || !body) return res.status(400).json({ success: false, error: 'title and body required' });
-
-    console.log('[ADMIN TEST PUSH] payload:', { userId, hasToken: !!token, title, body, data: !!data });
-
-    // Direct token path (useful to test a device token without creating a user)
-    if (token) {
-      try {
-        const result = await sendPushNotification(token, title, body, data || {});
-        console.log('[ADMIN TEST PUSH] direct token result:', result);
-        return res.json({ success: true, direct: true, result });
-      } catch (e) {
-        console.error('[ADMIN TEST PUSH] direct token error:', e);
-        return res.status(500).json({ success: false, error: String(e.message || e) });
-      }
-    }
-
-    if (!notificationService || typeof notificationService.sendPushNotificationToUser !== 'function') {
-      console.error('[ADMIN TEST PUSH] notificationService.sendPushNotificationToUser not available');
-      return res.status(500).json({ success: false, error: 'notificationService.sendPushNotificationToUser not available on server' });
-    }
-
-    if (!userId) return res.status(400).json({ success: false, error: 'userId or token required' });
-
-    try {
-      const result = await notificationService.sendPushNotificationToUser(userId, title, body, data || {});
-      console.log('[ADMIN TEST PUSH] sent to user:', userId, 'result:', result);
-      return res.json({ success: true, userId, result });
-    } catch (e) {
-      console.error('[ADMIN TEST PUSH] user push error:', e);
-      return res.status(500).json({ success: false, error: String(e.message || e) });
-    }
-  } catch (err) {
-    console.error('[ADMIN TEST PUSH] handler error:', err);
-    return res.status(500).json({ success: false, error: 'server_error' });
-  }
-});
-
-// Endpoint: permettre à l'utilisateur connecté d'enregistrer son push_token
-app.post('/api/me/push-token', async (req, res) => {
-  try {
-    const { push_token } = req.body || {};
-    if (!push_token || typeof push_token !== 'string' || push_token.length < 10) {
-      return res.status(400).json({ success: false, error: 'push_token requis (string)' });
-    }
-
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
-    }
-    const token = authHeader.split(' ')[1];
-    let userId = null;
-
-    // 1) Essayer de décoder comme JWT interne
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      if (decoded && decoded.sub) userId = decoded.sub;
-    } catch (e) {
-      // ignore - token may be a Supabase JWT
-    }
-
-    // 2) Sinon, essayer supabase.auth.getUser
-    if (!userId) {
-      try {
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        if (authErr || !user) {
-          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-        }
-        userId = user.id;
-      } catch (e) {
-        console.error('[ME PUSH-TOKEN] supabase.getUser error:', e);
-        return res.status(500).json({ success: false, error: 'server_error' });
-      }
-    }
-
-    // Mettre à jour le profil avec le token (utiliser le JWT utilisateur pour respecter RLS)
-    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } }
-    });
-
-    const { data, error } = await supabaseUser
-      .from('profiles')
-      .upsert({ id: userId, push_token }, { onConflict: 'id', returning: 'representation' });
-
-    if (error) {
-      console.error('[ME PUSH-TOKEN] supabase upsert error:', error);
-      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
-    }
-
-    console.log('[ME PUSH-TOKEN] push_token enregistré pour user:', userId);
-    return res.json({ success: true, data: data?.[0] });
-  } catch (err) {
-    console.error('[ME PUSH-TOKEN] handler error:', err);
-    return res.status(500).json({ success: false, error: 'server_error' });
-  }
-});
-
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
 async function deleteProductHandler(req, res) {
   try {
@@ -449,81 +331,45 @@ async function deleteProductHandler(req, res) {
     }
     const token = authHeader.split(' ')[1];
     let userId = null;
-    let isSmsAuth = false;
-
-    // Try to verify custom JWT (SMS auth)
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       if (decoded && decoded.sub) {
         userId = decoded.sub;
-        isSmsAuth = true;
-        console.log('[DEBUG] delete-product: SMS auth verified for user:', userId);
       }
     } catch (e) {
       console.warn('[DEBUG] /api/vendor/delete-product jwt verify failed:', e?.message || e);
     }
 
-    // If not SMS auth, try Supabase auth
     if (!userId) {
-      try {
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        console.log('[DEBUG] supabase.auth.getUser for delete:', { user: user ? { id: user.id } : null, authErr });
-        if (authErr || !user) {
-          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-        }
-        userId = user.id;
-      } catch (e) {
-        console.error('[DEBUG] supabase.auth.getUser threw for delete-product:', e);
-        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-      }
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser for delete:', { user: user ? { id: user.id } : null, authErr });
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
     }
 
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
 
-    // Use admin client for SMS auth (bypass RLS), otherwise use user token
-    let deleteResult;
-    if (isSmsAuth) {
-      // For SMS auth, use service role to bypass RLS
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      if (!serviceRoleKey) {
-        console.error('[API] delete-product: SUPABASE_SERVICE_ROLE_KEY missing for SMS session');
-        return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
-      }
-      const { createClient: createAdminClient } = require('@supabase/supabase-js');
-      const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      
-      const { data, error } = await supabaseAdmin
-        .from('products')
-        .delete()
-        .eq('id', product_id)
-        .eq('vendor_id', vendor_id)
-        .select();
-      deleteResult = { data, error };
-      console.log('[DEBUG] delete result (admin):', { data, error });
-    } else {
-      // For Supabase auth, use user token (respect RLS)
-      const userSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        global: { headers: { Authorization: `Bearer ${token}` } }
-      });
-      const { data, error } = await userSupabase
-        .from('products')
-        .delete()
-        .eq('id', product_id)
-        .select();
-      deleteResult = { data, error };
-      console.log('[DEBUG] delete result (user):', { data, error });
-    }
+    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+    const { data, error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', product_id)
+      .select();
 
-    if (deleteResult.error) {
-      console.error('[API] Erreur suppression produit:', deleteResult.error);
-      return res.status(500).json({ success: false, error: deleteResult.error.message || 'Erreur suppression produit' });
+    console.log('[DEBUG] delete result:', { data, error });
+    if (error) {
+      console.error('[API] Erreur suppression produit:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur suppression produit' });
     }
-    if (!deleteResult.data || deleteResult.data.length === 0) {
+    if (!data || data.length === 0) {
       return res.status(404).json({ success: false, error: 'Produit introuvable ou non supprimé' });
     }
-    return res.json({ success: true, deleted: deleteResult.data[0] });
+    return res.json({ success: true, deleted: data[0] });
   } catch (err) {
     console.error('[API] /api/vendor/delete-product error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -555,86 +401,34 @@ app.post('/api/vendor/update-product', async (req, res) => {
     }
 
     if (!userId) {
-      try {
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        console.log('[DEBUG] supabase.auth.getUser for update:', { user: user ? { id: user.id } : null, authErr });
-        if (authErr || !user) {
-          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-        }
-        userId = user.id;
-      } catch (e) {
-        console.error('[DEBUG] supabase.auth.getUser threw for update-product:', e);
-        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-      }
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      console.log('[DEBUG] supabase.auth.getUser for update:', { user: user ? { id: user.id } : null, authErr });
+      if (authErr || !user) return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé' });
+      userId = user.id;
     }
 
     if (String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendeur non autorisé (id mismatch)' });
     }
 
-    // Si le token est un JWT SMS (vérifié par jwt.verify précédemment),
-    // **N'ENVOYONS PAS** ce token à PostgREST (il provoque JWSInvalidSignature).
-    // Au lieu de cela, utilisez le client service-role pour effectuer l'opération en toute sécurité
-    // après avoir validé que le vendor_id correspond bien à l'émetteur du token.
-    let data, error;
-    if (typeof token === 'string') {
-      // Est-ce que nous avons pu décoder le token avec JWT_SECRET ? Si oui, c'est un SMS token
-      let isSmsToken = false;
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) {
-          isSmsToken = true;
-        }
-      } catch (e) {
-        // token non signé par notre secret (probablement un token Supabase) -> continuer normalement
-        isSmsToken = false;
-      }
-
-      if (isSmsToken) {
-        // Use service role client to bypass RLS safely for sms sessions
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (!serviceRoleKey) {
-          console.error('[API] update-product: SUPABASE_SERVICE_ROLE_KEY missing for SMS session');
-          return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
-        }
-        const { createClient: createAdminClient } = require('@supabase/supabase-js');
-        const supabaseAdmin = createAdminClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-        // Protect: ensure we only update products belonging to this vendor
-        ({ data, error } = await supabaseAdmin
-          .from('products')
-          .update(updates)
-          .eq('id', product_id)
-          .eq('vendor_id', vendor_id)
-          .select());
-      } else {
-        // Token Supabase (ou autre) : créer un client utilisateur ordinaire avec ce token
-        const supaClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          global: { headers: { Authorization: `Bearer ${token}` } }
-        });
-        ({ data, error } = await supaClient
-          .from('products')
-          .update(updates)
-          .eq('id', product_id)
-          .select());
-      }
-    } else {
-      // Pas de token (devrait être impossible) : fallback error
-      return res.status(401).json({ success: false, error: 'Authentification requise' });
-    }
+    // Crée un client Supabase avec le JWT utilisateur pour respecter RLS
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+    const { data, error } = await supabase
+      .from('products')
+      .update(updates)
+      .eq('id', product_id)
+      .select();
 
     console.log('[DEBUG] update result:', { data, error });
     if (error) {
       console.error('[API] Erreur modification produit:', error);
-      // Si l'erreur provient de PostgREST JWSInvalidSignature, donner un message plus lisible
-      if (error && error.code === 'PGRST301' && String(error.message || '').includes('JWS')) {
-        return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
-      }
       return res.status(500).json({ success: false, error: error.message || 'Erreur modification produit' });
     }
     if (!data || data.length === 0) {
       return res.status(404).json({ success: false, error: 'Produit introuvable ou non modifié' });
     }
-
     return res.json({ success: true, product: data[0] });
   } catch (err) {
     console.error('[API] /api/vendor/update-product error:', err);
@@ -673,12 +467,9 @@ app.post('/api/vendor/orders', async (req, res) => {
           delivery_person_id,
           created_at,
           updated_at,
-          delivery_address,
-          cancelled_at,
-          cancellation_reason,
           products(*),
-          buyer:profiles!orders_buyer_id_fkey(phone, address),
-          delivery:profiles!orders_delivery_person_id_fkey(phone),
+          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+          delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
           qr_code
         `)
         .eq('vendor_id', vendor_id)
@@ -701,40 +492,9 @@ app.post('/api/vendor/orders', async (req, res) => {
         }
       }
 
-      // Attach payout batch info per order so the frontend (VendorDashboard) can show invoice links in order history
-      try {
-        const orderIds = (data || []).map(o => o.id).filter(Boolean);
-        if (orderIds.length > 0) {
-          const { data: batchItems, error: batchItemsErr } = await supabaseAdmin
-            .from('payout_batch_items')
-            .select('order_id,batch_id,status,provider_response')
-            .in('order_id', orderIds);
-
-          if (!batchItemsErr && batchItems && batchItems.length > 0) {
-            const byOrder = {};
-            for (const bi of batchItems) {
-              byOrder[bi.order_id] = byOrder[bi.order_id] || [];
-              byOrder[bi.order_id].push(bi);
-            }
-
-            for (const o of data) {
-              o.payout_batches = byOrder[o.id] || [];
-              o.payout_invoice_urls = (o.payout_batches || []).map(bi => `/api/vendor/payout-batches/${bi.batch_id}/invoice`);
-            }
-          }
-        }
-      } catch (attachErr) {
-        console.warn('[VENDOR ORDERS] Failed to attach payout_batch info:', attachErr);
-      }
-
-      const normalizedOrders = (data || []).map((o) => ({
-        ...o,
-        delivery_address: (o && o.buyer && o.buyer.address) ? o.buyer.address : o.delivery_address
-      }));
-
       return res.json({ 
         success: true, 
-        orders: normalizedOrders,
+        orders: data || [],
         count: data?.length || 0,
         byStatus,
         usingServiceRole: true,
@@ -892,18 +652,10 @@ app.post('/api/orders/search', async (req, res) => {
     const pattern = `%${cleaned}%`;
     console.log('[API/orders/search] Recherche code nettoyé:', cleaned);
 
-    // Use service role client to bypass RLS for delivery search
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let dbClient = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-
     // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
-    const { data, error } = await dbClient
+    const { data, error } = await supabase
       .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, address, phone), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
       .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
       .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
@@ -914,16 +666,7 @@ app.post('/api/orders/search', async (req, res) => {
     }
 
     if (data) {
-      // Ajouter les informations de l'acheteur pour l'affichage
-      if (data.buyer_profile) {
-        if (data.buyer_profile.address) {
-          data.delivery_address = data.buyer_profile.address;
-        }
-        if (data.buyer_profile.phone) {
-          data.buyer_phone = data.buyer_profile.phone;
-        }
-      }
-      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status, 'buyer_phone:', data.buyer_phone);
+      console.log('[API/orders/search] Commande trouvée:', data.id, data.order_code, data.status);
       return res.json({ success: true, order: data });
     } else {
       console.warn('[API/orders/search] Aucune commande trouvée pour code:', cleaned);
@@ -970,7 +713,7 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
       const { data, error } = await supabaseAdmin
         .from('orders')
-        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor_profile:profiles!orders_vendor_id_fkey(company_name, phone, address)`)
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
         .eq('delivery_person_id', deliveryPersonId)
         .order('created_at', { ascending: false });
 
@@ -980,11 +723,7 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       }
 
       console.log('[API/delivery/my-orders] admin query returned', Array.isArray(data) ? data.length : 0, 'orders');
-      const normalizedOrders = (data || []).map((o) => ({
-        ...o,
-        delivery_address: (o && o.buyer_profile && o.buyer_profile.address) ? o.buyer_profile.address : o.delivery_address
-      }));
-      return res.json({ success: true, orders: normalizedOrders, count: normalizedOrders.length, usingServiceRole: true, timestamp: new Date().toISOString() });
+      return res.json({ success: true, orders: data || [], count: data?.length || 0, usingServiceRole: true, timestamp: new Date().toISOString() });
     } catch (e) {
       console.error('[API/delivery/my-orders] admin client failed:', e);
       return res.status(500).json({ success: false, error: 'Server error querying as admin', details: String(e) });
@@ -1427,7 +1166,7 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
 // Objectif: avoir un id présent dans auth.users pour satisfaire la FK profiles.id -> users.id.
 app.post('/api/sms/register', async (req, res) => {
   try {
-    const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin, address } = req.body || {};
+    const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin } = req.body || {};
 
     if (!full_name || !phone || !role || !pin) {
       return res.status(400).json({ success: false, error: 'Champs requis manquants' });
@@ -1528,59 +1267,21 @@ app.post('/api/sms/register', async (req, res) => {
 
     // Créer le profil (id = userId) pour satisfaire la FK
     // Utiliser upsert pour éviter les erreurs de doublon
-    console.log('[SMS] Tentative upsert profile pour userId:', userId);
-
-    // Préférer explicitement le "service role" client pour contourner les RLS côté serveur
-    let profileError = null;
-    try {
-      let adminClient = supabase;
-      if (SUPABASE_SERVICE_ROLE_KEY) {
-        try {
-          const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
-          adminClient = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-          console.log('[SMS] Utilisation du client Supabase avec service role key pour l\'upsert du profil');
-        } catch (e) {
-          console.warn('[SMS] Impossible d\'initialiser le client service role, utilisation du client global (peut échouer si RLS actif):', e?.message || e);
-          adminClient = supabase;
-        }
-      } else {
-        console.warn('[SMS] SUPABASE_SERVICE_ROLE_KEY non configurée ; l\'upsert peut échouer à cause des RLS');
-      }
-
-      const { error } = await adminClient
-        .from('profiles')
-        .upsert({
-          id: userId,
-          full_name,
-          phone: formattedPhone,
-          role: safeRole,
-          company_name: safeRole === 'vendor' ? (company_name || null) : null,
-          vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
-          wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
-          address: address || null,
-          pin_hash: hashedPin
-        }, { onConflict: 'id' });
-
-      profileError = error;
-    } catch (err) {
-      profileError = err;
-    }
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: userId,
+        full_name,
+        phone: formattedPhone,
+        role: safeRole,
+        company_name: safeRole === 'vendor' ? (company_name || null) : null,
+        vehicle_info: safeRole === 'delivery' ? (vehicle_info || null) : null,
+        wallet_type: safeRole === 'vendor' ? (wallet_type || null) : null,
+        pin_hash: hashedPin
+      }, { onConflict: 'id' });
 
     if (profileError) {
       console.error('[SMS] Erreur création profile:', profileError);
-      console.error('[SMS] Client Supabase utilisé:', !!supabase, 'Service role key dispo:', !!SUPABASE_SERVICE_ROLE_KEY);
-
-      // Si la clé service role est absente, renvoyer un message explicite pour l'admin
-      if (!SUPABASE_SERVICE_ROLE_KEY) {
-        // Best-effort cleanup
-        try {
-          await supabase.auth.admin.deleteUser(userId);
-        } catch (cleanupErr) {
-          console.error('[SMS] Erreur suppression user après échec profil:', cleanupErr);
-        }
-        return res.status(500).json({ success: false, error: 'Erreur serveur de configuration: SUPABASE_SERVICE_ROLE_KEY non configurée. Veuillez contacter l\'administrateur.' });
-      }
-
       // Best-effort cleanup: supprimer le user créé si le profil échoue
       try {
         await supabase.auth.admin.deleteUser(userId);
@@ -1768,16 +1469,6 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     console.log('[PIXPAY-WEBHOOK] Headers:', JSON.stringify(req.headers, null, 2));
     console.log('[PIXPAY-WEBHOOK] Body:', JSON.stringify(ipnData, null, 2));
 
-    // Create admin client with service role key to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = null;
-    if (serviceRoleKey) {
-      const { createClient: createAdminClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    } else {
-      console.warn('[PIXPAY-WEBHOOK] ⚠️ No service role key, using regular client');
-    }
-
     const {
       transaction_id,
       state,
@@ -1811,53 +1502,43 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     const transactionType = customData.type || 'payment'; // 'payment' ou 'payout'
     console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state, '| Type:', transactionType);
 
-    // Mettre à jour la transaction dans Supabase - utiliser supabaseAdmin pour bypass RLS
-    if (transaction_id && supabaseAdmin) {
+    // Mettre à jour la transaction dans Supabase
+    if (transaction_id) {
       try {
-          const { error: updateError } = await supabaseAdmin
-            .from('payment_transactions')
-            .update({
-              status: state,
-              provider_response: normalizeJsonField(response),
-              provider_error: error || null,
-              provider_transaction_id: provider_id || null,
-              updated_at: new Date().toISOString()
-            })
-            .eq('transaction_id', transaction_id);
+        const { error: updateError } = await supabase
+          .from('payment_transactions')
+          .update({
+            status: state,
+            provider_response: response || null,
+            provider_error: error || null,
+            provider_transaction_id: provider_id || null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('transaction_id', transaction_id);
 
-          if (updateError) {
-            console.error('[PIXPAY] Erreur update DB:', updateError);
-          } else {
-            console.log('[PIXPAY] ✅ Transaction', transaction_id, 'mise à jour avec status:', state);
-          }
+        if (updateError) {
+          console.error('[PIXPAY] Erreur update DB:', updateError);
+        }
       } catch (e) {
         console.error('[PIXPAY] defensive DB update failed (missing columns?), continue processing:', e?.message || e);
       }
     }
 
     // Si paiement réussi, mettre à jour la commande
-    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts ou remboursements
-    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout' && transactionType !== 'refund') {
-      // Utiliser supabaseAdmin pour bypass RLS policies
-      const dbClient = supabaseAdmin || supabase;
-      
+    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts
+    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout') {
       // Récupérer l'order_code de la commande
-      const { data: orderData, error: fetchError } = await dbClient
+      const { data: orderData } = await supabase
         .from('orders')
         .select('order_code, status')
         .eq('id', orderId)
         .single();
-      
-      if (fetchError) {
-        console.error('[PIXPAY-WEBHOOK] ❌ Erreur fetch order:', fetchError);
-      }
 
       // Ne pas écraser le status si la commande est déjà delivered
       if (orderData?.status === 'delivered') {
-        console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
+        console.log('[PIXPAY] ⚠️ Commande déjà livrée, status non modifié');
       } else {
-        // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
-        const { error: orderError } = await dbClient
+        const { error: orderError } = await supabase
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
@@ -1867,128 +1548,30 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           .eq('id', orderId);
 
         if (orderError) {
-          console.error('[PIXPAY-WEBHOOK] ❌ Erreur update order:', orderError);
+          console.error('[PIXPAY] Erreur update order:', orderError);
         } else {
-          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
-          
-          // Notifier l'acheteur et le vendeur du paiement confirmé
-          try {
-            const { data: orderDetails } = await dbClient
-              .from('orders')
-              .select('buyer_id, vendor_id, order_code, total_amount')
-              .eq('id', orderId)
-              .single();
-
-            if (orderDetails) {
-              // Notification acheteur (push_tokens -> fallback profiles.push_token)
-              const { data: buyerTokens } = await dbClient
-                .from('push_tokens')
-                .select('token')
-                .eq('user_id', orderDetails.buyer_id)
-                .eq('is_active', true);
-
-              const buyerNotif = getNotificationTemplate('PAYMENT_CONFIRMED', {
-                orderCode: orderDetails.order_code,
-                amount: orderDetails.total_amount,
-                orderId: orderId
-              });
-
-              if (buyerTokens && buyerTokens.length > 0) {
-                for (const { token } of buyerTokens) {
-                  await sendPushNotification(token, buyerNotif.title, buyerNotif.body, buyerNotif.data);
-                }
-                console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur (push_tokens)');
-              } else {
-                const { data: buyerProfile } = await dbClient
-                  .from('profiles')
-                  .select('push_token')
-                  .eq('id', orderDetails.buyer_id)
-                  .single();
-                if (buyerProfile?.push_token) {
-                  await sendPushNotification(buyerProfile.push_token, buyerNotif.title, buyerNotif.body, buyerNotif.data);
-                  console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur (profiles.push_token)');
-                }
-              }
-
-              // Notification vendeur (push_tokens -> fallback profiles.push_token)
-              const { data: vendorTokens } = await dbClient
-                .from('push_tokens')
-                .select('token')
-                .eq('user_id', orderDetails.vendor_id)
-                .eq('is_active', true);
-
-              const vendorNotif = getNotificationTemplate('PAYMENT_RECEIVED', {
-                orderCode: orderDetails.order_code,
-                amount: orderDetails.total_amount,
-                orderId: orderId
-              });
-
-              if (vendorTokens && vendorTokens.length > 0) {
-                for (const { token } of vendorTokens) {
-                  await sendPushNotification(token, vendorNotif.title, vendorNotif.body, vendorNotif.data);
-                }
-                console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur (push_tokens)');
-              } else {
-                const { data: vendorProfile } = await dbClient
-                  .from('profiles')
-                  .select('push_token')
-                  .eq('id', orderDetails.vendor_id)
-                  .single();
-                if (vendorProfile?.push_token) {
-                  await sendPushNotification(vendorProfile.push_token, vendorNotif.title, vendorNotif.body, vendorNotif.data);
-                  console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur (profiles.push_token)');
-                }
-              }
-            }
-          } catch (notifErr) {
-            console.error('[PIXPAY] Erreur notifications paiement:', notifErr);
-          }
+          console.log('[PIXPAY] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
         }
       }
     } else if (state === 'SUCCESSFUL' && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
       console.log('[PIXPAY] ✅ Payout SUCCESSFUL', { transaction_id, transactionType, orderId });
       try {
         // If orderId corresponds to an order -> mark that order as paid
-        // Use supabaseAdmin to bypass RLS
         if (orderId) {
           // Check if orderId is an actual order
-          const { data: orderExists } = await supabaseAdmin.from('orders').select('id, vendor_id, order_code, total_amount').eq('id', orderId).maybeSingle();
+          const { data: orderExists } = await supabase.from('orders').select('id').eq('id', orderId).maybeSingle();
           if (orderExists && orderExists.id) {
-            await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+            await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
             console.log('[PIXPAY] Order payout marked paid:', orderId);
-            
-            // Notifier le vendeur que le paiement est effectué
-            try {
-              const { data: vendorTokens } = await supabase
-                .from('push_tokens')
-                .select('token')
-                .eq('user_id', orderExists.vendor_id)
-                .eq('is_active', true);
-
-              if (vendorTokens && vendorTokens.length > 0) {
-                const notif = getNotificationTemplate('PAYOUT_PAID', {
-                  orderCode: orderExists.order_code,
-                  amount: orderExists.total_amount,
-                  orderId: orderExists.id
-                });
-
-                for (const { token } of vendorTokens) {
-                  await sendPushNotification(token, notif.title, notif.body, notif.data);
-                }
-                console.log('[PIXPAY] Notification payout payé envoyée au vendeur');
-              }
-            } catch (notifErr) {
-              console.error('[PIXPAY] Erreur notification payout payé:', notifErr);
-            }
           } else {
-            // Otherwise treat orderId as a batch id - use supabaseAdmin to bypass RLS
-            const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
+            // Otherwise treat orderId as a batch id
+            const { data: items } = await supabase.from('payout_batch_items').select('id, order_id').eq('batch_id', orderId);
             if (items && items.length > 0) {
               const itemIds = items.map(i => i.id);
               const orderIds = items.map(i => i.order_id).filter(Boolean);
-              await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-              if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-              await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
+              await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+              if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+              await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
               console.log('[PIXPAY] Batch payout completed for batch:', orderId);
             } else {
               console.log('[PIXPAY] Payout SUCCESSFUL but no order or batch found for id:', orderId);
@@ -2044,112 +1627,6 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
   } catch (error) {
     console.error('[PIXPAY] Erreur webhook:', error);
     return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Admin: Manually confirm a payment as paid (when webhook fails)
-app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
-  try {
-    const { orderId } = req.body;
-    if (!orderId) {
-      return res.status(400).json({ success: false, error: 'orderId required' });
-    }
-
-    console.log('[ADMIN] confirm-payment: Confirming payment for order:', orderId);
-
-    // Create admin client with service role key to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey) {
-      console.error('[ADMIN] confirm-payment: SUPABASE_SERVICE_ROLE_KEY missing');
-      return res.status(500).json({ success: false, error: 'Server misconfiguration' });
-    }
-    const { createClient: createAdminClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    // Fetch the order
-    const { data: order, error: orderErr } = await supabaseAdmin
-      .from('orders')
-      .select('id, order_code, status, buyer_id, vendor_id, total_amount')
-      .eq('id', orderId)
-      .single();
-
-    if (orderErr || !order) {
-      console.error('[ADMIN] confirm-payment: Order not found:', orderErr);
-      return res.status(404).json({ success: false, error: 'Order not found' });
-    }
-
-    // Check if already paid or delivered
-    if (['paid', 'in_delivery', 'delivered'].includes(order.status)) {
-      console.log('[ADMIN] confirm-payment: Order already in status:', order.status);
-      return res.json({ success: true, message: `Order already ${order.status}`, order });
-    }
-
-    // Update order status to paid
-    const { error: updateErr } = await supabaseAdmin
-      .from('orders')
-      .update({
-        status: 'paid',
-        payment_confirmed_at: new Date().toISOString(),
-        qr_code: order.order_code // Use order_code as QR code
-      })
-      .eq('id', orderId);
-
-    if (updateErr) {
-      console.error('[ADMIN] confirm-payment: Update error:', updateErr);
-      return res.status(500).json({ success: false, error: 'Failed to update order: ' + updateErr.message });
-    }
-
-    console.log('[ADMIN] ✅ Order', orderId, 'manually confirmed as paid');
-
-    // Notify buyer and vendor
-    try {
-      // Notification to buyer
-      const { data: buyerTokens } = await supabaseAdmin
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', order.buyer_id)
-        .eq('is_active', true);
-
-      if (buyerTokens && buyerTokens.length > 0) {
-        const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
-          orderCode: order.order_code,
-          amount: order.total_amount,
-          orderId: orderId
-        });
-
-        for (const { token } of buyerTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[ADMIN] Notification sent to buyer');
-      }
-
-      // Notification to vendor
-      const { data: vendorTokens } = await supabaseAdmin
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', order.vendor_id)
-        .eq('is_active', true);
-
-      if (vendorTokens && vendorTokens.length > 0) {
-        const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
-          orderCode: order.order_code,
-          amount: order.total_amount,
-          orderId: orderId
-        });
-
-        for (const { token } of vendorTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[ADMIN] Notification sent to vendor');
-      }
-    } catch (notifErr) {
-      console.error('[ADMIN] Notification error:', notifErr);
-    }
-
-    return res.json({ success: true, message: 'Payment confirmed manually', orderId, orderCode: order.order_code });
-  } catch (error) {
-    console.error('[ADMIN] confirm-payment error:', error);
-    return res.status(500).json({ success: false, error: String(error) });
   }
 });
 
@@ -2280,13 +1757,10 @@ async function requireAdmin(req, res, next) {
         // Also accept users who have role='admin' in profiles table
         try {
           const { data: profRow, error: profErr } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
-          console.log('[ADMIN] requireAdmin: profile lookup for', data.user.id, '-> role:', profRow?.role);
           if (!profErr && profRow && profRow.role === 'admin') {
             console.log('[ADMIN] requireAdmin: profile role=admin, granting access for', data.user.id);
             req.adminUser = data.user;
             return next();
-          } else {
-            console.log('[ADMIN] requireAdmin: profile role is not admin, role=', profRow?.role);
           }
         } catch (e) {
           console.warn('[ADMIN] requireAdmin: error checking profile role:', e?.message || e);
@@ -2490,14 +1964,19 @@ app.post('/api/admin/logout', async (req, res) => {
 });
 
 // GET /api/admin/validate - validate current admin session (cookie)
-app.get('/api/admin/validate', requireAdmin, async (req, res) => {
+app.get('/api/admin/validate', async (req, res) => {
   try {
-    // Si on arrive ici, c'est que requireAdmin a validé l'accès
-    return res.json({ 
-      success: true, 
-      user: req.adminUser,
-      message: 'Admin session valide'
-    });
+    const token = req.cookies?.admin_access;
+    if (!token) return res.status(401).json({ success: false, error: 'No admin session' });
+    const { data: userRes } = await supabase.auth.getUser(token);
+    const user = userRes?.user;
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
+    const adminIdEnv = process.env.ADMIN_USER_ID;
+    if (adminIdEnv && user.id !== adminIdEnv) {
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
+    }
+    return res.json({ success: true, user });
   } catch (err) {
     console.error('[ADMIN] validate error:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });
@@ -2600,64 +2079,36 @@ app.post('/api/admin/login-local', async (req, res) => {
 // Lister les commandes (admin)
 app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   try {
-    // Utiliser le service-role client pour avoir accès complet aux données
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
-
-    // Récupérer d'abord toutes les commandes
-    const { data: orders, error: ordersError } = await supabaseAdmin
+    // Include buyer, vendor and (if present) delivery person details using FK relationship selects
+    const { data, error } = await supabase
       .from('orders')
-      .select('*')
+      .select(`
+        id, order_code, total_amount, status, vendor_id, buyer_id, delivery_person_id,
+        payout_status, payout_requested_at, payout_requested_by,
+        buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, wallet_type),
+        vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+        delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone)
+      `)
       .order('created_at', { ascending: false });
-    
-    if (ordersError) {
-      console.error('[ADMIN] Erreur récupération orders:', ordersError);
-      throw ordersError;
+    if (error) throw error;
+
+    // Debug logs only when DEBUG environment variable is explicitly enabled
+    if (process.env.DEBUG === 'true') {
+      try {
+        const count = Array.isArray(data) ? data.length : 0;
+        console.log('[ADMIN] /api/admin/orders fetched count:', count);
+        console.log('[ADMIN] /api/admin/orders sample rows:', JSON.stringify((data || []).slice(0, 10)));
+      } catch (e) {
+        console.warn('[ADMIN] /api/admin/orders debug log failed:', e?.message || e);
+      }
+
+      // Include debug info in the response when DEBUG environment flag is enabled
+      const debugPayload = { count: Array.isArray(data) ? data.length : 0, sample: (data || []).slice(0,5) };
+      return res.json(Object.assign({ success: true, orders: data }, { debug: debugPayload }));
     }
 
-    // Récupérer tous les IDs de profils uniques
-    const profileIds = new Set();
-    orders.forEach(order => {
-      if (order.buyer_id) profileIds.add(order.buyer_id);
-      if (order.vendor_id) profileIds.add(order.vendor_id);
-      if (order.delivery_person_id) profileIds.add(order.delivery_person_id);
-    });
-
-    // Récupérer tous les profils en une seule requête
-    const { data: profiles, error: profilesError } = await supabaseAdmin
-      .from('profiles')
-      .select('id, full_name, phone, wallet_type, address')
-      .in('id', Array.from(profileIds));
-
-    if (profilesError) {
-      console.error('[ADMIN] Erreur récupération profiles:', profilesError);
-    }
-
-    // Créer un map des profils pour un accès rapide
-    const profileMap = {};
-    (profiles || []).forEach(profile => {
-      profileMap[profile.id] = profile;
-    });
-
-    // Enrichir les commandes avec les données des profils
-    const enrichedOrders = orders.map(order => {
-      const buyer = profileMap[order.buyer_id] || null;
-      return {
-        ...order,
-        buyer,
-        vendor: profileMap[order.vendor_id] || null,
-        delivery: profileMap[order.delivery_person_id] || null,
-        delivery_address: buyer?.address || order.delivery_address
-      };
-    });
-
-    console.log('[ADMIN] /api/admin/orders fetched:', enrichedOrders.length, 'orders with profile data');
-    console.log('[ADMIN] Sample order:', JSON.stringify(enrichedOrders[0] || {}));
-
-    return res.json({ success: true, orders: enrichedOrders });
+    // Normal response (no debug information)
+    return res.json({ success: true, orders: data });
   } catch (error) {
     console.error('[ADMIN] Erreur list orders:', error);
     res.status(500).json({ success: false, error: String(error) });
@@ -2825,21 +2276,8 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
     // Execute payout via PixPay
     const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
-    console.log('[ADMIN] payout-order Pixpay response:', JSON.stringify(result, null, 2));
-
-    // IMPORTANT: Check if Pixpay returned success before proceeding
-    if (!result || !result.success) {
-      const errorMsg = result?.message || result?.raw?.message || 'Pixpay returned an error';
-      console.error('[ADMIN] payout-order - Pixpay call failed:', errorMsg, result);
-      return res.status(500).json({ 
-        success: false, 
-        error: `Pixpay payout failed: ${errorMsg}`,
-        pixpay_response: result 
-      });
-    }
-
     // Record transaction
-    if (result.transaction_id) {
+    if (result && result.transaction_id) {
       const { error: txErr } = await supabase.from('payment_transactions').insert({
         transaction_id: result.transaction_id,
         provider: 'pixpay',
@@ -2855,32 +2293,6 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
       // Mark order as processing (final paid will be set by webhook SUCCESSFUL)
       const { error: updErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
       if (updErr) console.error('[ADMIN] Erreur mise à jour order payout_status:', updErr);
-      
-      // Notifier le vendeur que le paiement est en cours
-      try {
-        const { data: vendorTokens } = await supabase
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', report.order.vendor_id)
-          .eq('is_active', true);
-
-        if (vendorTokens && vendorTokens.length > 0) {
-          const notif = getNotificationTemplate('PAYOUT_PROCESSING', {
-            orderCode: report.order.order_code,
-            amount: report.order.total_amount,
-            orderId: report.order.id
-          });
-
-          for (const { token } of vendorTokens) {
-            await sendPushNotification(token, notif.title, notif.body, notif.data);
-          }
-          console.log('[ADMIN] Notification payout processing envoyée au vendeur');
-        }
-      } catch (notifErr) {
-        console.error('[ADMIN] Erreur notification payout:', notifErr);
-      }
-    } else {
-      console.warn('[ADMIN] payout-order - Pixpay returned success but no transaction_id');
     }
 
     res.json({ success: result.success, result });
@@ -2892,14 +2304,11 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 
 // Helper: verify order payout eligibility and return a detailed report
 // NOTE: Per project rule, eligibility depends on order status, payout_status and that the buyer has paid.
-async function verifyOrderForPayout(orderId, dbClient = null) {
+async function verifyOrderForPayout(orderId) {
   if (!orderId) return { ok: false, error: 'order_id_required' };
 
-  // Use provided client or fallback to global supabase
-  const db = dbClient || supabase;
-
   // Fetch order (include payment_confirmed_at)
-  const { data: order, error: orderErr } = await db
+  const { data: order, error: orderErr } = await supabase
     .from('orders')
     .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at, payment_confirmed_at')
     .eq('id', orderId)
@@ -2910,13 +2319,11 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
   // Checks: delivered implies buyer paid for our app flow; accept payment_confirmed_at, status='paid' or status='delivered' as paid
   const delivered = order.status === 'delivered';
   const paid = !!order.payment_confirmed_at || order.status === 'paid' || order.status === 'delivered';
-  // IMPORTANT: Do NOT trust payout_status='paid' alone - we must verify a real Pixpay transaction exists
-  // The payout_status might be incorrectly set without an actual payout
   const payoutStatusOk = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
-  let alreadyPaid = false; // Start with false, only set true if we find a REAL transaction
+  const alreadyPaid = order.payout_status === 'paid';
 
   // Vendor info required
-  const { data: vendor } = await db
+  const { data: vendor } = await supabase
     .from('profiles')
     .select('id, full_name, phone, wallet_type')
     .eq('id', order.vendor_id)
@@ -2924,101 +2331,52 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
 
   const vendorOk = vendor && vendor.phone;
 
-  // Check if a successful payout transaction ACTUALLY exists for this order
-  // This is the authoritative check - we don't trust payout_status alone
+  // Additional check: detect if a successful payout transaction already exists for this order
   try {
-    // 1) Check for a direct transaction for this order with provider_transaction_id
-    const { data: txs } = await db.from('payment_transactions')
-      .select('id, transaction_id, status, provider_transaction_id')
-      .eq('order_id', orderId)
-      .eq('transaction_type', 'payout')
-      .limit(5);
-    
-    // A payout is considered done if there's a SUCCESSFUL transaction OR a transaction with provider_transaction_id
-    const hasTx = txs && txs.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
-    
-    if (hasTx) {
-      console.log(`[ADMIN] verifyOrderForPayout: Found existing payout transaction for order ${orderId}`);
-      alreadyPaid = true;
-      // Reconcile DB state if needed
-      if (order.payout_status !== 'paid') {
+    // 1) direct transaction for this order
+    const { data: txs } = await supabase.from('payment_transactions').select('id,transaction_id,status').eq('order_id', orderId).eq('status', 'SUCCESSFUL').limit(1);
+    if (txs && txs.length > 0) {
+      // There is a provider-confirmed payout for this order
+      if (!alreadyPaid) {
+        // Try to reconcile state in DB (best-effort)
         try {
-          await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+          await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
         } catch (e) {
           console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid:', e?.message || e);
         }
       }
+      alreadyPaid = true;
     } else {
-      // 2) Check if order is part of a batch that has a successful payout transaction
-      const { data: items } = await db.from('payout_batch_items')
-        .select('batch_id, provider_transaction_id, status')
-        .eq('order_id', orderId);
-      
-      // Check if any batch item has a provider_transaction_id (meaning Pixpay was called)
-      const itemWithTx = (items || []).find(i => i.provider_transaction_id && i.provider_transaction_id !== 'null');
-      if (itemWithTx) {
-        console.log(`[ADMIN] verifyOrderForPayout: Found batch item with provider_transaction_id for order ${orderId}`);
-        alreadyPaid = true;
-        if (order.payout_status !== 'paid') {
-          try {
-            await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-          } catch (e) {
-            console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
-          }
-        }
-      } else {
-        // 3) Check batch-level transaction
-        const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
-        if (batchIds.length > 0) {
-          const { data: txsBatch } = await db.from('payment_transactions')
-            .select('id, transaction_id, status, provider_transaction_id')
-            .in('batch_id', batchIds)
-            .eq('transaction_type', 'payout')
-            .limit(5);
-          
-          const hasBatchTx = txsBatch && txsBatch.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
-          if (hasBatchTx) {
-            console.log(`[ADMIN] verifyOrderForPayout: Found batch transaction for order ${orderId}`);
-            alreadyPaid = true;
-            if (order.payout_status !== 'paid') {
-              try {
-                await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-              } catch (e) {
-                console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch tx):', e?.message || e);
-              }
+      // 2) check if order is part of a batch that has a successful payment transaction
+      const { data: items } = await supabase.from('payout_batch_items').select('batch_id').eq('order_id', orderId);
+      const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
+      if (batchIds.length > 0) {
+        const { data: txsBatch } = await supabase.from('payment_transactions').select('id,transaction_id,status').in('batch_id', batchIds).eq('status', 'SUCCESSFUL').limit(1);
+        if (txsBatch && txsBatch.length > 0) {
+          if (!alreadyPaid) {
+            try {
+              await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
+            } catch (e) {
+              console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
             }
           }
+          alreadyPaid = true;
         }
-      }
-    }
-    
-    // If payout_status says 'paid' but we found NO transaction, reset it to allow retry
-    if (order.payout_status === 'paid' && !alreadyPaid) {
-      console.log(`[ADMIN] verifyOrderForPayout: Order ${orderId} has payout_status='paid' but NO real transaction found - resetting to 'requested'`);
-      try {
-        await db.from('orders').update({ payout_status: 'requested', payout_paid_at: null }).eq('id', orderId);
-        // Update our local reference
-        order.payout_status = 'requested';
-      } catch (e) {
-        console.warn('[ADMIN] verifyOrderForPayout - failed to reset payout_status:', e?.message || e);
       }
     }
   } catch (e) {
     console.warn('[ADMIN] verifyOrderForPayout - error checking existing payout txs:', e?.message || e);
-    // Non-fatal, but be conservative
+    // Non-fatal
   }
 
-  // Recalculate payoutStatusOk after potential reset
-  const payoutStatusOkFinal = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
-
   // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
-  const eligible = delivered && paid && payoutStatusOkFinal && !alreadyPaid && vendorOk;
+  const eligible = delivered && paid && payoutStatusOk && !alreadyPaid && vendorOk;
 
   const reasons = [];
   if (!delivered) reasons.push('not_delivered');
   if (!paid) reasons.push('not_paid');
   if (!vendorOk) reasons.push('vendor_info_missing');
-  if (!payoutStatusOkFinal) reasons.push('invalid_payout_status');
+  if (!payoutStatusOk) reasons.push('invalid_payout_status');
   if (alreadyPaid) reasons.push('already_paid');
 
   return {
@@ -3029,7 +2387,7 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
       delivered,
       paid,
       payment_confirmed_at: order.payment_confirmed_at || null,
-      payoutStatusOk: payoutStatusOkFinal,
+      payoutStatusOk,
       vendorOk,
       payout_status: order.payout_status || null,
       alreadyPaid
@@ -3063,20 +2421,7 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
 
     const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
-    console.log('[ADMIN] verify-and-payout Pixpay response:', JSON.stringify(payoutRes, null, 2));
-
-    // IMPORTANT: Check if Pixpay returned success before proceeding
-    if (!payoutRes || !payoutRes.success) {
-      const errorMsg = payoutRes?.message || payoutRes?.raw?.message || 'Pixpay returned an error';
-      console.error('[ADMIN] verify-and-payout - Pixpay call failed:', errorMsg, payoutRes);
-      return res.status(500).json({ 
-        success: false, 
-        error: `Pixpay payout failed: ${errorMsg}`,
-        pixpay_response: payoutRes 
-      });
-    }
-
-    if (payoutRes.transaction_id) {
+    if (payoutRes && payoutRes.transaction_id) {
       const { error: txErr } = await supabase.from('payment_transactions').insert({
         transaction_id: payoutRes.transaction_id,
         provider: 'pixpay',
@@ -3092,138 +2437,12 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
       // mark order as processing; final 'paid' will be set by webhook when provider confirms
       const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
       if (updateErr) console.error('[ADMIN] verify-and-payout - failed updating order payout_status:', updateErr);
-    } else {
-      console.warn('[ADMIN] verify-and-payout - Pixpay returned success but no transaction_id');
     }
 
     return res.json({ success: true, payout: payoutRes });
   } catch (error) {
     console.error('[ADMIN] verify-and-payout error:', error);
     res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-// ---------- Admin Transfers (Withdraw from Pixpay to Wave/Orange Money) ----------
-// GET /api/admin/transfers - List admin transfers history
-app.get('/api/admin/transfers', requireAdmin, async (req, res) => {
-  try {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let db = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-
-    const { data: transfers, error } = await db
-      .from('admin_transfers')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (error) {
-      // Table might not exist yet - return empty array
-      console.warn('[ADMIN] transfers table query error:', error.message);
-      return res.json({ success: true, transfers: [] });
-    }
-
-    return res.json({ success: true, transfers: transfers || [] });
-  } catch (err) {
-    console.error('[ADMIN] list transfers error:', err);
-    res.status(500).json({ success: false, error: String(err) });
-  }
-});
-
-// POST /api/admin/transfers - Create a new admin transfer (withdraw from Pixpay)
-app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
-  try {
-    const { amount, phone, walletType, note } = req.body || {};
-
-    // Validation
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ success: false, error: 'Montant invalide (doit être > 0)' });
-    }
-    if (!phone) {
-      return res.status(400).json({ success: false, error: 'Numéro de téléphone requis' });
-    }
-    if (!walletType || !['wave-senegal', 'orange-senegal'].includes(walletType)) {
-      return res.status(400).json({ success: false, error: 'Type de wallet invalide (wave-senegal ou orange-senegal)' });
-    }
-
-    const adminUserId = req.adminUser?.id || 'admin';
-    const transferId = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-
-    console.log('[ADMIN] Initiating admin transfer:', { transferId, amount, phone, walletType, adminUserId });
-
-    // Execute transfer via PixPay
-    const pixpayResult = await pixpaySendMoney({
-      amount: parseInt(amount),
-      phone,
-      orderId: transferId, // Use transferId as reference
-      type: 'admin_withdrawal',
-      walletType
-    });
-
-    console.log('[ADMIN] PixPay transfer result:', pixpayResult);
-
-    // Use service role to record transfer
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let db = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-
-    // Try to insert into admin_transfers table
-    const transferRecord = {
-      id: transferId,
-      amount: parseInt(amount),
-      phone,
-      wallet_type: walletType,
-      note: note || null,
-      status: pixpayResult.success ? (pixpayResult.state || 'processing') : 'failed',
-      provider_transaction_id: pixpayResult.transaction_id || null,
-      provider_response: pixpayResult.raw || null,
-      created_by: adminUserId,
-      created_at: new Date().toISOString()
-    };
-
-    const { error: insertErr } = await db.from('admin_transfers').insert(transferRecord);
-    if (insertErr) {
-      console.warn('[ADMIN] Failed to record transfer in admin_transfers table:', insertErr.message);
-      // Still return success if PixPay worked
-    }
-
-    // Also record in payment_transactions for unified tracking
-    const { error: txErr } = await db.from('payment_transactions').insert({
-      transaction_id: pixpayResult.transaction_id || transferId,
-      provider: 'pixpay',
-      amount: parseInt(amount),
-      phone,
-      status: pixpayResult.state || 'PENDING1',
-      transaction_type: 'admin_withdrawal',
-      raw_response: pixpayResult.raw,
-      provider_transaction_id: pixpayResult.transaction_id || null
-    });
-    if (txErr) {
-      console.warn('[ADMIN] Failed to record transfer in payment_transactions:', txErr.message);
-    }
-
-    return res.json({
-      success: pixpayResult.success,
-      transfer: {
-        id: transferId,
-        amount,
-        phone,
-        walletType,
-        status: pixpayResult.success ? 'processing' : 'failed',
-        provider_transaction_id: pixpayResult.transaction_id,
-        message: pixpayResult.message
-      },
-      pixpayResult
-    });
-  } catch (err) {
-    console.error('[ADMIN] transfer error:', err);
-    res.status(500).json({ success: false, error: String(err.message || err) });
   }
 });
 
@@ -3234,22 +2453,11 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const { notes, scheduled_at, commission_pct } = req.body || {};
     const createdBy = req.adminUser?.id || null;
 
-    // Prefer the service role client for admin operations to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      console.log('[ADMIN] create payout batch - using service role client');
-    } else {
-      console.warn('[ADMIN] create payout batch - SUPABASE_SERVICE_ROLE_KEY missing; falling back to RLS-bound client (may fail)');
-    }
-
     const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
     if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
     // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
-    const { data: orders, error } = await supabaseAdmin
+    const { data: orders, error } = await supabase
       .from('orders')
       .select('id, vendor_id, total_amount, payment_confirmed_at, status')
       .eq('status', 'delivered')
@@ -3266,17 +2474,10 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
-    // Insert batch (store commission_pct) with explicit 'scheduled' status
-    const { data: batch, error: batchErr } = await supabaseAdmin
+    // Insert batch (store commission_pct)
+    const { data: batch, error: batchErr } = await supabase
       .from('payout_batches')
-      .insert({ 
-        created_by: createdBy, 
-        scheduled_at: scheduled_at || new Date().toISOString(), 
-        total_amount: totalAmount, 
-        notes, 
-        commission_pct: pct,
-        status: 'scheduled'  // Explicit status for process-scheduled to work
-      })
+      .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes, commission_pct: pct })
       .select('*')
       .single();
 
@@ -3285,18 +2486,15 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       throw batchErr || new Error('Failed to create batch');
     }
 
-    console.log('[ADMIN] create payout batch - batch created with id:', batch.id, 'status:', batch.status);
-
-    // Compute commission and net per item and insert items with status 'queued'
+    // Compute commission and net per item and insert items
     const items = orders.map(o => {
       const amount = Number(o.total_amount || 0);
       const commission_amount = Math.round(amount * pct / 100);
       const net_amount = amount - commission_amount;
-      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount, status: 'queued' };
+      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount };
     });
-    console.log('[ADMIN] create payout batch - inserting', items.length, 'items with status queued');
 
-    const { error: itemsErr } = await supabaseAdmin.from('payout_batch_items').insert(items);
+    const { error: itemsErr } = await supabase.from('payout_batch_items').insert(items);
     if (itemsErr) {
       console.error('[ADMIN] create payout batch - insert items error:', itemsErr);
       throw itemsErr;
@@ -3304,7 +2502,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     // Mark orders as scheduled
     const orderIds = orders.map(o => o.id);
-    const { error: updateOrdersErr } = await supabaseAdmin.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
+    const { error: updateOrdersErr } = await supabase.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
     if (updateOrdersErr) {
       console.error('[ADMIN] create payout batch - updating orders error:', updateOrdersErr);
     }
@@ -3312,8 +2510,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     res.json({ success: true, batch });
   } catch (error) {
     console.error('[ADMIN] create payout batch error:', error);
-    const msg = error?.message || (error && typeof error === 'object' ? JSON.stringify(error) : String(error));
-    res.status(500).json({ success: false, error: msg });
+    res.status(500).json({ success: false, error: String(error) });
   }
 });
 
@@ -3396,124 +2593,42 @@ app.get('/api/admin/payout-batches/:id/details', requireAdmin, async (req, res) 
 // Render a printable invoice HTML for a vendor within a batch
 app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) => {
   try {
-    let batchId = req.params.id;
-    const vendorId = req.query.vendorId || req.query.vendor_id || req.query.vendor;
+    const batchId = req.params.id;
+    const vendorId = req.query.vendorId;
     if (!batchId || !vendorId) return res.status(400).send('batch id and vendorId required');
 
-    console.log('[ADMIN] invoice request for batch:', batchId, 'vendorId:', vendorId);
+    const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
-    // Prefer using the service role client for admin invoice queries (bypass RLS)
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let db = supabase; // default (RLS-bound)
-    if (serviceRoleKey) {
-      try {
-        const { createClient } = require('@supabase/supabase-js');
-        db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-        console.log('[ADMIN] invoice - using service role Supabase client for batch lookup');
-      } catch (e) {
-        console.warn('[ADMIN] invoice - failed to create service role client, falling back to current client:', e?.message || e);
-      }
-    } else {
-      console.warn('[ADMIN] invoice - SUPABASE_SERVICE_ROLE_KEY missing; using RLS-bound client (may not see some batch rows)');
-    }
+    if (!batch) return res.status(404).send('Batch not found');
+    if (!vendor) return res.status(404).send('Vendor not found');
 
-    // Try to fetch the batch and vendor-specific items using the chosen client
-    let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    // Include product info from the order (if available) so we can show product names in the invoice
-    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
-    let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
+    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = rows.reduce((s, r) => s + r.net, 0);
 
-    // Fallback: if batch not found, try to find latest batch that contains vendor items
-    if (!batch) {
-      console.warn('[ADMIN] batch not found, attempting fallback lookup by vendor items');
-      const { data: foundItems } = await db.from('payout_batch_items').select('batch_id, created_at').eq('vendor_id', vendorId).order('created_at', { ascending: false }).limit(1);
-      console.log('[ADMIN] fallback lookup result count:', (foundItems || []).length);
-      if (foundItems && foundItems.length > 0 && foundItems[0].batch_id) {
-        batchId = foundItems[0].batch_id;
-        console.log('[ADMIN] fallback found batchId for vendor:', batchId);
-        const q = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-        batch = q.data;
-        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
-        items = it.data || [];
-      }
-    }
-
-    if (!batch) {
-      console.warn('[ADMIN] No batch found after fallback for batchId/vendorId:', req.params.id, vendorId);
-      const hint = process.env.SUPABASE_SERVICE_ROLE_KEY ? '' : ' (possible insufficient DB permissions - SUPABASE_SERVICE_ROLE_KEY missing)';
-      return res.status(404).send('Batch not found for this vendor' + hint);
-    }
-
-    if (!vendor) {
-      console.warn('[ADMIN] vendor not found:', vendorId);
-      return res.status(404).send('Vendor not found');
-    }
-
-    // If the batch exists but contains no items for this vendor, return a clear message
-    if (!items || items.length === 0) {
-      console.warn('[ADMIN] Batch exists but no items for vendor in batch:', batchId, 'vendor:', vendorId);
-      return res.status(404).send('No payout items found for this vendor in the specified batch');
-    }
-
-    // Map rows and extract product name (if present on order.products.name)
-    const rows = (items || []).map(i => {
-      const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
-      return {
-        order_code: i.order?.order_code || '-',
-        product_name: productName || '-',
-        gross: Number(i.amount || 0),
-        commission: Number(i.commission_amount || 0),
-        net: Number(i.net_amount || 0)
-      };
-    });
-
-    // Group products by name and aggregate totals
-    const productGroups = {};
-    for (const r of rows) {
-      const key = r.product_name || '-';
-      if (!productGroups[key]) {
-        productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
-      }
-      productGroups[key].count += 1;
-      productGroups[key].gross += r.gross;
-      productGroups[key].commission += r.commission;
-      productGroups[key].net += r.net;
-    }
-    const groupedRows = Object.values(productGroups);
-
-    const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
-    const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
-    const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = rows.length;
-
-    // Format date for title: "06 Février 2026"
-    const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
-
-    // Simple HTML invoice (grouped by product with sales count)
+    // Simple HTML invoice
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture de paiement du ${capitalizedDate}</title>
+          <title>Invoice - Batch ${batchId}</title>
           <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <h2>Facture de paiement du ${capitalizedDate}</h2>
+          <h2>Facture de paiement - Batch ${batchId}</h2>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
+          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
           <h3>Détails</h3>
           <table>
-            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
             </tfoot>
           </table>
           <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
@@ -3529,223 +2644,20 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
   }
 });
 
-// Vendor endpoint: list payout batches that include items for the authenticated vendor
-app.get('/api/vendor/payout-batches', async (req, res) => {
-  try {
-    // Determine vendor id from Authorization Bearer token (SMS JWT or Supabase token) or query param vendor_id
-    let vendorId = req.query.vendor_id || req.query.vendorId || null;
-    const authHeader = req.headers.authorization || req.headers.Authorization || null;
-
-    if (!vendorId && authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) vendorId = decoded.sub;
-      } catch (e) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) vendorId = user.id;
-        } catch (e2) { /* ignore */ }
-      }
-    }
-
-    if (!vendorId) return res.status(401).json({ success: false, error: 'Vendor authentication required' });
-
-    // Use service role client to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const SUPABASE_URL = process.env.SUPABASE_URL;
-    let db = supabase;
-    if (serviceRoleKey && SUPABASE_URL) {
-      const { createClient } = require('@supabase/supabase-js');
-      db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-
-    // Find batch ids for this vendor
-    const { data: items, error: itemsErr } = await db
-      .from('payout_batch_items')
-      .select('batch_id, created_at')
-      .eq('vendor_id', vendorId)
-      .order('created_at', { ascending: false });
-
-    if (itemsErr) {
-      console.error('[VENDOR] Error fetching payout_batch_items for vendor:', itemsErr);
-      return res.status(500).json({ success: false, error: 'DB error' });
-    }
-
-    console.log('[VENDOR] Found payout_batch_items for vendor:', vendorId, 'items:', items?.length || 0);
-
-    const batchIds = Array.from(new Set((items || []).map(i => i.batch_id).filter(Boolean)));
-    if (batchIds.length === 0) return res.json({ success: true, batches: [] });
-
-    const { data: batches, error: batchesErr } = await db.from('payout_batches').select('*').in('id', batchIds).order('created_at', { ascending: false });
-    if (batchesErr) {
-      console.error('[VENDOR] Error fetching batches:', batchesErr);
-      return res.status(500).json({ success: false, error: 'DB error' });
-    }
-
-    // Optionally enrich batches with item counts and net totals per batch
-    const enriched = [];
-    for (const b of batches || []) {
-      const { data: bItems } = await db.from('payout_batch_items').select('id,amount,commission_amount,net_amount').eq('batch_id', b.id).eq('vendor_id', vendorId);
-      const itemCount = (bItems || []).length;
-      const totalNet = (bItems || []).reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
-      enriched.push({ id: b.id, created_at: b.created_at || b.scheduled_at, total_amount: b.total_amount, status: b.status, item_count: itemCount, total_net: totalNet });
-    }
-
-    return res.json({ success: true, batches: enriched });
-  } catch (err) {
-    console.error('[VENDOR] /api/vendor/payout-batches error:', err);
-    return res.status(500).json({ success: false, error: String(err) });
-  }
-});
-
-// Vendor endpoint: render a printable invoice HTML for a specific batch and vendor
-app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
-  try {
-    const batchId = req.params.id;
-    const authHeader = req.headers.authorization || req.headers.Authorization || null;
-    let vendorId = req.query.vendor_id || req.query.vendorId || null;
-
-    if (!vendorId && authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) vendorId = decoded.sub;
-      } catch (e) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) vendorId = user.id;
-        } catch (e2) { /* ignore */ }
-      }
-    }
-
-    if (!vendorId) return res.status(401).send('Vendor authentication required');
-    if (!batchId) return res.status(400).send('batch id required');
-
-    // Use service role client to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const SUPABASE_URL = process.env.SUPABASE_URL;
-    let db = supabase;
-    if (serviceRoleKey && SUPABASE_URL) {
-      const { createClient } = require('@supabase/supabase-js');
-      db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-
-    const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    // Include product info from order.products to show product names
-    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
-    const { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
-
-    console.log('[VENDOR] Invoice - batch:', batch?.id, 'vendor:', vendor?.full_name, 'items:', items?.length || 0);
-
-    if (!batch) return res.status(404).send('batch_not_found');
-    if (!vendor) return res.status(404).send('vendor_not_found');
-    if (!items || items.length === 0) return res.status(404).send('No payout items found for this vendor in the specified batch');
-
-    const rows = (items || []).map(i => {
-      const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
-      return {
-        order_code: i.order?.order_code || '-',
-        product_name: productName || '-',
-        gross: Number(i.amount || 0),
-        commission: Number(i.commission_amount || 0),
-        net: Number(i.net_amount || 0)
-      };
-    });
-
-    // Group products by name and aggregate totals
-    const productGroups = {};
-    for (const r of rows) {
-      const key = r.product_name || '-';
-      if (!productGroups[key]) {
-        productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
-      }
-      productGroups[key].count += 1;
-      productGroups[key].gross += r.gross;
-      productGroups[key].commission += r.commission;
-      productGroups[key].net += r.net;
-    }
-    const groupedRows = Object.values(productGroups);
-
-    const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
-    const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
-    const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = rows.length;
-
-    // Format date for title: "06 Février 2026"
-    const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
-
-    const html = `<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Facture de paiement du ${capitalizedDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
-        </head>
-        <body>
-          <h2>Facture de paiement du ${capitalizedDate}</h2>
-          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
-          <h3>Détails</h3>
-          <table>
-            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
-            <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
-            </tbody>
-            <tfoot>
-              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
-            </tfoot>
-          </table>
-          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
-          <p>Signature: _________________________</p>
-        </body>
-      </html>`;
-
-    const filename = `facture-paiement-${capitalizedDate.replace(/\s/g, '-')}.html`;
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.send(html);
-  } catch (err) {
-    console.error('[VENDOR-INVOICE] error:', err);
-    return res.status(500).send(String(err));
-  }
-});
-
 // Helper to process a single payout batch (reusable for cron/manual)
 async function processPayoutBatch(batchId) {
   try {
     if (!batchId) return { success: false, error: 'batch id required' };
 
-    // Use service role client to bypass RLS for payout batch operations
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey) {
-      console.error('[ADMIN] processPayoutBatch: SUPABASE_SERVICE_ROLE_KEY missing');
-      return { success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' };
-    }
-    const supabaseAdmin = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    console.log('[ADMIN] processPayoutBatch: Looking for batch:', batchId);
-    const { data: batch, error: batchErr } = await supabaseAdmin.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    console.log('[ADMIN] processPayoutBatch: Batch lookup result:', { batch, batchErr });
-    if (batchErr || !batch) return { success: false, error: 'Batch not found', details: batchErr?.message };
+    const { data: batch, error: batchErr } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    if (batchErr || !batch) return { success: false, error: 'Batch not found' };
     if (batch.status === 'processing') return { success: false, error: 'Batch already processing' };
 
-    await supabaseAdmin.from('payout_batches').update({ status: 'processing' }).eq('id', batchId);
+    await supabase.from('payout_batches').update({ status: 'processing' }).eq('id', batchId);
 
-    // Debug: fetch ALL items regardless of status to see what's in the batch
-    const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('id, order_id, status, vendor_id').eq('batch_id', batchId);
-    console.log('[ADMIN] processPayoutBatch: ALL items in batch:', allItems?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status, vendor_id: i.vendor_id })));
-
-    const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
-    console.log('[ADMIN] processPayoutBatch: Items with queued/failed status:', { count: items?.length || 0, itemsErr, items: items?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status })) });
+    const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
     if (!items || items.length === 0) {
-      console.log('[ADMIN] processPayoutBatch: No items found with queued/failed status - marking batch as completed');
-      await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
+      await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
       return { success: true, message: 'No items to process' };
     }
 
@@ -3754,61 +2666,31 @@ async function processPayoutBatch(batchId) {
     const results = [];
     for (const vendorId of Object.keys(byVendor)) {
       const vendorItems = byVendor[vendorId];
-      console.log('[ADMIN] processPayoutBatch: Processing vendor:', vendorId, 'items:', vendorItems.length);
 
       // Verify each item/order for eligibility and split eligible vs ineligible
       const eligibleItems = [];
       const ineligible = [];
       for (const it of vendorItems) {
         try {
-          const report = await verifyOrderForPayout(it.order_id, supabaseAdmin);
-          console.log('[ADMIN] processPayoutBatch: Order verification:', { order_id: it.order_id, eligible: report.eligible, reasons: report.reasons });
+          const report = await verifyOrderForPayout(it.order_id);
           if (report.ok && report.eligible) {
             eligibleItems.push(it);
           } else {
             ineligible.push({ item: it, reason: report });
           }
         } catch (e) {
-          console.error('[ADMIN] processPayoutBatch: Order verification error:', it.order_id, e);
           ineligible.push({ item: it, reason: { ok: false, error: String(e) } });
         }
       }
 
-      console.log('[ADMIN] processPayoutBatch: Eligible:', eligibleItems.length, 'Ineligible:', ineligible.length);
-
-      // Mark ineligible items - distinguish between already_paid (success) and other failures
+      // Mark ineligible items as failed with reasons
       if (ineligible.length > 0) {
-        const alreadyPaidItems = ineligible.filter(i => i.reason?.reasons?.includes('already_paid'));
-        const failedItems = ineligible.filter(i => !i.reason?.reasons?.includes('already_paid'));
-        
-        // Mark already paid items as 'paid' (they succeeded previously)
-        if (alreadyPaidItems.length > 0) {
-          const paidIds = alreadyPaidItems.map(i => i.item.id);
-          try {
-            await supabaseAdmin.from('payout_batch_items').update({ status: 'paid', provider_response: JSON.stringify({ info: 'already_paid_previously' }) }).in('id', paidIds);
-            console.log('[ADMIN] processPayoutBatch: Marked', paidIds.length, 'items as paid (already paid previously)');
-          } catch (e) {
-            console.error('[ADMIN] failed marking already_paid items:', e);
-          }
+        const ids = ineligible.map(i => i.item.id);
+        try {
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: ineligible.map(i => i.reason) }) }).in('id', ids);
+        } catch (e) {
+          console.error('[ADMIN] failed marking ineligible payout items:', e);
         }
-        
-        // Mark other ineligible items as failed
-        if (failedItems.length > 0) {
-          const failedIds = failedItems.map(i => i.item.id);
-          try {
-            await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: failedItems.map(i => i.reason) }) }).in('id', failedIds);
-          } catch (e) {
-            console.error('[ADMIN] failed marking ineligible payout items:', e);
-          }
-        }
-      }
-
-      // If all items are already paid, consider this vendor as success
-      const alreadyPaidCount = ineligible.filter(i => i.reason?.reasons?.includes('already_paid')).length;
-      if (eligibleItems.length === 0 && alreadyPaidCount === vendorItems.length) {
-        console.log('[ADMIN] processPayoutBatch: All items for vendor', vendorId, 'already paid');
-        results.push({ vendorId, success: true, message: 'all_already_paid' });
-        continue;
       }
 
       if (eligibleItems.length === 0) {
@@ -3818,60 +2700,39 @@ async function processPayoutBatch(batchId) {
 
       // Use net_amount (gross - commission) to compute payout per vendor
       const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
-      console.log('[ADMIN] processPayoutBatch: Total net amount for vendor', vendorId, ':', totalNet);
 
-      const { data: vendor } = await supabaseAdmin.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
-      console.log('[ADMIN] processPayoutBatch: Vendor info:', { vendorId, phone: vendor?.phone, wallet_type: vendor?.wallet_type });
+      const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: failReason });
         continue;
       }
 
       try {
-        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: totalNet, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal' });
         const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
-        console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
 
         if (payoutRes && payoutRes.transaction_id) {
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
+          await supabase.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
           // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
-          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
+          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
           results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
+          await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
         }
       } catch (err) {
         console.error('[ADMIN] payout batch vendor error:', err);
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: String(err) }) }).in('id', eligibleItems.map(i => i.id));
+        await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: String(err) }) }).in('id', eligibleItems.map(i => i.id));
         results.push({ vendorId, success: false, error: String(err) });
       }
     }
 
-    // Determine final batch status:
-    // - If any vendor payout failed completely -> 'failed'
-    // - If all vendor payouts succeeded but items are 'processing' (waiting for webhook) -> 'processing'
-    // - If all items are already 'paid' -> 'completed'
-    const anyFailed = results.some(r => !r.success && r.message !== 'all_already_paid');
-    const anyProcessing = results.some(r => r.success && r.transaction_id); // Has transaction_id = sent to Pixpay, waiting for confirmation
-    const allAlreadyPaid = results.every(r => r.message === 'all_already_paid');
-    
-    let finalStatus = 'completed';
-    if (anyFailed) {
-      finalStatus = 'failed';
-    } else if (anyProcessing) {
-      finalStatus = 'processing'; // Wait for webhook to confirm and set to 'completed'
-    } else if (allAlreadyPaid) {
-      finalStatus = 'completed';
-    }
-    
-    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, anyProcessing, allAlreadyPaid, finalStatus, results });
-    await supabaseAdmin.from('payout_batches').update({ status: finalStatus, processed_at: new Date().toISOString() }).eq('id', batchId);
+    const anyFailed = results.some(r => !r.success);
+    await supabase.from('payout_batches').update({ status: anyFailed ? 'failed' : 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
 
     return { success: true, results };
   } catch (error) {
@@ -3931,43 +2792,43 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
 
       await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
 
-      // If this tx references an order, mark order paid - use supabaseAdmin to bypass RLS
+      // If this tx references an order, mark order paid
       if (tx.order_id) {
-        await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
+        await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
       }
 
-      // If tx references a batch, finalize batch - use supabaseAdmin to bypass RLS
+      // If tx references a batch, finalize batch
       if (tx.batch_id) {
         const batchId = tx.batch_id;
-        const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
+        const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
         if (items && items.length > 0) {
           const itemIds = items.map(i => i.id);
           const orderIds = items.map(i => i.order_id).filter(Boolean);
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+          await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+          if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
         }
-        await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
+        await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
       }
 
       return res.json({ success: true, message: 'transaction finalized', transaction_id });
     }
 
-    // finalize by batch_id - use supabaseAdmin to bypass RLS
+    // finalize by batch_id
     if (batch_id) {
-      const { data: txsBatch } = await supabaseAdmin.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
+      const { data: txsBatch } = await supabase.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
       if (txsBatch && txsBatch.length > 0) {
         const txb = txsBatch[0];
-        await supabaseAdmin.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
+        await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
       }
 
-      const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
+      const { data: items } = await supabase.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
       if (items && items.length > 0) {
         const itemIds = items.map(i => i.id);
         const orderIds = items.map(i => i.order_id).filter(Boolean);
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-        if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+        await supabase.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
+        if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
       }
-      await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
+      await supabase.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
 
       return res.json({ success: true, message: 'batch finalized', batch_id });
     }
@@ -3978,210 +2839,14 @@ app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
   }
 });
 
-// Admin utility: Sync all PENDING1/PENDING2 transactions - check if they actually succeeded
-// This is useful to fix transactions where the webhook didn't update the status
-app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) => {
-  try {
-    console.log('[ADMIN] sync-pending-transactions: Starting...');
-    
-    // Create admin client with service role key to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey) {
-      console.error('[ADMIN] sync-pending-transactions: SUPABASE_SERVICE_ROLE_KEY missing');
-      return res.status(500).json({ success: false, error: 'Server misconfiguration: service role key missing' });
-    }
-    const { createClient: createAdminClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    
-    // Find all transactions with PENDING1 or PENDING2 status
-    const { data: pendingTxs, error: fetchErr } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('*')
-      .in('status', ['PENDING1', 'PENDING2', 'pending', 'processing']);
-    
-    if (fetchErr) {
-      console.error('[ADMIN] sync-pending-transactions: Fetch error:', fetchErr);
-      return res.status(500).json({ success: false, error: fetchErr.message });
-    }
-    
-    if (!pendingTxs || pendingTxs.length === 0) {
-      console.log('[ADMIN] sync-pending-transactions: No pending transactions found');
-      return res.json({ success: true, message: 'No pending transactions to sync', synced: 0 });
-    }
-    
-    console.log('[ADMIN] sync-pending-transactions: Found', pendingTxs.length, 'pending transactions');
-    
-    const results = [];
-    let syncedCount = 0;
-    
-    for (const tx of pendingTxs) {
-      try {
-        // Check the raw_response for the actual status from Pixpay
-        let actualStatus = tx.status;
-        let rawData = null;
-        
-        // Parse raw_response if it's a string
-        if (tx.raw_response) {
-          try {
-            rawData = typeof tx.raw_response === 'string' ? JSON.parse(tx.raw_response) : tx.raw_response;
-          } catch (e) {
-            // ignore parse error
-          }
-        }
-        
-        // Check if the transaction type is a payout and has a response indicating success
-        const txType = tx.transaction_type || '';
-        const isPayout = txType === 'payout' || txType === 'vendor_payout' || txType === 'admin_withdrawal';
-        
-        // For payout transactions with PENDING1, check if they were actually processed
-        // Pixpay payouts with a "response" field like "EFB.xxxxx" typically succeeded
-        if (isPayout && rawData?.data?.response && rawData.data.response.startsWith('EFB.')) {
-          // This is likely a successful payout - check if the order/batch is already marked as paid
-          const orderId = tx.order_id;
-          const batchId = tx.batch_id;
-          
-          // Extract custom_data to get the real order_id for batch payouts
-          let customData = {};
-          if (rawData?.data?.custom_data) {
-            try {
-              customData = JSON.parse(rawData.data.custom_data);
-            } catch (e) {}
-          }
-          const realOrderId = customData.order_id || orderId;
-          
-          // Check if this is an old transaction (more than 30 minutes) - likely succeeded
-          const txAge = Date.now() - new Date(tx.created_at).getTime();
-          const isOld = txAge > 30 * 60 * 1000; // 30 minutes
-          
-          if (isOld) {
-            // Mark as SUCCESSFUL and finalize
-            actualStatus = 'SUCCESSFUL';
-            
-            await supabaseAdmin.from('payment_transactions').update({
-              status: 'SUCCESSFUL',
-              provider_response: { message: 'operation success', synced_at: new Date().toISOString() },
-              updated_at: new Date().toISOString()
-            }).eq('id', tx.id);
-            
-            // If it's an order payout, mark the order as paid
-            if (realOrderId) {
-              const { data: orderExists } = await supabaseAdmin.from('orders').select('id').eq('id', realOrderId).maybeSingle();
-              if (orderExists) {
-                await supabaseAdmin.from('orders').update({ 
-                  payout_status: 'paid', 
-                  payout_paid_at: new Date().toISOString() 
-                }).eq('id', realOrderId);
-              }
-            }
-            
-            // If it's a batch payout, mark batch items and orders as paid
-            if (batchId || (customData.order_id && !orderId)) {
-              const batchIdToUse = batchId || customData.order_id;
-              const { data: batchExists } = await supabaseAdmin.from('payout_batches').select('id').eq('id', batchIdToUse).maybeSingle();
-              if (batchExists) {
-                const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id').eq('batch_id', batchIdToUse);
-                if (items && items.length > 0) {
-                  const itemIds = items.map(i => i.id);
-                  const orderIds = items.map(i => i.order_id).filter(Boolean);
-                  await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-                  if (orderIds.length > 0) {
-                    await supabaseAdmin.from('orders').update({ 
-                      payout_status: 'paid', 
-                      payout_paid_at: new Date().toISOString() 
-                    }).in('id', orderIds);
-                  }
-                }
-                await supabaseAdmin.from('payout_batches').update({ 
-                  status: 'completed', 
-                  processed_at: new Date().toISOString() 
-                }).eq('id', batchIdToUse);
-              }
-            }
-            
-            syncedCount++;
-            results.push({ 
-              id: tx.id, 
-              transaction_id: tx.transaction_id, 
-              old_status: tx.status, 
-              new_status: 'SUCCESSFUL',
-              synced: true 
-            });
-          } else {
-            results.push({ 
-              id: tx.id, 
-              transaction_id: tx.transaction_id, 
-              status: tx.status, 
-              synced: false, 
-              reason: 'Transaction too recent, waiting for webhook' 
-            });
-          }
-        } else {
-          results.push({ 
-            id: tx.id, 
-            transaction_id: tx.transaction_id, 
-            status: tx.status, 
-            synced: false, 
-            reason: 'Not a payout or no EFB response' 
-          });
-        }
-      } catch (txError) {
-        console.error('[ADMIN] sync-pending-transactions: Error processing tx', tx.id, txError);
-        results.push({ 
-          id: tx.id, 
-          transaction_id: tx.transaction_id, 
-          synced: false, 
-          error: String(txError) 
-        });
-      }
-    }
-    
-    console.log('[ADMIN] sync-pending-transactions: Completed. Synced', syncedCount, 'transactions');
-    
-    return res.json({ 
-      success: true, 
-      synced: syncedCount, 
-      total: pendingTxs.length, 
-      results 
-    });
-    
-  } catch (error) {
-    console.error('[ADMIN] sync-pending-transactions error:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
 // Trigger processing of scheduled batches (admin manual trigger)
 app.post('/api/admin/payout-batches/process-scheduled', requireAdmin, async (req, res) => {
   try {
-    console.log('[ADMIN] process-scheduled triggered');
-    
-    // Use service role to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let dbClient = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-    
-    // Find all batches that are scheduled (not yet processed) - regardless of scheduled_at time
-    // The manual button should process all pending batches
-    const { data: batches, error } = await dbClient
-      .from('payout_batches')
-      .select('*')
-      .eq('status', 'scheduled')
-      .limit(100);
-    
-    console.log('[ADMIN] process-scheduled found batches:', batches?.length || 0);
-    
+    const now = new Date().toISOString();
+    const { data: batches, error } = await supabase.from('payout_batches').select('*').lte('scheduled_at', now).eq('status', 'scheduled').limit(100);
     if (error) throw error;
-    
-    if (!batches || batches.length === 0) {
-      return res.json({ success: true, processed: 0, message: 'Aucun batch programmé à traiter' });
-    }
-    
     const summaries = [];
-    for (const b of batches) {
-      console.log('[ADMIN] process-scheduled processing batch:', b.id);
+    for (const b of batches || []) {
       const r = await processPayoutBatch(b.id);
       summaries.push({ batch: b.id, result: r });
     }
@@ -4300,7 +2965,7 @@ if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
 }
 
 
-// Remboursement client (annulation commande) - Créer une demande pour approbation admin
+// Remboursement client (annulation commande)
 app.post('/api/payment/pixpay/refund', async (req, res) => {
   try {
     const { orderId, reason } = req.body;
@@ -4314,30 +2979,8 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
 
     console.log('[REFUND] Demande de remboursement:', { orderId, reason });
 
-    // Utiliser le service role client pour contourner RLS (ou un token utilisateur si fourni)
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const { createClient } = require('@supabase/supabase-js');
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    const supabaseAdmin = serviceRoleKey
-      ? createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } })
-      : (token
-          ? createClient(process.env.SUPABASE_URL, SUPABASE_ANON_KEY, {
-              global: { headers: { Authorization: `Bearer ${token}` } },
-              auth: { autoRefreshToken: false, persistSession: false }
-            })
-          : supabase);
-
-    if (!serviceRoleKey && !token) {
-      console.warn('[REFUND] SUPABASE_SERVICE_ROLE_KEY manquante et aucun token utilisateur fourni');
-      return res.status(500).json({
-        success: false,
-        error: 'Configuration serveur manquante pour annuler la commande (service role ou token requis)'
-      });
-    }
-
     // 1) Récupérer la commande avec les infos de l'acheteur
-    const { data: order, error: orderError } = await supabaseAdmin
+    const { data: order, error: orderError } = await supabase
       .from('orders')
       .select(`
         id, status, total_amount, buyer_id, payment_method,
@@ -4354,195 +2997,23 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       });
     }
 
-    // 2) Vérifier que la commande peut être remboursée (status = paid, in_delivery, ou déjà cancelled)
-    if (!['paid', 'in_delivery', 'cancelled'].includes(order.status)) {
+    // 2) Vérifier que la commande peut être remboursée (status = paid ou in_delivery)
+    if (!['paid', 'in_delivery'].includes(order.status)) {
       return res.status(400).json({
         success: false,
         error: `Impossible de rembourser une commande avec le statut: ${order.status}`
       });
     }
 
-    // 3) Vérifier si une demande n'existe pas déjà
-    const { data: existingRequest } = await supabaseAdmin
-      .from('refund_requests')
-      .select('id, status')
-      .eq('order_id', orderId)
-      .in('status', ['pending', 'approved'])
-      .single();
-
-    if (existingRequest) {
-      // S'assurer que la commande est bien marquée comme annulée
-      if (order.status !== 'cancelled') {
-        const { data: updatedOrder, error: orderUpdateError } = await supabaseAdmin
-          .from('orders')
-          .update({
-            status: 'cancelled',
-            cancelled_at: new Date().toISOString(),
-            cancellation_reason: reason || 'Demande de remboursement par le client'
-          })
-          .eq('id', orderId)
-          .select('id, status')
-          .single();
-
-        if (orderUpdateError || updatedOrder?.status !== 'cancelled') {
-          console.error('[REFUND] Erreur mise à jour commande (existing request):', orderUpdateError);
-          return res.status(500).json({
-            success: false,
-            error: 'Impossible de mettre à jour le statut de la commande'
-          });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        refund_request_id: existingRequest.id,
-        message: 'Une demande de remboursement existe déjà. La commande a été marquée comme annulée.'
-      });
-    }
-
-    // 4) Mettre à jour le statut de la commande à "cancelled"
-    if (order.status !== 'cancelled') {
-      const { data: updatedOrder, error: orderUpdateError } = await supabaseAdmin
-        .from('orders')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-          cancellation_reason: reason || 'Demande de remboursement par le client'
-        })
-        .eq('id', orderId)
-        .select('id, status')
-        .single();
-
-      if (orderUpdateError || updatedOrder?.status !== 'cancelled') {
-        console.error('[REFUND] Erreur mise à jour commande:', orderUpdateError);
-        return res.status(500).json({
-          success: false,
-          error: 'Impossible de mettre à jour le statut de la commande'
-        });
-      }
-    }
-
-    // 5) Créer la demande de remboursement
-    const { data: refundRequest, error: refundError } = await supabaseAdmin
-      .from('refund_requests')
-      .insert({
-        order_id: orderId,
-        buyer_id: order.buyer_id,
-        amount: order.total_amount,
-        reason: reason || 'Non satisfaction client',
-        status: 'pending',
-        requested_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (refundError) {
-      console.error('[REFUND] Erreur création demande:', refundError);
-      return res.status(500).json({
-        success: false,
-        error: 'Erreur lors de la création de la demande de remboursement'
-      });
-    }
-
-    console.log('[REFUND] Demande créée:', refundRequest.id);
-
-    return res.json({
-      success: true,
-      refund_request_id: refundRequest.id,
-      message: `Demande de remboursement soumise. Elle sera examinée par un administrateur.`
-    });
-
-  } catch (error) {
-    console.error('[REFUND] Erreur:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Erreur lors de la demande de remboursement'
-    });
-  }
-});
-
-// [ADMIN] Récupérer toutes les demandes de remboursement
-app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
-  try {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    const { data: refunds, error } = await supabaseAdmin
-      .from('refund_requests')
-      .select(`
-        *,
-        order:orders(id, order_code, products(name)),
-        buyer:profiles!refund_requests_buyer_id_fkey(id, full_name, phone)
-      `)
-      .order('requested_at', { ascending: false });
-
-    if (error) {
-      console.error('[REFUND] Erreur récupération demandes:', error);
-      return res.status(500).json({
-        success: false,
-        error: 'Erreur lors de la récupération des demandes'
-      });
-    }
-
-    return res.json({
-      success: true,
-      refunds: refunds || []
-    });
-
-  } catch (error) {
-    console.error('[REFUND] Erreur:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Erreur serveur'
-    });
-  }
-});
-
-// [ADMIN] Approuver une demande de remboursement et traiter le remboursement
-app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res) => {
-  try {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    const refundId = req.params.id;
-
-    // 1) Récupérer la demande de remboursement
-    const { data: refundRequest, error: refundError } = await supabaseAdmin
-      .from('refund_requests')
-      .select(`
-        *,
-        order:orders(id, status, total_amount, buyer_id, payment_method),
-        buyer:profiles!refund_requests_buyer_id_fkey(phone, wallet_type, full_name)
-      `)
-      .eq('id', refundId)
-      .single();
-
-    if (refundError || !refundRequest) {
-      console.error('[REFUND] Demande non trouvée:', refundError);
-      return res.status(404).json({
-        success: false,
-        error: 'Demande de remboursement non trouvée'
-      });
-    }
-
-    if (refundRequest.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        error: `Cette demande a déjà été traitée (statut: ${refundRequest.status})`
-      });
-    }
-
-    // 2) Récupérer le téléphone et wallet_type de l'acheteur
-    const buyerPhone = refundRequest.buyer?.phone;
-    let walletType = refundRequest.buyer?.wallet_type;
-    
-    if (!walletType && refundRequest.order?.payment_method) {
+    // 3) Récupérer le téléphone et wallet_type de l'acheteur
+    const buyerPhone = order.buyer?.phone;
+    // Déterminer le wallet_type à partir du payment_method de la commande
+    let walletType = order.buyer?.wallet_type;
+    if (!walletType && order.payment_method) {
       // Mapper payment_method vers wallet_type
-      if (refundRequest.order.payment_method === 'wave') {
+      if (order.payment_method === 'wave') {
         walletType = 'wave-senegal';
-      } else if (refundRequest.order.payment_method === 'orange_money') {
+      } else if (order.payment_method === 'orange_money') {
         walletType = 'orange-senegal';
       }
     }
@@ -4561,111 +3032,42 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       });
     }
 
-    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, amount: refundRequest.amount });
+    console.log('[REFUND] Infos acheteur:', { buyerPhone, walletType, amount: order.total_amount });
 
-    // 3) Effectuer le remboursement via PixPay
+    // 4) Effectuer le remboursement via PixPay
     const result = await pixpaySendMoney({
-      amount: refundRequest.amount,
+      amount: order.total_amount,
       phone: buyerPhone,
-      orderId: refundRequest.order_id,
+      orderId: orderId,
       type: 'refund',
       walletType: walletType
     });
 
     console.log('[REFUND] Résultat PixPay:', result);
 
-    // 4) Mettre à jour la demande de remboursement
-    // IMPORTANT: Always update reviewed_at when approve endpoint is called, regardless of pixpay success
-    const newStatus = result.success ? 'processed' : 'approved';
-    const now = new Date().toISOString();
-    
-    console.log('[REFUND] Mise à jour demande:', refundId, 'status:', newStatus, 'reviewed_at:', now);
-    
-    const { data: updatedRefund, error: updateRefundError } = await supabaseAdmin
-      .from('refund_requests')
-      .update({
-        status: newStatus,
-        reviewed_at: now,  // ALWAYS set - this marks refund as reviewed
-        reviewed_by: req.adminUser?.id || req.user?.id || 'admin',
-        processed_at: result.success ? now : null,
-        transaction_id: result.transaction_id || null
-      })
-      .eq('id', refundId)
-      .select()
-      .single();
-
-    if (updateRefundError) {
-      console.error('[REFUND] ❌ Erreur mise à jour demande:', updateRefundError);
-      // Return error to frontend - don't silently fail
-      return res.status(500).json({
-        success: false,
-        error: 'Erreur lors de la mise à jour de la demande de remboursement: ' + updateRefundError.message,
-        details: updateRefundError
-      });
-    } else {
-      console.log('[REFUND] ✅ Demande mise à jour avec succès:', refundId);
-      console.log('[REFUND] Données mises à jour:', updatedRefund);
-    }
-
     // 5) Mettre à jour le statut de la commande
-    console.log('[REFUND] Mise à jour commande:', refundRequest.order_id, 'status: cancelled');
-    
-    // DEBUG: Vérifier que order_id existe et n'est pas null
-    if (!refundRequest.order_id) {
-      console.error('[REFUND] ❌ ERREUR: order_id est NULL ou vide!');
-      console.error('[REFUND] refundRequest.order_id:', refundRequest.order_id);
-      console.error('[REFUND] refundRequest keys:', Object.keys(refundRequest));
-      return res.status(500).json({
-        success: false,
-        error: 'ERREUR CRITIQUE: order_id manquant dans refund_requests',
-        details: {
-          order_id: refundRequest.order_id,
-          keys: Object.keys(refundRequest)
-        }
-      });
-    }
-    
-    const { data: updatedOrder, error: updateOrderError } = await supabaseAdmin
+    const { error: updateError } = await supabase
       .from('orders')
       .update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
-        cancellation_reason: refundRequest.reason || 'Remboursement approuvé par admin'
+        cancellation_reason: reason || 'Remboursement client'
       })
-      .eq('id', refundRequest.order_id)
-      .select()
-      .single();
+      .eq('id', orderId);
 
-    if (updateOrderError) {
-      console.error('[REFUND] ❌ Erreur mise à jour commande:', updateOrderError);
-      console.error('[REFUND] Détails erreur:', {
-        message: updateOrderError.message,
-        code: updateOrderError.code,
-        details: updateOrderError.details,
-        order_id: refundRequest.order_id
-      });
-      // Don't just log - actually return error to frontend so we know what happened
-      return res.status(500).json({
-        success: false,
-        error: 'Erreur lors de la mise à jour du statut de la commande: ' + updateOrderError.message,
-        stage: 'update_order_status',
-        order_id: refundRequest.order_id,
-        details: updateOrderError
-      });
-    } else {
-      console.log('[REFUND] ✅ Commande mise à jour avec succès:', refundRequest.order_id);
-      console.log('[REFUND] Données commande mises à jour:', updatedOrder);
+    if (updateError) {
+      console.error('[REFUND] Erreur mise à jour commande:', updateError);
     }
 
     // 6) Enregistrer la transaction de remboursement
     if (result.transaction_id) {
-      const { error: txError } = await supabaseAdmin
+      const { error: txError } = await supabase
         .from('payment_transactions')
         .insert({
           transaction_id: result.transaction_id,
           provider: 'pixpay',
-          order_id: refundRequest.order_id,
-          amount: refundRequest.amount,
+          order_id: orderId,
+          amount: order.total_amount,
           phone: buyerPhone,
           status: result.state || 'PENDING1',
           transaction_type: 'refund',
@@ -4674,30 +3076,14 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
       if (txError) {
         console.error('[REFUND] Erreur enregistrement transaction:', txError);
-      } else {
-        console.log('[REFUND] ✅ Transaction enregistrée:', result.transaction_id);
       }
-    }
-
-    // 7) Vérifier la mise à jour finale du statut
-    const { data: finalRefund, error: checkError } = await supabaseAdmin
-      .from('refund_requests')
-      .select('status, reviewed_at, processed_at')
-      .eq('id', refundId)
-      .single();
-
-    if (checkError) {
-      console.error('[REFUND] Erreur vérification finale:', checkError);
-    } else {
-      console.log('[REFUND] État final de la demande:', finalRefund);
     }
 
     return res.json({
       success: result.success,
       transaction_id: result.transaction_id,
-      refund_status: finalRefund?.status || 'unknown',
       message: result.success 
-        ? `Remboursement de ${refundRequest.amount} FCFA traité avec succès vers ${buyerPhone}`
+        ? `Remboursement de ${order.total_amount} FCFA initié vers ${buyerPhone}`
         : result.message
     });
 
@@ -4705,80 +3091,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     console.error('[REFUND] Erreur:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erreur lors du traitement du remboursement'
-    });
-  }
-});
-
-// [ADMIN] Rejeter une demande de remboursement
-app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res) => {
-  try {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    const refundId = req.params.id;
-    const { reason } = req.body;
-
-    if (!reason) {
-      return res.status(400).json({
-        success: false,
-        error: 'Raison du rejet requise'
-      });
-    }
-
-    // 1) Récupérer la demande
-    const { data: refundRequest, error: refundError } = await supabaseAdmin
-      .from('refund_requests')
-      .select('id, status')
-      .eq('id', refundId)
-      .single();
-
-    if (refundError || !refundRequest) {
-      return res.status(404).json({
-        success: false,
-        error: 'Demande de remboursement non trouvée'
-      });
-    }
-
-    if (refundRequest.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        error: `Cette demande a déjà été traitée (statut: ${refundRequest.status})`
-      });
-    }
-
-    // 2) Mettre à jour la demande
-    const { error: updateError } = await supabaseAdmin
-      .from('refund_requests')
-      .update({
-        status: 'rejected',
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: req.user?.id || 'admin',
-        rejection_reason: reason
-      })
-      .eq('id', refundId);
-
-    if (updateError) {
-      console.error('[REFUND] Erreur rejet demande:', updateError);
-      return res.status(500).json({
-        success: false,
-        error: 'Erreur lors du rejet de la demande'
-      });
-    }
-
-    console.log('[REFUND] Demande rejetée:', refundId);
-
-    return res.json({
-      success: true,
-      message: 'Demande de remboursement rejetée'
-    });
-
-  } catch (error) {
-    console.error('[REFUND] Erreur:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Erreur lors du rejet'
+      error: error.message || 'Erreur lors du remboursement'
     });
   }
 });
@@ -5031,7 +3344,7 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 
     const { data: order, error: orderErr } = await supabase
       .from('orders')
-      .select('id, order_code, vendor_id, total_amount')
+      .select('id, order_code, vendor_id, total_amount, product:products(name)')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -5054,7 +3367,8 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
     // Envoyer une notification push à chaque admin
     for (const admin of adminUsers) {
       try {
-        await notificationService.sendPushNotificationToUser(admin, 'Livraison à valider', `La commande ${order?.order_code || orderId} a été marquée livrée et demande un paiement vendeur. Merci de vérifier.`, { type: 'admin_review_delivery', orderId });
+        const productLabel = order?.product?.name || order?.order_code || orderId;
+        await notificationService.sendPushNotificationToUser(admin, 'Livraison à valider', `La commande ${productLabel} a été marquée livrée et demande un paiement vendeur. Merci de vérifier.`, { type: 'admin_review_delivery', orderId });
       } catch (e) {
         console.error('[NOTIFY-ADMIN] Erreur notification admin:', e);
       }
@@ -5071,17 +3385,12 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 // Nouvelle version conforme et robuste de la route /api/orders/mark-in-delivery
 app.post('/api/orders/mark-in-delivery', async (req, res) => {
   try {
-    console.log('[MARK-IN-DELIVERY] Request received:', { body: req.body });
-    
     // Accepter les deux formats : orderId et orderId
     const orderId = req.body.orderId || req.body.order_id || req.body.id;
     let deliveryPersonId = req.body.deliveryPersonId || req.body.delivery_person_id || req.body.deliveryPerson || null;
     if (!orderId) {
-      console.log('[MARK-IN-DELIVERY] Missing orderId');
       return res.status(400).json({ success: false, error: 'orderId required' });
     }
-
-    console.log('[MARK-IN-DELIVERY] Processing orderId:', orderId, 'deliveryPersonId:', deliveryPersonId);
 
     // If deliveryPersonId was not provided, try to infer from Authorization bearer token (Supabase session or JWT)
     if (!deliveryPersonId) {
@@ -5104,19 +3413,8 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       }
     }
 
-    // Use service role client to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let dbClient = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      console.log('[MARK-IN-DELIVERY] Using service role client');
-    } else {
-      console.warn('[MARK-IN-DELIVERY] SUPABASE_SERVICE_ROLE_KEY missing - using RLS-bound client');
-    }
-
     // Fetch current order with buyer, delivery person, and product info
-    const { data: order, error: orderErr } = await dbClient
+    const { data: order, error: orderErr } = await supabase
       .from('orders')
       .select(`
         id, status, buyer_id, order_code, delivery_person_id,
@@ -5126,16 +3424,12 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       `)
       .eq('id', orderId)
       .maybeSingle();
-    
-    console.log('[MARK-IN-DELIVERY] Order fetched:', order ? { id: order.id, status: order.status, buyer_phone: order.buyer?.phone } : 'null', 'error:', orderErr);
-    
     if (orderErr || !order) {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
     // Update only if status is assigned or paid (allow starting delivery from 'paid')
     if (!['assigned', 'paid'].includes(order.status)) {
-      console.log('[MARK-IN-DELIVERY] Order status not valid for delivery start:', order.status);
       return res.status(400).json({ 
         success: false, 
         error: 'order_not_assignable',
@@ -5154,17 +3448,12 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       updates.delivery_person_id = deliveryPersonId;
     }
 
-    console.log('[MARK-IN-DELIVERY] Updating order with:', updates);
-
     // Tentative d'update robuste : si une colonne manque dans le schéma (PGRST204),
     // on supprime les clés problématiques et on réessaie.
-    async function safeUpdateOrder(id, updateObj, client) {
+    async function safeUpdateOrder(id, updateObj) {
       try {
-        const { error } = await client.from('orders').update(updateObj).eq('id', id);
-        if (!error) {
-          console.log('[MARK-IN-DELIVERY] Order updated successfully');
-          return { ok: true, used: updateObj, removed: [] };
-        }
+        const { error } = await supabase.from('orders').update(updateObj).eq('id', id);
+        if (!error) return { ok: true, used: updateObj, removed: [] };
 
         const msg = String(error?.message || '');
         console.error('[MARK-IN-DELIVERY] Première tentative update returned error:', error);
@@ -5193,11 +3482,8 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
           return { ok: false, error, removed: missingCols };
         }
 
-        const { error: retryErr } = await client.from('orders').update(cleaned).eq('id', id);
-        if (!retryErr) {
-          console.log('[MARK-IN-DELIVERY] Order updated successfully (retry without missing columns)');
-          return { ok: true, used: cleaned, removed: missingCols };
-        }
+        const { error: retryErr } = await supabase.from('orders').update(cleaned).eq('id', id);
+        if (!retryErr) return { ok: true, used: cleaned, removed: missingCols };
 
         console.error('[MARK-IN-DELIVERY] Retry update failed:', retryErr);
         return { ok: false, error: retryErr, removed: missingCols };
@@ -5207,7 +3493,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       }
     }
 
-    const safeRes = await safeUpdateOrder(orderId, updates, dbClient);
+    const safeRes = await safeUpdateOrder(orderId, updates);
     if (!safeRes.ok) {
       console.error('[MARK-IN-DELIVERY] Erreur update order finale:', safeRes.error || safeRes.exception);
       return res.status(500).json({ 
@@ -5218,7 +3504,6 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     }
 
     // Envoi d'un SMS à l'acheteur avec le numéro du livreur et le nom du produit
-    console.log('[MARK-IN-DELIVERY] Preparing SMS notification...');
     try {
       const buyerPhone = order.buyer?.phone;
       // Si le numéro du livreur n'est pas dans la commande, on va le chercher
@@ -5226,38 +3511,18 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       if (!deliveryPhone && deliveryPersonId) {
         deliveryPhone = await getDeliveryPersonPhone(deliveryPersonId);
       }
-      console.log('[MARK-IN-DELIVERY] SMS data:', { buyerPhone, deliveryPhone, productName: order.product?.name });
-      
       const productName = order.product?.name || 'votre commande';
       if (buyerPhone && deliveryPhone) {
         const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
-        console.log('[MARK-IN-DELIVERY] Sending SMS to buyer:', buyerPhone, 'text:', smsText);
-        const smsResult = await notificationService.sendSMS(buyerPhone, smsText);
-        console.log('[MARK-IN-DELIVERY] SMS result:', smsResult);
-        
-        // Notification push à l'acheteur avec le template
+        await notificationService.sendSMS(buyerPhone, smsText);
+        // Envoi aussi d'une notification push (optionnel)
         if (order.buyer_id) {
-          const { data: buyerTokens } = await dbClient
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', order.buyer_id)
-            .eq('is_active', true);
-
-          if (buyerTokens && buyerTokens.length > 0) {
-            const notif = getNotificationTemplate('ORDER_IN_DELIVERY', {
-              orderCode: order.order_code,
-              deliveryPhone: deliveryPhone,
-              orderId: order.id
-            });
-
-            for (const { token } of buyerTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[MARK-IN-DELIVERY] Notification push envoyée à l\'acheteur');
-          }
+          await notificationService.sendPushNotificationToUser(
+            order.buyer_id, 
+            '🚚 Livraison en cours', 
+            `Votre commande est en cours de livraison. Livreur: ${deliveryPhone}`
+          );
         }
-      } else {
-        console.warn('[MARK-IN-DELIVERY] Missing phone for SMS - buyerPhone:', buyerPhone, 'deliveryPhone:', deliveryPhone);
       }
     } catch (smsErr) {
       console.error('[MARK-IN-DELIVERY] SMS/Push error:', smsErr);
@@ -5342,25 +3607,9 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     const { orderId, deliveredBy } = req.body || {};
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
 
-    console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy });
-
-    // Use service role client to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let dbClient = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      dbClient = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      console.log('[MARK-DELIVERED] Using service role client');
-    }
-
     // Fetch current order
-    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
-    if (orderErr || !order) {
-      console.error('[MARK-DELIVERED] Order not found:', orderErr);
-      return res.status(404).json({ success: false, error: 'order_not_found' });
-    }
-
-    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status });
+    const { data: order, error: orderErr } = await supabase.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code, product:products(name)').eq('id', orderId).maybeSingle();
+    if (orderErr || !order) return res.status(404).json({ success: false, error: 'order_not_found' });
 
     // Update only if status not already delivered
     const updates = { status: 'delivered', delivered_at: new Date().toISOString() };
@@ -5373,59 +3622,14 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
       updates.payout_requested_by = deliveredBy || null;
     }
 
-    console.log('[MARK-DELIVERED] Updating order with:', updates);
-
-    const { error: updateErr } = await dbClient.from('orders').update(updates).eq('id', orderId);
-    if (updateErr) {
-      console.error('[MARK-DELIVERED] Erreur update order:', updateErr);
-      return res.status(500).json({ success: false, error: 'update_failed', details: updateErr.message });
-    }
-
-    console.log('[MARK-DELIVERED] Order updated successfully to delivered');
+    const { error: updateErr } = await supabase.from('orders').update(updates).eq('id', orderId);
+    if (updateErr) console.error('[MARK-DELIVERED] Erreur update order:', updateErr);
 
     // Notify buyer and vendor about completed delivery
     try {
-      // Notification à l'acheteur
-      if (order.buyer_id) {
-        const { data: buyerTokens } = await dbClient
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', order.buyer_id)
-          .eq('is_active', true);
-
-        if (buyerTokens && buyerTokens.length > 0) {
-          const notif = getNotificationTemplate('ORDER_DELIVERED', {
-            orderCode: order.order_code,
-            orderId: order.id
-          });
-
-          for (const { token } of buyerTokens) {
-            await sendPushNotification(token, notif.title, notif.body, notif.data);
-          }
-          console.log('[MARK-DELIVERED] Notification acheteur envoyée');
-        }
-      }
-
-      // Notification au vendeur
-      if (order.vendor_id) {
-        const { data: vendorTokens } = await dbClient
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', order.vendor_id)
-          .eq('is_active', true);
-
-        if (vendorTokens && vendorTokens.length > 0) {
-          const notif = getNotificationTemplate('PAYOUT_REQUESTED', {
-            orderCode: order.order_code,
-            orderId: order.id
-          });
-
-          for (const { token } of vendorTokens) {
-            await sendPushNotification(token, notif.title, notif.body, notif.data);
-          }
-          console.log('[MARK-DELIVERED] Notification vendeur envoyée');
-        }
-      }
+      const productLabel = order?.product?.name || order?.order_code || '';
+      if (order.buyer_id) await notificationService.sendPushNotificationToUser(order.buyer_id, '✅ Livraison effectuée!', `Votre commande ${productLabel} est livrée.`);
+      if (order.vendor_id) await notificationService.sendPushNotificationToUser(order.vendor_id, '✅ Commande livrée', `La commande ${productLabel} a été livrée.`);
     } catch (notifErr) {
       console.error('[MARK-DELIVERED] Notification error:', notifErr);
     }
@@ -5450,7 +3654,7 @@ app.post('/api/admin/sync-delivered-payouts', requireAdmin, async (req, res) => 
   try {
     const { data: orders, error } = await supabase
       .from('orders')
-      .select('id, order_code, status, payout_status, vendor_id')
+      .select('id, order_code, status, payout_status, vendor_id, product:products(name)')
       .eq('status', 'delivered')
       .not('payout_status', 'in', '(requested,scheduled,paid)')
       .limit(1000);
@@ -5475,7 +3679,8 @@ app.post('/api/admin/sync-delivered-payouts', requireAdmin, async (req, res) => 
     for (const o of orders) {
       for (const admin of adminUsers) {
         try {
-          await notificationService.sendPushNotificationToUser(admin, 'Livraison à valider', `La commande ${o.order_code || o.id} est livrée et demande validation pour paiement`, { type: 'admin_review_delivery', orderId: o.id });
+          const productLabel = o?.product?.name || o.order_code || o.id;
+          await notificationService.sendPushNotificationToUser(admin, 'Livraison à valider', `La commande ${productLabel} est livrée et demande validation pour paiement`, { type: 'admin_review_delivery', orderId: o.id });
         } catch (e) {
           console.error('[SYNC-DELIVERED] notify admin failed:', e);
         }
@@ -5515,14 +3720,7 @@ console.log(`[PAYDUNYA] Mode utilisé: ${PAYDUNYA_MODE}`);
 // Créer une commande simple sans facture PayDunya (pour PixPay Orange Money)
 app.post('/api/orders', async (req, res) => {
   try {
-    // Use service role client to bypass RLS for order creation
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey) {
-      console.error('[CREATE-ORDER-SIMPLE] SUPABASE_SERVICE_ROLE_KEY missing');
-      return res.status(500).json({ success: false, message: 'Server misconfiguration' });
-    }
-    const supabaseAdmin = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    
+    const { supabase } = require('./supabase');
     const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address } = req.body;
 
     console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
@@ -5536,7 +3734,7 @@ app.post('/api/orders', async (req, res) => {
     const tokenRaw = crypto.randomBytes(8).toString('hex').toUpperCase();
 
     // Créer la commande dans Supabase (inclure le token sécurisé comme qr_code)
-    const { data: order, error: orderError } = await supabaseAdmin
+    const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
         buyer_id,
@@ -5562,54 +3760,6 @@ app.post('/api/orders', async (req, res) => {
     }
 
     console.log('[CREATE-ORDER-SIMPLE] Commande créée:', order.id);
-
-    // Envoyer une notification au vendeur
-    try {
-      const { data: vendorTokens } = await supabaseAdmin
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', vendor_id)
-        .eq('is_active', true);
-
-      if (vendorTokens && vendorTokens.length > 0) {
-        const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
-          orderCode: order_code,
-          amount: total_amount,
-          orderId: order.id
-        });
-
-        for (const { token } of vendorTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[CREATE-ORDER-SIMPLE] Notification vendeur envoyée');
-      }
-    } catch (notifErr) {
-      console.error('[CREATE-ORDER-SIMPLE] Erreur notification vendeur:', notifErr);
-    }
-
-    // Envoyer une notification à l'acheteur
-    try {
-      const { data: buyerTokens } = await supabaseAdmin
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', buyer_id)
-        .eq('is_active', true);
-
-      if (buyerTokens && buyerTokens.length > 0) {
-        const notif = getNotificationTemplate('ORDER_CREATED', {
-          orderCode: order_code,
-          amount: total_amount,
-          orderId: order.id
-        });
-
-        for (const { token } of buyerTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[CREATE-ORDER-SIMPLE] Notification acheteur envoyée');
-      }
-    } catch (notifErr) {
-      console.error('[CREATE-ORDER-SIMPLE] Erreur notification acheteur:', notifErr);
-    }
 
     return res.json({ 
       success: true, 
@@ -5678,11 +3828,10 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabaseAdmin
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, total_amount, status, vendor_id, product_id, created_at,
             product:products(id, name, price, description),
-            buyer:profiles!orders_buyer_id_fkey(id, address),
-            vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
-            delivery:profiles!orders_delivery_person_id_fkey(id, phone),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
           .eq('buyer_id', userId)
@@ -5694,11 +3843,10 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabase
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, total_amount, status, vendor_id, product_id, created_at,
             product:products(id, name, price, description),
-            buyer:profiles!orders_buyer_id_fkey(id, address),
-            vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
-            delivery:profiles!orders_delivery_person_id_fkey(id, phone),
+            vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type),
+            delivery:profiles!orders_delivery_person_id_fkey(id, full_name, phone),
             qr_code, delivery_person_id
           `)
           .eq('buyer_id', userId)
@@ -5715,14 +3863,6 @@ app.get('/api/buyer/orders', async (req, res) => {
     if (queryError) {
       console.error('[BUYER] Erreur récupération commandes:', queryError);
       return res.status(500).json({ success: false, error: queryError.message || 'Erreur serveur' });
-    }
-
-    // Normalize delivery_address from buyer profile address when available
-    if (Array.isArray(orders)) {
-      orders = orders.map((o) => ({
-        ...o,
-        delivery_address: (o && o.buyer && o.buyer.address) ? o.buyer.address : o.delivery_address
-      }));
     }
 
     // Diagnostics: if an order has delivery_person_id but no delivery profile joined,
@@ -5806,58 +3946,6 @@ app.get('/api/buyer/transactions', async (req, res) => {
     return res.json({ success: true, transactions: data || [] });
   } catch (err) {
     console.error('[BUYER] /api/buyer/transactions error:', err);
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-// GET refund requests for a buyer
-app.get('/api/buyer/refund-requests', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    let buyerId = req.query.buyer_id;
-    let userId = null;
-
-    // 1) Try JWT (SMS sessions)
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) {
-          userId = decoded.sub;
-        }
-      } catch (e) {
-        // not a JWT we issued, try Supabase
-        try {
-          const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-          if (!authErr && user) userId = user.id;
-        } catch (e2) {
-          // ignore
-        }
-      }
-    }
-
-    // fallback to buyer_id query param (dev/test)
-    if (!userId && buyerId) userId = buyerId;
-
-    if (!userId) return res.status(401).json({ success: false, error: 'Authentification requise' });
-
-    console.log('[REFUND] fetching refund requests for buyer:', userId);
-
-    // Récupérer les demandes de remboursement de l'acheteur
-    const { data, error } = await supabase
-      .from('refund_requests')
-      .select('id, order_id, reviewed_at, status')
-      .eq('buyer_id', userId)
-      .order('requested_at', { ascending: false });
-
-    if (error) {
-      console.error('[REFUND] Error fetching refund requests:', error);
-      return res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-
-    return res.json({ success: true, refund_requests: data || [] });
-  } catch (err) {
-    console.error('[REFUND] /api/buyer/refund-requests error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
@@ -5961,54 +4049,6 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
       .eq('id', order.id);
 
     console.log('[CREATE-ORDER] Token mis à jour pour commande', order.id);
-
-    // Envoyer une notification au vendeur
-    try {
-      const { data: vendorTokens } = await supabase
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', vendor_id)
-        .eq('is_active', true);
-
-      if (vendorTokens && vendorTokens.length > 0) {
-        const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
-          orderCode: order_code,
-          amount: total_amount,
-          orderId: order.id
-        });
-
-        for (const { token } of vendorTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[CREATE-ORDER] Notification vendeur envoyée');
-      }
-    } catch (notifErr) {
-      console.error('[CREATE-ORDER] Erreur notification vendeur:', notifErr);
-    }
-
-    // Envoyer une notification à l'acheteur
-    try {
-      const { data: buyerTokens } = await supabase
-        .from('push_tokens')
-        .select('token')
-        .eq('user_id', buyer_id)
-        .eq('is_active', true);
-
-      if (buyerTokens && buyerTokens.length > 0) {
-        const notif = getNotificationTemplate('ORDER_CREATED', {
-          orderCode: order_code,
-          amount: total_amount,
-          orderId: order.id
-        });
-
-        for (const { token } of buyerTokens) {
-          await sendPushNotification(token, notif.title, notif.body, notif.data);
-        }
-        console.log('[CREATE-ORDER] Notification acheteur envoyée');
-      }
-    } catch (notifErr) {
-      console.error('[CREATE-ORDER] Erreur notification acheteur:', notifErr);
-    }
 
     // 4. Retourner la réponse (inclure qr_code généré)
     return res.json({ 
@@ -6407,59 +4447,6 @@ app.post('/api/payment/webhook', async (req, res) => {
       return res.status(500).json({ error: 'Erreur lors de la mise à jour de la commande', details: error });
     }
 
-    // Notifications push (acheteur + vendeur) quand le paiement est confirmé
-    if (status === 'completed' || status === 'success') {
-      try {
-        const { data: orderDetails } = await supabase
-          .from('orders')
-          .select('buyer_id, vendor_id, order_code, total_amount')
-          .eq('id', orderId)
-          .single();
-
-        if (orderDetails) {
-          const { data: buyerTokens } = await supabase
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', orderDetails.buyer_id)
-            .eq('is_active', true);
-
-          if (buyerTokens && buyerTokens.length > 0) {
-            const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
-              orderCode: orderDetails.order_code,
-              amount: orderDetails.total_amount,
-              orderId
-            });
-
-            for (const { token } of buyerTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
-          }
-
-          const { data: vendorTokens } = await supabase
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', orderDetails.vendor_id)
-            .eq('is_active', true);
-
-          if (vendorTokens && vendorTokens.length > 0) {
-            const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
-              orderCode: orderDetails.order_code,
-              amount: orderDetails.total_amount,
-              orderId
-            });
-
-            for (const { token } of vendorTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');
-          }
-        }
-      } catch (notifErr) {
-        console.error('[PAYDUNYA] Erreur notifications paiement:', notifErr);
-      }
-    }
-
     res.status(200).json({ message: 'ok' });
   } catch (err) {
     console.error('Erreur lors du traitement de la notification paiement:', err);
@@ -6543,301 +4530,10 @@ app.post('/api/paydunya/notification', async (req, res) => {
       return res.status(500).json({ error: 'Erreur lors de la mise à jour de la commande', details: error });
     }
 
-    // Notifications push (acheteur + vendeur) quand le paiement est confirmé
-    if (status === 'completed' || status === 'success') {
-      try {
-        const { data: orderDetails } = await supabase
-          .from('orders')
-          .select('buyer_id, vendor_id, order_code, total_amount')
-          .eq('id', orderId)
-          .single();
-
-        if (orderDetails) {
-          const { data: buyerTokens } = await supabase
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', orderDetails.buyer_id)
-            .eq('is_active', true);
-
-          if (buyerTokens && buyerTokens.length > 0) {
-            const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
-              orderCode: orderDetails.order_code,
-              amount: orderDetails.total_amount,
-              orderId
-            });
-
-            for (const { token } of buyerTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
-          }
-
-          const { data: vendorTokens } = await supabase
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', orderDetails.vendor_id)
-            .eq('is_active', true);
-
-          if (vendorTokens && vendorTokens.length > 0) {
-            const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
-              orderCode: orderDetails.order_code,
-              amount: orderDetails.total_amount,
-              orderId
-            });
-
-            for (const { token } of vendorTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');
-          }
-        }
-      } catch (notifErr) {
-        console.error('[PAYDUNYA] Erreur notifications paiement:', notifErr);
-      }
-    }
-
     res.status(200).json({ message: 'ok' });
   } catch (err) {
     console.error('Erreur lors du traitement de la notification paiement:', err);
     res.status(500).json({ error: err.message, details: err.response?.data });
-  }
-});
-
-// Route de succès de paiement avec confettis et facture téléchargeable
-// Accessible en GET /paymentsuccess?order_id=<id>
-// Note: some providers (PixPay/PayDunya) redirect to /payment-success (with hyphen).
-// Add a small compatibility redirect to handle that.
-app.get('/payment-success', (req, res) => {
-  // preserve query string when redirecting
-  const qs = req.originalUrl && req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-  return res.redirect(302, '/paymentsuccess' + qs);
-});
-
-app.get('/paymentsuccess', (req, res) => {
-  const orderId = req.query.order_id || '';
-  const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
-  res.send(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Paiement réussi</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; background: #f7fafc; margin: 0; padding: 0; }
-    h1 { color: #2ecc40; margin-top: 60px; }
-    .confetti { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
-    .btn { display: inline-block; margin-top: 30px; padding: 15px 30px; background: #2ecc40; color: #fff; border: none; border-radius: 8px; font-size: 1.2em; cursor: pointer; text-decoration: none; transition: background 0.2s; }
-    .btn:hover { background: #27ae38; }
-  </style>
-</head>
-<body>
-  <canvas class="confetti"></canvas>
-  <h1>🎉 Paiement réussi !</h1>
-  <p>Merci pour votre commande.</p>
-  <a id="invoiceLink" href="${invoiceUrl}" class="btn ${invoiceUrl === '#' ? 'disabled' : ''}" download>Télécharger la facture</a>
-  <script>
-    (function(){
-      // Confetti animation (defensive)
-      const canvas = document.querySelector('.confetti');
-      const ctx = canvas.getContext && canvas.getContext('2d');
-      if (!ctx) return; // defensive
-      let W = window.innerWidth, H = window.innerHeight;
-      canvas.width = W; canvas.height = H;
-      function rand(min, max){ return Math.random()*(max-min)+min; }
-      let confettis = Array.from({length:120}, () => ({ x: rand(0,W), y: rand(-H,0), r: 6 + Math.random()*8, d: 8 + Math.random()*8, color: 'hsl(' + (Math.random()*360) + ',90%,60%)', tilt: Math.random()*10 - 5 }));
-      function draw(){ ctx.clearRect(0,0,W,H); confettis.forEach(c => { ctx.beginPath(); ctx.ellipse(c.x, c.y, c.r, c.r/2, c.tilt, 0, 2*Math.PI); ctx.fillStyle = c.color; ctx.fill(); }); update(); }
-      function update(){ confettis.forEach(c => { c.y += Math.cos(c.d) + 2 + c.r/8; c.x += Math.sin(0.5) * 2; if (c.y > H) { c.x = Math.random() * W; c.y = -10; } }); }
-      setInterval(draw, 16);
-      window.addEventListener('resize', () => { W = window.innerWidth; H = window.innerHeight; canvas.width = W; canvas.height = H; });
-
-      // Invoice lookup & auto-bind (if redirect doesn't include order_id)
-      async function tryResolveOrder() {
-        try {
-          const params = new URLSearchParams(window.location.search);
-          let orderId = params.get('order_id');
-          const invoiceLink = document.getElementById('invoiceLink');
-
-          function enable(linkHref) {
-            invoiceLink.href = linkHref;
-            invoiceLink.classList.remove('disabled');
-            invoiceLink.setAttribute('download', 'invoice.html');
-          }
-
-          if (orderId && orderId !== '') {
-            enable('/api/orders/' + orderId + '/invoice');
-            return;
-          }
-
-          // Try transaction ids commonly used by providers
-          const tx = params.get('transaction_id') || params.get('transaction') || params.get('txn') || params.get('provider_id') || params.get('provider_transaction_id');
-          if (!tx) return;
-
-          const lookup = await fetch('/api/payment/lookup?transaction_id=' + encodeURIComponent(tx));
-          if (!lookup.ok) return;
-          const data = await lookup.json();
-          if (data && data.order_id) enable('/api/orders/' + data.order_id + '/invoice');
-        } catch (e) {
-          console.warn('Invoice lookup failed:', e);
-        }
-      }
-
-      // On load try resolving
-      tryResolveOrder();
-
-    })();
-  </script>
-  <style>
-    /* simple disabled style for button when invoice unavailable */
-    .btn.disabled { opacity: 0.65; pointer-events: none; }
-  </style>
-</body>
-</html>`);
-});
-
-// Public endpoint: download a simple HTML invoice for an order
-app.get('/api/orders/:id/invoice', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    if (!orderId) return res.status(400).send('order id required');
-
-    // Use service role client to bypass RLS restrictions
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const SUPABASE_URL = process.env.SUPABASE_URL;
-    let sb = supabase;
-    if (serviceRoleKey && SUPABASE_URL) {
-      const { createClient } = require('@supabase/supabase-js');
-      sb = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      console.log('[INVOICE] Using service role client for invoice generation');
-    }
-
-    // First fetch the order
-    const { data: order, error } = await sb
-      .from('orders')
-      .select('id, order_code, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
-      .eq('id', orderId)
-      .maybeSingle();
-
-    if (error) {
-      console.error('[INVOICE] DB error when fetching order:', error);
-      const accept = req.headers.accept || '';
-      if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'DB error' });
-      return res.status(500).send('Database error');
-    }
-
-    if (!order) {
-      console.warn('[INVOICE] Order not found for id:', orderId);
-      const accept = req.headers.accept || '';
-      if (accept.includes('application/json')) return res.status(404).json({ success: false, error: 'Order not found' });
-      return res.status(404).send('Order not found');
-    }
-
-    // Fetch buyer and vendor profiles separately to avoid FK join issues
-    let buyer = null;
-    let vendor = null;
-    let product = null;
-
-    if (order.buyer_id) {
-      const { data: buyerData } = await sb.from('profiles').select('full_name, phone, address').eq('id', order.buyer_id).maybeSingle();
-      buyer = buyerData;
-    }
-
-    if (order.vendor_id) {
-      const { data: vendorData } = await sb.from('profiles').select('company_name, full_name, phone').eq('id', order.vendor_id).maybeSingle();
-      vendor = vendorData;
-    }
-
-    // Try to fetch product info if product_id exists
-    if (order.product_id) {
-      const { data: productData } = await sb.from('products').select('name, code').eq('id', order.product_id).maybeSingle();
-      product = productData;
-    }
-
-    console.log('[INVOICE] Fetched data - buyer:', buyer, 'vendor:', vendor, 'product:', product);
-
-    // Normalize delivery_address to buyer profile address when available
-    const finalAddress = (buyer && buyer.address) ? buyer.address : (order.delivery_address || 'Adresse à définir');
-    const vendorName = vendor?.company_name || vendor?.full_name || 'Vendeur inconnu';
-    const buyerName = buyer?.full_name || 'Acheteur inconnu';
-    const productName = product?.name || 'Produit';
-
-    const rows = [{ product_name: productName, gross: Number(order.total_amount || 0) }];
-    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
-
-    const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Facture de la commande</title>
-    <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
-  </head>
-  <body>
-    <h2>Facture de la commande</h2>
-    <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
-    <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
-    <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
-    <h3>Détails</h3>
-    <table>
-      <thead><tr><th>Produit</th><th>Montant (FCFA)</th></tr></thead>
-      <tbody>
-        ${rows.map(r => `<tr><td>${r.product_name}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
-      </tbody>
-      <tfoot>
-        <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
-      </tfoot>
-    </table>
-    <p><strong>Adresse livraison:</strong> ${finalAddress}</p>
-    <p>Merci pour votre commande.</p>
-  </body>
-</html>`;
-
-    const filename = `facture-commande.html`;
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.send(html);
-  } catch (err) {
-    console.error('[INVOICE] Error generating invoice:', err?.stack || err);
-    const accept = req.headers.accept || '';
-    if (accept.includes('application/json')) return res.status(500).json({ success: false, error: 'Internal server error generating invoice' });
-    return res.status(500).send('Internal server error generating invoice');
-  }
-});
-
-// Lookup endpoint: find order id from a provider/transaction id (used by /paymentsuccess to enable invoice download)
-app.get('/api/payment/lookup', async (req, res) => {
-  try {
-    const { transaction_id, provider_id } = req.query || {};
-    if (!transaction_id && !provider_id) return res.status(400).json({ success: false, error: 'transaction_id or provider_id required' });
-
-    // Try to find a matching payment transaction
-    try {
-      const q = await supabase
-        .from('payment_transactions')
-        .select('order_id,transaction_id,provider_transaction_id')
-        .or(
-          transaction_id ? `transaction_id.eq.${transaction_id}` : 'transaction_id.is.null'
-        )
-        .limit(1);
-
-      let rows = q.data || [];
-
-      if ((!rows || rows.length === 0) && provider_id) {
-        const q2 = await supabase
-          .from('payment_transactions')
-          .select('order_id,transaction_id,provider_transaction_id')
-          .eq('provider_transaction_id', provider_id)
-          .limit(1);
-        rows = q2.data || [];
-      }
-
-      if (!rows || rows.length === 0) return res.status(404).json({ success: false, error: 'not_found' });
-
-      return res.json({ success: true, order_id: rows[0].order_id || null, transaction: rows[0].transaction_id || rows[0].provider_transaction_id });
-    } catch (err) {
-      console.error('[LOOKUP] DB error:', err);
-      return res.status(500).json({ success: false, error: String(err) });
-    }
-  } catch (err) {
-    console.error('[LOOKUP] error:', err);
-    res.status(500).json({ success: false, error: String(err) });
   }
 });
 

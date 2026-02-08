@@ -732,6 +732,19 @@ const BuyerDashboard = () => {
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `buyer_id=eq.${buyerId}` }, payload => {
         console.log('[BuyerDashboard] Realtime order event', payload);
+        try {
+          const newRow = (payload && (payload as any).new) ? (payload as any).new : null;
+          const oldRow = (payload && (payload as any).old) ? (payload as any).old : null;
+          if (newRow && oldRow && oldRow.status !== newRow.status) {
+            if (String(newRow.status) === 'in_delivery') {
+              try { toast({ title: 'En cours', description: 'Votre commande est en cours de livraison.' }); } catch (e) { /* ignore */ }
+            } else if (String(newRow.status) === 'delivered') {
+              try { toast({ title: 'Livrée', description: 'Votre commande a été livrée.' }); } catch (e) { /* ignore */ }
+            }
+          }
+        } catch (e) {
+          console.warn('[BuyerDashboard] realtime handler error', e);
+        }
         fetchOrders();
       })
       // Keep transactions subscription but only trigger a light refresh
