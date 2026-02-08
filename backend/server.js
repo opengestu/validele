@@ -22,7 +22,6 @@ const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
-const { supabase } = require('./supabase');
 
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
@@ -656,7 +655,9 @@ app.post('/api/orders/search', async (req, res) => {
     // Recherche dans la base (order_code ou qr_code, statuts paid/in_delivery)
     const { data, error } = await supabase
       .from('orders')
-      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, wallet_type, company_name)`) 
+      .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
+      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
+      .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
 
     if (error) {
@@ -712,7 +713,7 @@ app.post('/api/delivery/my-orders', async (req, res) => {
       const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
       const { data, error } = await supabaseAdmin
         .from('orders')
-        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, wallet_type, company_name)`)
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
         .eq('delivery_person_id', deliveryPersonId)
         .order('created_at', { ascending: false });
 
@@ -926,15 +927,7 @@ app.get('/api/debug/admin/orders', requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
     const vendorId = req.query.vendor_id;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
-      console.error('[DEBUG] SUPABASE_SERVICE_ROLE_KEY missing - admin debug endpoint requires service role key');
-      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
-    }
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    let q = supabaseAdmin.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
+    let q = supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
     if (vendorId) q = q.eq('vendor_id', vendorId);
     const { data, error } = await q;
     if (error) {
@@ -955,15 +948,7 @@ app.get('/api/debug/admin/orders-audit', requireAdmin, async (req, res) => {
     if (!order_id) return res.status(400).json({ success: false, error: 'order_id query param required' });
 
     const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
-      console.error('[DEBUG] SUPABASE_SERVICE_ROLE_KEY missing - admin debug endpoint requires service role key');
-      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
-    }
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    const { data, error } = await supabaseAdmin.from('orders_audit').select('*').eq('order_id', order_id).order('changed_at', { ascending: false }).limit(limit);
+    const { data, error } = await supabase.from('orders_audit').select('*').eq('order_id', order_id).order('changed_at', { ascending: false }).limit(limit);
     if (error) {
       console.error('[DEBUG] /api/debug/admin/orders-audit supabase error:', error);
       return res.status(500).json({ success: false, error: error.message || 'DB error' });
@@ -981,13 +966,7 @@ app.post('/api/debug/admin/reconcile-payments', requireAdmin, async (req, res) =
   try {
     const reconcileMinutes = parseInt(minutes || process.env.PAYMENT_RECONCILE_MINUTES || '15', 10);
     const threshold = new Date(Date.now() - reconcileMinutes * 60 * 1000).toISOString();
-
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) return res.status(500).json({ error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
-    const { createClient } = require('@supabase/supabase-js');
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    const { data: txs, error } = await supabaseAdmin
+    const { data: txs, error } = await supabase
       .from('payment_transactions')
       .select('*')
       .in('status', ['PENDING1','PENDING2'])
@@ -1897,21 +1876,13 @@ app.post('/api/admin/login', async (req, res) => {
     const expiresIn = Number(loginData.session.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
 
 
-    // Vérification stricte du rôle admin dans profiles (use service role client when available)
+    // Vérification stricte du rôle admin dans profiles
     const { data: userRes } = await supabase.auth.getUser(accessToken);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid credentials' });
 
-    // Use service role key for profile role check to bypass RLS if available
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = null;
-    if (serviceKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    } else {
-      console.warn('[ADMIN] SUPABASE_SERVICE_ROLE_KEY missing - falling back to app client for profile check');
-    }
-    const { data: profile, error: profileErr } = await (supabaseAdmin || supabase)
+    // Vérifier que le profil a bien role = 'admin'
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', user.id)
@@ -1967,15 +1938,9 @@ app.post('/api/admin/refresh', async (req, res) => {
     const { data: userRes } = await supabase.auth.getUser(accessToken);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = null;
-    if (serviceKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
     const adminIdEnv = process.env.ADMIN_USER_ID;
     if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await (supabaseAdmin || supabase).from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
       if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
 
@@ -2006,15 +1971,9 @@ app.get('/api/admin/validate', async (req, res) => {
     const { data: userRes } = await supabase.auth.getUser(token);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = null;
-    if (serviceKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
     const adminIdEnv = process.env.ADMIN_USER_ID;
     if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await (supabaseAdmin || supabase).from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
       if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
     return res.json({ success: true, user });
@@ -2030,14 +1989,8 @@ app.post('/api/admin/login-local', async (req, res) => {
     const { profileId, pin } = req.body || {};
     if (!profileId || !pin) return res.status(400).json({ success: false, error: 'profileId and pin required' });
 
-    // Fetch profile using service role if available
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = null;
-    if (serviceKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    }
-    const { data: profile, error: profileErr } = await (supabaseAdmin || supabase)
+    // Fetch profile
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles')
       .select('id, pin_hash, role')
       .eq('id', profileId)
@@ -2372,7 +2325,7 @@ async function verifyOrderForPayout(orderId) {
   // Vendor info required
   const { data: vendor } = await supabase
     .from('profiles')
-    .select('id, full_name, phone, wallet_type, company_name')
+    .select('id, full_name, phone, wallet_type')
     .eq('id', order.vendor_id)
     .maybeSingle();
 
@@ -2623,7 +2576,7 @@ app.get('/api/admin/payout-batches/:id/details', requireAdmin, async (req, res) 
       if (batchErr) throw batchErr;
       if (!batch) return res.status(404).json({ success: false, error: 'Batch not found' });
 
-      const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type, company_name)').eq('batch_id', batchId).order('id', { ascending: true });
+      const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type)').eq('batch_id', batchId).order('id', { ascending: true });
       if (itemsErr) throw itemsErr;
 
       return res.json({ success: true, batch, items: items || [], usingServiceRole: true, timestamp: new Date().toISOString() });
@@ -2646,7 +2599,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
 
     const { data: batch } = await supabase.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     const { data: items } = await supabase.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
-    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type, company_name').eq('id', vendorId).maybeSingle();
+    const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     if (!batch) return res.status(404).send('Batch not found');
     if (!vendor) return res.status(404).send('Vendor not found');
@@ -2748,7 +2701,7 @@ async function processPayoutBatch(batchId) {
       // Use net_amount (gross - commission) to compute payout per vendor
       const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
 
-      const { data: vendor } = await supabase.from('profiles').select('id, full_name, phone, wallet_type, company_name').eq('id', vendorId).maybeSingle();
+      const { data: vendor } = await supabase.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       if (!vendor || !vendor.phone) {
         const failReason = 'Vendor phone not found';
         await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
@@ -3581,7 +3534,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     try {
       const { data: refreshed, error: refErr } = await supabase
         .from('orders')
-        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, wallet_type, company_name)`)
+        .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, company_name)`)
         .eq('id', orderId)
         .maybeSingle();
       if (!refErr && refreshed) updatedOrder = refreshed;
@@ -3597,7 +3550,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
           } else {
             const { data: refreshed2, error: refErr2 } = await supabase
               .from('orders')
-              .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
+              .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone, company_name)`)
               .eq('id', orderId)
               .maybeSingle();
             if (!refErr2 && refreshed2) updatedOrder = refreshed2;
