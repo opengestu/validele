@@ -3682,6 +3682,84 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
   }
 });
 
+// Acheteur : Générer une facture HTML pour une commande spécifique
+app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let buyerId = null;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) buyerId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) buyerId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+    if (!buyerId) return res.status(401).send('Buyer authentication required');
+    if (!orderId) return res.status(400).send('order id required');
+
+    // Use service role client to bypass RLS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    let db = supabase;
+    if (serviceRoleKey && SUPABASE_URL) {
+      const { createClient } = require('@supabase/supabase-js');
+      db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+
+    // Récupérer la commande et vérifier qu'elle appartient à l'acheteur
+    const { data: order } = await db.from('orders').select('*, products(name, price), vendor:profiles!orders_vendor_id_fkey(full_name, phone, address)').eq('id', orderId).maybeSingle();
+    if (!order) return res.status(404).send('order_not_found');
+    if (String(order.buyer_id) !== String(buyerId)) return res.status(403).send('forbidden: not your order');
+
+    // Générer la facture HTML
+    const product = order.products || {};
+    const vendor = order.vendor || {};
+    const orderDate = new Date(order.created_at);
+    const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
+
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Facture commande du ${capitalizedDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture de commande du ${capitalizedDate}</h2>
+          <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
+          <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <h3>Détails du produit</h3>
+          <table>
+            <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
+            <tbody>
+              <tr><td>${product.name || '-'}</td><td>${(product.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${(order.total_amount || 0).toLocaleString()}</td></tr>
+            </tbody>
+          </table>
+          <p><strong>Total payé:</strong> ${order.total_amount ? order.total_amount.toLocaleString() : 0} FCFA</p>
+          <p>Merci pour votre achat !</p>
+        </body>
+      </html>`;
+
+    const filename = `facture-commande-${capitalizedDate.replace(/\s/g, '-')}.html`;
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(html);
+  } catch (err) {
+    console.error('[BUYER-INVOICE] error:', err);
+    return res.status(500).send(String(err));
+  }
+});
+
 // Helper to process a single payout batch (reusable for cron/manual)
 async function processPayoutBatch(batchId) {
   try {
