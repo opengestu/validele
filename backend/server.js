@@ -2256,6 +2256,21 @@ app.post('/api/admin/logout', async (req, res) => {
   return res.json({ success: true });
 });
 
+// Admin: fetch profiles by ids (admin only)
+app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
+  try {
+    const idsParam = req.query.ids;
+    if (!idsParam) return res.status(400).json({ success: false, error: 'ids query param required' });
+    const ids = String(idsParam).split(',').map(s => s.trim()).filter(Boolean);
+    const { data, error } = await supabase.from('profiles').select('id, full_name, phone, address, company_name, role').in('id', ids);
+    if (error) return res.status(500).json({ success: false, error: error.message || 'DB error' });
+    return res.json({ success: true, profiles: data || [] });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/profiles error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // GET /api/admin/validate - validate current admin session (cookie)
 app.get('/api/admin/validate', async (req, res) => {
   try {

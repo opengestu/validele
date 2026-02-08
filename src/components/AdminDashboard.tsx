@@ -48,6 +48,32 @@ type ProfileRef = {
   address?: string | null;
 };
 
+// Module-level helpers (exported so they can be used by nested components/modals)
+export function displayProfileName(p?: ProfileRef | null, fallback?: string) {
+  if (!p) return fallback || '-';
+  return p.full_name || (p as any).name || `${(p as any).first_name || ''} ${(p as any).last_name || ''}`.trim() || p.phone || fallback || '-';
+}
+
+export function displayProfileAddress(p?: ProfileRef | null, fallback?: string) {
+  if (!p) return fallback || '-';
+  return p.address || fallback || p.phone || '-';
+}
+
+export function displayOrderPerson(o: any, role: 'buyer' | 'vendor' | 'delivery') {
+  try {
+    const p = role === 'buyer' ? o.buyer : role === 'vendor' ? o.vendor : o.delivery;
+    const orderLevelName = (o as any)[`${role}_full_name`] || (o as any)[`${role}_name`];
+    if (orderLevelName) return String(orderLevelName);
+    return displayProfileName(p, undefined);
+  } catch (e) {
+    return '-';
+  }
+}
+
+export function displayOrderAddress(o: any) {
+  return (o && (o.buyer?.address || o.delivery_address)) || displayProfileAddress(o?.buyer) || '-';
+}
+
 type OrderFull = Order & {
   buyer?: ProfileRef | null;
   vendor?: ProfileRef | null;
@@ -215,10 +241,21 @@ const AdminDashboard: React.FC = () => {
   useEffect(() => {
     const checkAdminSession = async () => {
       try {
-        const res = await fetch(apiUrl('/api/admin/validate'), {
-          headers: getAuthHeader(),
+        // First attempt: rely on http-only cookie (preferred)
+        let res = await fetch(apiUrl('/api/admin/validate'), {
           credentials: 'include'
         });
+
+        // If cookie-based validation failed, try Authorization header using cached admin token
+        if (!res.ok) {
+          const cached = localStorage.getItem('admin_token');
+          if (cached) {
+            res = await fetch(apiUrl('/api/admin/validate'), {
+              headers: { Authorization: `Bearer ${cached}` }
+            });
+          }
+        }
+
         if (res.ok) {
           setIsAuthenticated(true);
           setShowAdminLogin(false);
@@ -284,6 +321,43 @@ const AdminDashboard: React.FC = () => {
       try { if (txInterval) clearInterval(txInterval); } catch (e) {}
     };
   }, [isAuthenticated]);
+
+  // Fetch missing buyer/vendor/delivery profiles for orders that lack nested profile details
+  useEffect(() => {
+    if (!isAuthenticated || !orders || orders.length === 0) return;
+    let cancelled = false;
+    const missing = new Set<string>();
+    for (const o of orders) {
+      if ((!o.buyer || !o.buyer.full_name) && o.buyer_id) missing.add(String(o.buyer_id));
+      if ((!o.vendor || !o.vendor.full_name) && o.vendor_id) missing.add(String(o.vendor_id));
+      if ((!o.delivery || !o.delivery.full_name) && o.delivery_person_id) missing.add(String(o.delivery_person_id));
+    }
+    if (missing.size === 0) return;
+
+    (async () => {
+      try {
+        const ids = Array.from(missing).join(',');
+        const res = await fetch(apiUrl(`/api/admin/profiles?ids=${encodeURIComponent(ids)}`), { headers: getAuthHeader(), credentials: 'include' });
+        if (!res.ok) return;
+        const json = await res.json();
+        const profiles = (json.profiles || []) as any[];
+        const map = new Map(profiles.map(p => [p.id, p]));
+        if (cancelled) return;
+        const updated = orders.map(o => {
+          const copy = { ...o } as OrderFull;
+          if ((!copy.buyer || !copy.buyer.full_name) && copy.buyer_id && map.has(copy.buyer_id)) copy.buyer = map.get(copy.buyer_id);
+          if ((!copy.vendor || !copy.vendor.full_name) && copy.vendor_id && map.has(copy.vendor_id)) copy.vendor = map.get(copy.vendor_id);
+          if ((!copy.delivery || !copy.delivery.full_name) && copy.delivery_person_id && map.has(copy.delivery_person_id)) copy.delivery = map.get(copy.delivery_person_id);
+          return copy;
+        });
+        setOrders(updated);
+      } catch (e) {
+        console.warn('[AdminDashboard] fetch missing profiles failed', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [orders, isAuthenticated]);
 
   const getAuthHeader = (): HeadersInit => {
     const adminToken = localStorage.getItem('admin_token');
@@ -543,6 +617,8 @@ const AdminDashboard: React.FC = () => {
       r.rejection_reason?.toLowerCase().includes(q)
     );
   };
+
+  // Profile display helpers are defined at module top and reused here.
 
   // Helper: determine if a refund is truly pending (unreviewed and unprocessed)
   // A refund is pending ONLY if:
@@ -931,8 +1007,12 @@ const AdminDashboard: React.FC = () => {
                   toast({ title: 'Erreur', description: msg, variant: 'destructive' });
                   return;
                 }
-                // Prefer httpOnly cookie set by server; remove legacy admin_token
-                try { localStorage.removeItem('admin_token'); } catch(e) { /* ignore */ }
+                // Prefer httpOnly cookie set by server. If server returns a token, persist as legacy fallback.
+                try {
+                  const token = (json && (json.access_token || json.admin_token)) || null;
+                  if (token) localStorage.setItem('admin_token', token);
+                  else localStorage.removeItem('admin_token');
+                } catch(e) { /* ignore storage errors */ }
                 setIsAuthenticated(true);
                 setShowAdminLogin(false);
                 setAdminEmail(''); setAdminPassword(''); setAdminOtp('');
@@ -1039,10 +1119,10 @@ const AdminDashboard: React.FC = () => {
                       <TableRow key={o.id}>
                         <TableCell className="font-mono text-xs truncate max-w-[80px]" title={o.id}>{o.id.substring(0, 8)}...</TableCell>
                         <TableCell>{o.order_code}</TableCell>
-                        <TableCell>{o.buyer?.full_name || '-'}</TableCell>
-                        <TableCell>{o.vendor?.full_name || '-'}</TableCell>
-                        <TableCell>{o.delivery?.full_name || '-'}</TableCell>
-                        <TableCell>{o.buyer?.address || '-'}</TableCell>
+                        <TableCell>{displayOrderPerson(o, 'buyer')}</TableCell>
+                        <TableCell>{displayOrderPerson(o, 'vendor')}</TableCell>
+                        <TableCell>{displayOrderPerson(o, 'delivery')}</TableCell>
+                        <TableCell>{displayOrderAddress(o)}</TableCell>
                         <TableCell>{o.total_amount?.toLocaleString()} FCFA</TableCell>
                         <TableCell>{o.status}</TableCell>
                         <TableCell>
@@ -1525,7 +1605,7 @@ const AdminDashboard: React.FC = () => {
                       <TableRow key={r.id}>
                         <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
                         <TableCell>{r.order?.order_code || r.order_id}</TableCell>
-                        <TableCell>{r.order?.products?.name || '-'}</TableCell>
+                        <TableCell>{r.order?.products?.name || r.order?.order_code || '-'}</TableCell>
                         <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
                         <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
                         <TableCell>{r.reason || '-'}</TableCell>
@@ -1704,7 +1784,7 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice }:{ batch: Pay
                 {items.map(it => (
                   <TableRow key={it.id}>
                     <TableCell>{it.order?.order_code || it.order_id}</TableCell>
-                    <TableCell>{it.vendor?.full_name || it.vendor_id}</TableCell>
+                    <TableCell>{displayProfileName(it.vendor)}</TableCell>
                     <TableCell>{(it.amount||0).toLocaleString()} FCFA</TableCell>
                     <TableCell>{(it.commission_amount||0).toLocaleString()} FCFA</TableCell>
                     <TableCell>{(it.net_amount||0).toLocaleString()} FCFA</TableCell>
