@@ -864,6 +864,75 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
   }
 });
 
+// List payout batches for a vendor (auth via Bearer JWT or vendor_id query param)
+app.get('/api/vendor/payout-batches', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let vendorId = req.query.vendor_id || req.query.vendorId || null;
+
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) vendorId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) vendorId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+
+    if (!vendorId) return res.status(401).json({ success: false, error: 'Authentification requise (vendor_id ou Bearer token)' });
+
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let items = [];
+
+    if (serviceRoleKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data, error } = await supabaseAdmin
+        .from('payout_batch_items')
+        .select('*, batch:payout_batches(id, created_at, total_amount, status)')
+        .eq('vendor_id', vendorId)
+        .order('id', { ascending: false });
+      if (error) {
+        console.error('[VENDOR] payout-batches admin query error:', error);
+        return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+      }
+      items = data || [];
+    } else {
+      const { data, error } = await supabase
+        .from('payout_batch_items')
+        .select('*, batch:payout_batches(id, created_at, total_amount, status)')
+        .eq('vendor_id', vendorId)
+        .order('id', { ascending: false });
+      if (error) {
+        console.error('[VENDOR] payout-batches query error (RLS):', error);
+        return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+      }
+      items = data || [];
+    }
+
+    // Group by batch
+    const map = new Map();
+    for (const it of items) {
+      const b = it.batch || { id: null, created_at: null, total_amount: null, status: null };
+      const bid = b.id || 'no-batch';
+      const entry = map.get(bid) || { id: b.id, created_at: b.created_at, total_amount: b.total_amount, status: b.status, item_count: 0, total_net: 0 };
+      entry.item_count = (entry.item_count || 0) + 1;
+      entry.total_net = (entry.total_net || 0) + Number(it.net_amount || it.amount || 0);
+      map.set(bid, entry);
+    }
+
+    const batches = Array.from(map.values());
+    return res.json({ success: true, batches });
+  } catch (err) {
+    console.error('[VENDOR] /api/vendor/payout-batches error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 // Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)
 app.post('/api/orders/search', async (req, res) => {
   try {
