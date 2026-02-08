@@ -613,6 +613,8 @@ const QRScanner = () => {
   const [scanSessionId, setScanSessionId] = useState(0);
   // When navigating from DeliveryDashboard with ?autoStart=1 we want to automatically start delivery and show scanner
   const [autoOpenScanner, setAutoOpenScanner] = useState(false);
+  const [scanRequested, setScanRequested] = useState(false);
+  const [autoStartRequested, setAutoStartRequested] = useState(false);
   // Mode pour scanner le QR code vendeur
   const [scanVendorQRMode, setScanVendorQRMode] = useState(false);
 
@@ -643,7 +645,7 @@ const QRScanner = () => {
   };
 
   // Démarrer la livraison (déplacé ici pour éviter "used before its declaration" dans les useEffect)
-  const handleStartDelivery = useCallback(async () => {
+  const handleStartDelivery = useCallback(async (skipNavigate = false) => {
     if (!currentOrder) return;
     if (!user?.id) {
       toast({ title: 'Erreur', description: 'Utilisateur non connecté', variant: 'destructive' });
@@ -697,9 +699,12 @@ const QRScanner = () => {
           description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
         });
 
-        // Rediriger l'utilisateur vers le dashboard Livraison -> onglet En cours (avec order_id pour faciliter la localisation)
+        // Rediriger l'utilisateur vers le dashboard Livraison -> onglet En cours (avec order_id)
+        // Si skipNavigate est vrai, on évite la redirection pour rester sur la page scanner.
         try {
-          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+          if (!skipNavigate) {
+            navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+          }
         } catch (e) {
           console.warn('[QRScanner] navigation to /delivery failed:', e);
         }
@@ -740,7 +745,9 @@ const QRScanner = () => {
         });
 
         try {
-          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+          if (!skipNavigate) {
+            navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+          }
         } catch (e) {
           console.warn('[QRScanner] navigation to /delivery failed (fallback):', e);
         }
@@ -767,8 +774,16 @@ const QRScanner = () => {
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get('orderId');
     const orderCodeParam = params.get('orderCode');
-    const autoStart = params.get('autoStart') || params.get('scan');
-    if (autoStart) setAutoOpenScanner(true);
+    const autoStartParam = params.get('autoStart');
+    const scanParam = params.get('scan') || params.get('openScanner');
+    if (autoStartParam) {
+      setAutoStartRequested(true);
+      setAutoOpenScanner(true);
+    }
+    if (scanParam) {
+      setScanRequested(true);
+      setAutoOpenScanner(true);
+    }
 
     // Helper: try to resolve an order by its code (client first, then backend fallback)
     const resolveByCode = async (code: string) => {
@@ -821,8 +836,8 @@ const QRScanner = () => {
                 return;
               }
 
-              // If paid and autoStart, attempt to start delivery (without auto opening scanner)
-              if (data.status === 'paid' && autoStart) {
+              // If paid and autoStart param requested, attempt to start delivery (without auto opening scanner)
+              if (data.status === 'paid' && autoStartParam) {
                 try {
                   // Use ref-stored handler to avoid recreating the effect when
                   // `handleStartDelivery` identity changes (prevents an infinite loop)
@@ -855,7 +870,7 @@ const QRScanner = () => {
               return;
             }
 
-            if (found.status === 'paid' && autoStart) {
+            if (found.status === 'paid' && autoStartParam) {
               try {
                 await handleStartDeliveryRef.current?.();
                 setOrderModalOpen(true);
@@ -1362,12 +1377,34 @@ const QRScanner = () => {
             toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });
           }
         } else if (currentOrder.status === 'paid') {
-          // Paid: attempt to start delivery (existing behavior)
-          try {
-            await handleStartDelivery();
-            setOrderModalOpen(true);
-          } catch (startErr) {
-            console.warn('Auto-start delivery failed, keeping modal visible:', startErr);
+          // Paid: if navigation requested (autoStart) then start delivery and show modal (legacy behavior).
+          // If the user specifically requested scanning (scanRequested) we should assign the order
+          // but avoid redirecting so we can immediately open the scanner.
+          if (autoStartRequested) {
+            try {
+              await handleStartDelivery();
+              setOrderModalOpen(true);
+            } catch (startErr) {
+              console.warn('Auto-start delivery failed, keeping modal visible:', startErr);
+              setOrderModalOpen(true);
+            }
+          } else if (scanRequested) {
+            try {
+              // assign but do not navigate away
+              await handleStartDelivery(true);
+              // open scanner immediately
+              try {
+                openScannerSafely();
+              } catch (e) {
+                console.warn('[QRScanner] failed to open scanner after silent assign:', e);
+                setOrderModalOpen(true);
+              }
+            } catch (startErr) {
+              console.warn('Silent assign failed, showing modal instead:', startErr);
+              setOrderModalOpen(true);
+            }
+          } else {
+            // default fallback: show modal
             setOrderModalOpen(true);
           }
         } else if (currentOrder.status === 'delivered') {
@@ -1429,7 +1466,7 @@ const QRScanner = () => {
           {currentOrder?.status === 'paid' && (
             <div className="mt-2">
               <p className="text-gray-600 mb-4 text-center">Cliquez sur le bouton ci-dessous pour commencer la livraison</p>
-              <Button onClick={handleStartDelivery} className="w-full bg-primary text-primary-foreground rounded-xl">
+                  <Button onClick={() => handleStartDelivery()} className="w-full bg-primary text-primary-foreground rounded-xl">
                 Commencer à livrer
               </Button>
             </div>

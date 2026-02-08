@@ -889,7 +889,7 @@ const DeliveryDashboard = () => {
               {delivery.status === 'in_delivery' && (
                 <Button
                   className="w-full btn-delivery"
-                  onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}&autoStart=1`)}
+                  onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}&scan=1`)}
                 >
                   Scanner Qrcode Client
                 </Button>
