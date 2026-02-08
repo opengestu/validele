@@ -23,20 +23,6 @@ const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
 
-// Initialize shared Supabase client for server usage
-try {
-  const sup = require('./supabase');
-  // supabase.js exports { supabase }
-  if (sup && sup.supabase) {
-    global.supabase = sup.supabase;
-    console.log('[ADMIN] Supabase client loaded from ./supabase');
-  } else {
-    console.warn('[ADMIN] ./supabase did not export supabase client');
-  }
-} catch (e) {
-  console.warn('[ADMIN] Failed to require ./supabase:', e?.message || e);
-}
-
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
 

@@ -995,58 +995,9 @@ const VendorDashboard = () => {
       .channel(`orders-vendor-${user.id}`)
       .on(
         'postgres_changes',
-        // Listen to all changes on orders and handle only those relevant to this vendor
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload: any) => {
+        { event: '*', schema: 'public', table: 'orders', filter: `vendor_id=eq.${user.id}` },
+        (payload) => {
           console.log('VendorDashboard: Changement orders détecté', payload);
-          try {
-            const eventType = payload?.eventType || payload?.type || payload?.event || (payload?.trigger ? 'UPDATE' : null);
-            const newRow = payload?.new ?? payload?.record ?? null;
-            const oldRow = payload?.old ?? null;
-
-            // If the change concerns this vendor, apply a local, optimistic update to avoid a full refetch
-            const belongsToVendor = newRow ? String(newRow.vendor_id) === String(user.id) : oldRow ? String(oldRow.vendor_id) === String(user.id) : false;
-
-            if (belongsToVendor && newRow) {
-              if (String(eventType).toUpperCase() === 'INSERT') {
-                setOrders(prev => {
-                  try {
-                    if (!prev || !Array.isArray(prev)) return [newRow, ...(prev || [])];
-                    if (prev.some(o => o.id === newRow.id)) return prev;
-                    return [newRow, ...prev];
-                  } catch (e) { return prev; }
-                });
-                fetchTransactions();
-                return;
-              }
-
-              if (String(eventType).toUpperCase() === 'UPDATE') {
-                setOrders(prev => {
-                  try {
-                    if (!prev || !Array.isArray(prev)) return prev;
-                    return prev.map(o => (o.id === newRow.id ? { ...o, ...newRow } : o));
-                  } catch (e) { return prev; }
-                });
-                fetchTransactions();
-                return;
-              }
-
-              if (String(eventType).toUpperCase() === 'DELETE') {
-                setOrders(prev => {
-                  try {
-                    if (!prev || !Array.isArray(prev)) return prev;
-                    return prev.filter(o => o.id !== (oldRow?.id || newRow.id));
-                  } catch (e) { return prev; }
-                });
-                fetchTransactions();
-                return;
-              }
-            }
-          } catch (err) {
-            console.warn('[VendorDashboard] realtime orders handler failed', err);
-          }
-
-          // Fallback: ensure a full fetch for consistency
           fetchOrders();
           fetchTransactions();
         }
