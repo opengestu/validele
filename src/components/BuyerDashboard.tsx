@@ -1954,7 +1954,7 @@ const BuyerDashboard = () => {
                               <button
                                 className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground bg-muted hover:bg-muted/90 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
-                                onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
+                                onClick={() => openInvoiceInModal(`/api/buyer/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                               >
                                 Voir facture
                               </button>

@@ -1,227 +1,4 @@
-// Endpoint: facture d'achat pour un vendeur (commande)
-app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    // Authentification vendeur (JWT ou session)
-    const authHeader = req.headers.authorization;
-    let vendorId = req.query.vendor_id || req.query.vendorId;
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) vendorId = decoded.sub;
-      } catch (e) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) vendorId = user.id;
-        } catch (e2) { /* ignore */ }
-      }
-    }
-    if (!vendorId) return res.status(401).send('Authentification requise');
-
-    // Vérifier que la commande appartient bien à ce vendeur
-    const { data: order, error: orderErr } = await supabase
-      .from('orders')
-      .select('*, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type), products(name, price)')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (orderErr) return res.status(500).send('Erreur DB');
-    if (!order || String(order.vendor_id) !== String(vendorId)) return res.status(404).send('Facture introuvable');
-
-    // Générer la facture d'achat (identique à celle de l'acheteur)
-    function formatFrenchDate(date) {
-      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-      const d = new Date(date);
-      const day = d.getDate().toString().padStart(2, '0');
-      const month = months[d.getMonth()];
-      const year = d.getFullYear();
-      return `${day} ${month} ${year}`;
-    }
-    const factureDate = formatFrenchDate(order.created_at || Date.now());
-    const html = `<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Facture d'achat du ${factureDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
-        </head>
-        <body>
-          <h2>Facture d'achat du ${factureDate}</h2>
-          <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} (${order.buyer?.phone || ''})</p>
-          <p><strong>Adresse:</strong> ${order.buyer?.address || ''}</p>
-          <p><strong>Commande:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${factureDate}</p>
-          <h3>Détails</h3>
-          <table>
-            <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
-            <tbody>
-              <tr><td>${order.products?.name || ''}</td><td>${Number(order.products?.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${Number(order.total_amount || 0).toLocaleString()}</td></tr>
-            </tbody>
-            <tfoot>
-              <tr><th colspan="3">Total</th><th>${Number(order.total_amount || 0).toLocaleString()}</th></tr>
-            </tfoot>
-          </table>
-          <p>Merci pour votre achat !</p>
-        </body>
-      </html>`;
-    res.setHeader('Content-Type', 'text/html');
-    res.send(html);
-  } catch (err) {
-    console.error('[VENDOR] order invoice error:', err);
-    res.status(500).send(String(err));
-  }
-});
-// Endpoint: facture d'achat pour un acheteur (commande)
-app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    // Authentification acheteur (JWT ou session)
-    const authHeader = req.headers.authorization;
-    let buyerId = req.query.buyer_id || req.query.buyerId;
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) buyerId = decoded.sub;
-      } catch (e) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) buyerId = user.id;
-        } catch (e2) { /* ignore */ }
-      }
-    }
-    if (!buyerId) return res.status(401).send('Authentification requise');
-
-    // Vérifier que la commande appartient bien à cet acheteur
-    const { data: order, error: orderErr } = await supabase
-      .from('orders')
-      .select('*, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type), products(name, price)')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (orderErr) return res.status(500).send('Erreur DB');
-    if (!order || String(order.buyer_id) !== String(buyerId)) return res.status(404).send('Facture introuvable');
-
-    // Générer la facture d'achat
-    function formatFrenchDate(date) {
-      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-      const d = new Date(date);
-      const day = d.getDate().toString().padStart(2, '0');
-      const month = months[d.getMonth()];
-      const year = d.getFullYear();
-      return `${day} ${month} ${year}`;
-    }
-    const factureDate = formatFrenchDate(order.created_at || Date.now());
-    const html = `<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Facture d'achat du ${factureDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
-        </head>
-        <body>
-          <h2>Facture d'achat du ${factureDate}</h2>
-          <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} (${order.buyer?.phone || ''})</p>
-          <p><strong>Adresse:</strong> ${order.buyer?.address || ''}</p>
-          <p><strong>Commande:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${factureDate}</p>
-          <h3>Détails</h3>
-          <table>
-            <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
-            <tbody>
-              <tr><td>${order.products?.name || ''}</td><td>${Number(order.products?.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${Number(order.total_amount || 0).toLocaleString()}</td></tr>
-            </tbody>
-            <tfoot>
-              <tr><th colspan="3">Total</th><th>${Number(order.total_amount || 0).toLocaleString()}</th></tr>
-            </tfoot>
-          </table>
-          <p>Merci pour votre achat !</p>
-        </body>
-      </html>`;
-    res.setHeader('Content-Type', 'text/html');
-    res.send(html);
-  } catch (err) {
-    console.error('[BUYER] invoice error:', err);
-    res.status(500).send(String(err));
-  }
-});
-// Endpoint: facture de paiement pour un vendeur (batch)
-app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
-  try {
-    const batchId = req.params.id;
-    // Authentification vendeur (JWT ou session)
-    const authHeader = req.headers.authorization;
-    let vendorId = req.query.vendor_id || req.query.vendorId;
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.sub) vendorId = decoded.sub;
-      } catch (e) {
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) vendorId = user.id;
-        } catch (e2) { /* ignore */ }
-      }
-    }
-    if (!vendorId) return res.status(401).send('Authentification requise');
-
-    // Vérifier que ce batch contient bien des items pour ce vendeur
-    const { data: items, error: itemsErr } = await supabase
-      .from('payout_batch_items')
-      .select('*, batch:payout_batches(*), order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type)')
-      .eq('batch_id', batchId)
-      .eq('vendor_id', vendorId);
-    if (itemsErr) return res.status(500).send('Erreur DB');
-    if (!items || items.length === 0) return res.status(404).send('Facture introuvable');
-
-    const batch = items[0].batch;
-    const vendor = items[0].vendor;
-    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
-    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
-    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
-    const totalNet = rows.reduce((s, r) => s + r.net, 0);
-    function formatFrenchDate(date) {
-      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-      const d = new Date(date);
-      const day = d.getDate().toString().padStart(2, '0');
-      const month = months[d.getMonth()];
-      const year = d.getFullYear();
-      return `${day} ${month} ${year}`;
-    }
-    const factureDate = formatFrenchDate(batch.created_at || batch.scheduled_at || Date.now());
-    const html = `<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Facture de paiement du ${factureDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
-        </head>
-        <body>
-          <h2>Facture de paiement du ${factureDate}</h2>
-          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${factureDate}</p>
-          <h3>Détails</h3>
-          <table>
-            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
-            <tbody>
-              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
-            </tbody>
-            <tfoot>
-              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
-            </tfoot>
-          </table>
-          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
-          <p>Signature: _________________________</p>
-        </body>
-      </html>`;
-    res.setHeader('Content-Type', 'text/html');
-    res.send(html);
-  } catch (err) {
-    console.error('[VENDOR] invoice error:', err);
-    res.status(500).send(String(err));
-  }
-});
-// ...existing code...
+// (Invoice endpoints relocated below after app initialization)
 // backend/server.js
 // INSPECT: server.js - checking DB and routes
 const express = require('express');
@@ -862,6 +639,229 @@ app.get('/api/vendor/transactions', async (req, res) => {
 // Health check endpoint (pour monitoring Render et autres)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// --------------------------
+// Invoice endpoints (vendor/buyer) - placed after app initialization
+// --------------------------
+
+// Endpoint: facture d'achat pour un vendeur (commande)
+app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let vendorId = req.query.vendor_id || req.query.vendorId || null;
+
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) vendorId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) vendorId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+    if (!vendorId) return res.status(401).send('Authentification requise');
+
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('*, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type), products(name, price)')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (orderErr) return res.status(500).send('Erreur DB');
+    if (!order || String(order.vendor_id) !== String(vendorId)) return res.status(404).send('Facture introuvable');
+
+    function formatFrenchDate(date) {
+      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+      const d = new Date(date);
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      return `${day} ${month} ${year}`;
+    }
+    const factureDate = formatFrenchDate(order.created_at || Date.now());
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Facture d'achat du ${factureDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture d'achat du ${factureDate}</h2>
+          <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} (${order.buyer?.phone || ''})</p>
+          <p><strong>Adresse:</strong> ${order.buyer?.address || ''}</p>
+          <p><strong>Commande:</strong> ${order.order_code || order.id}</p>
+          <p><strong>Date:</strong> ${factureDate}</p>
+          <h3>Détails</h3>
+          <table>
+            <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
+            <tbody>
+              <tr><td>${order.products?.name || ''}</td><td>${Number(order.products?.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${Number(order.total_amount || 0).toLocaleString()}</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><th colspan="3">Total</th><th>${Number(order.total_amount || 0).toLocaleString()}</th></tr>
+            </tfoot>
+          </table>
+          <p>Merci pour votre achat !</p>
+        </body>
+      </html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[VENDOR] order invoice error:', err);
+    res.status(500).send(String(err));
+  }
+});
+
+// Endpoint: facture d'achat pour un acheteur (commande)
+app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let buyerId = req.query.buyer_id || req.query.buyerId || null;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) buyerId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) buyerId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+    if (!buyerId) return res.status(401).send('Authentification requise');
+
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('*, buyer:profiles!orders_buyer_id_fkey(id, full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(id, full_name, phone, wallet_type), products(name, price)')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (orderErr) return res.status(500).send('Erreur DB');
+    if (!order || String(order.buyer_id) !== String(buyerId)) return res.status(404).send('Facture introuvable');
+
+    function formatFrenchDate(date) {
+      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+      const d = new Date(date);
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      return `${day} ${month} ${year}`;
+    }
+    const factureDate = formatFrenchDate(order.created_at || Date.now());
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Facture d'achat du ${factureDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture d'achat du ${factureDate}</h2>
+          <p><strong>Acheteur:</strong> ${order.buyer?.full_name || ''} (${order.buyer?.phone || ''})</p>
+          <p><strong>Adresse:</strong> ${order.buyer?.address || ''}</p>
+          <p><strong>Commande:</strong> ${order.order_code || order.id}</p>
+          <p><strong>Date:</strong> ${factureDate}</p>
+          <h3>Détails</h3>
+          <table>
+            <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
+            <tbody>
+              <tr><td>${order.products?.name || ''}</td><td>${Number(order.products?.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${Number(order.total_amount || 0).toLocaleString()}</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><th colspan="3">Total</th><th>${Number(order.total_amount || 0).toLocaleString()}</th></tr>
+            </tfoot>
+          </table>
+          <p>Merci pour votre achat !</p>
+        </body>
+      </html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[BUYER] invoice error:', err);
+    res.status(500).send(String(err));
+  }
+});
+
+// Endpoint: facture de paiement pour un vendeur (batch)
+app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
+  try {
+    const batchId = req.params.id;
+    const authHeader = req.headers.authorization || req.headers.Authorization || null;
+    let vendorId = req.query.vendor_id || req.query.vendorId || null;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.sub) vendorId = decoded.sub;
+      } catch (e) {
+        try {
+          const { data: { user }, error } = await supabase.auth.getUser(token);
+          if (!error && user) vendorId = user.id;
+        } catch (e2) { /* ignore */ }
+      }
+    }
+    if (!vendorId) return res.status(401).send('Authentification requise');
+
+    const { data: items, error: itemsErr } = await supabase
+      .from('payout_batch_items')
+      .select('*, batch:payout_batches(*), order:orders(id, order_code, total_amount), vendor:profiles(id, full_name, phone, wallet_type)')
+      .eq('batch_id', batchId)
+      .eq('vendor_id', vendorId);
+    if (itemsErr) return res.status(500).send('Erreur DB');
+    if (!items || items.length === 0) return res.status(404).send('Facture introuvable');
+
+    const batch = items[0].batch;
+    const vendor = items[0].vendor;
+    const rows = (items || []).map(i => ({ order_code: i.order?.order_code || '-', gross: Number(i.amount || 0), commission: Number(i.commission_amount || 0), net: Number(i.net_amount || 0) }));
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
+    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    function formatFrenchDate(date) {
+      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+      const d = new Date(date);
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      return `${day} ${month} ${year}`;
+    }
+    const factureDate = formatFrenchDate(batch.created_at || batch.scheduled_at || Date.now());
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Facture de paiement du ${factureDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+        </head>
+        <body>
+          <h2>Facture de paiement du ${factureDate}</h2>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <p><strong>Date:</strong> ${factureDate}</p>
+          <h3>Détails</h3>
+          <table>
+            <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr><td>${r.order_code}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr><th>Total</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+            </tfoot>
+          </table>
+          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
+          <p>Signature: _________________________</p>
+        </body>
+      </html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('[VENDOR] invoice error:', err);
+    res.status(500).send(String(err));
+  }
 });
 
 // Recherche robuste d'une commande par code (order_code ou qr_code, statuts, nettoyage)

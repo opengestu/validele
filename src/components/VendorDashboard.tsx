@@ -1628,7 +1628,7 @@ const VendorDashboard = () => {
                         {/* Bouton Voir facture */}
                         <Button
                           size="sm"
-                          onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                          onClick={() => openInvoiceInModal(`/api/vendor/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, true)}
                           className="flex-1 bg-muted text-muted-foreground hover:bg-muted/90"
                         >
                           Voir facture
@@ -2083,7 +2083,7 @@ const VendorDashboard = () => {
                                     {/* Order invoice (public endpoint) - open in modal */}
                                     <Button
                                       size="sm"
-                                      onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                                      onClick={() => openInvoiceInModal(`/api/vendor/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, true)}
                                       className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
                                     >
                                       Voir facture
