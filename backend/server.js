@@ -3888,6 +3888,7 @@ app.get('/api/buyer/orders', async (req, res) => {
 // BUYER: Transactions liées aux commandes de l'acheteur
 app.get('/api/buyer/transactions', async (req, res) => {
   try {
+    const { supabase } = require('./supabase');
     const authHeader = req.headers.authorization;
     let buyerId = req.query.buyer_id;
     let userId = null;
