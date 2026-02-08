@@ -160,6 +160,24 @@ const AdminDashboard: React.FC = () => {
   const [transferNote, setTransferNote] = useState('');
   const [transferProcessing, setTransferProcessing] = useState(false);
 
+  // Background refresh helpers
+  const isRefreshingRef = React.useRef(false);
+  const shallowOrdersEqual = (a: OrderFull[] = [], b: OrderFull[] = []) => {
+    try {
+      if ((a || []).length !== (b || []).length) return false;
+      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      return aKey === bKey;
+    } catch (e) { return false; }
+  };
+  const shallowTransactionsEqual = (a: Transaction[] = [], b: Transaction[] = []) => {
+    try {
+      if ((a || []).length !== (b || []).length) return false;
+      const aKey = (a || []).map(x => `${x.id}:${x.status || ''}:${x.order_id || ''}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status || ''}:${x.order_id || ''}`).sort().join('|');
+      return aKey === bKey;
+    } catch (e) { return false; }
+  };
   // Admin login state - DOIT ÊTRE DÉCLARÉ AVANT LES useEffect
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -230,6 +248,42 @@ const AdminDashboard: React.FC = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile, adminId, isAuthenticated]);
+
+  // Background polling (silent): orders every 1s, transactions every 5s.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let ordersInterval: any = null;
+    let txInterval: any = null;
+
+    // initial silent snapshot
+    fetchOrdersOnly({ silent: true });
+    fetchTransactionsOnly({ silent: true });
+
+    ordersInterval = setInterval(async () => {
+      if (isRefreshingRef.current) return;
+      isRefreshingRef.current = true;
+      try {
+        await fetchOrdersOnly({ silent: true });
+      } catch (e) {
+        console.warn('[AdminDashboard] background orders refresh failed', e);
+      } finally {
+        isRefreshingRef.current = false;
+      }
+    }, 1000);
+
+    txInterval = setInterval(async () => {
+      try {
+        await fetchTransactionsOnly({ silent: true });
+      } catch (e) {
+        console.warn('[AdminDashboard] background transactions refresh failed', e);
+      }
+    }, 5000);
+
+    return () => {
+      try { if (ordersInterval) clearInterval(ordersInterval); } catch (e) {}
+      try { if (txInterval) clearInterval(txInterval); } catch (e) {}
+    };
+  }, [isAuthenticated]);
 
   const getAuthHeader = (): HeadersInit => {
     const adminToken = localStorage.getItem('admin_token');
@@ -596,42 +650,46 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  // Fetch only orders (supports silent option to avoid unnecessary rerenders)
+  const fetchOrdersOnly = async (opts?: { silent?: boolean }) => {
     try {
       const headers = getAuthHeader();
       const oRes = await fetch(apiUrl('/api/admin/orders'), { headers, credentials: 'include' });
       if (oRes.status === 401) {
         setIsAuthenticated(false);
         setShowAdminLogin(true);
-        setLoading(false);
         return;
       }
+      const oJson = await oRes.json();
+      if (oRes.ok) {
+        const fetchedOrders = oJson.orders || [];
+        if (!opts?.silent) {
+          setOrders(fetchedOrders);
+          try { localStorage.setItem('admin_orders', JSON.stringify(fetchedOrders)); } catch(e) { /* ignore cache errors */ }
+        } else {
+          if (!shallowOrdersEqual(orders, fetchedOrders)) setOrders(fetchedOrders);
+        }
+      }
+    } catch (error) {
+      console.warn('[AdminDashboard] fetchOrdersOnly error', error);
+    }
+  };
+
+  // Fetch only transactions (supports silent option); merges orders-as-transactions like fetchData
+  const fetchTransactionsOnly = async (opts?: { silent?: boolean }) => {
+    try {
+      const headers = getAuthHeader();
       const tRes = await fetch(apiUrl('/api/admin/transactions'), { headers, credentials: 'include' });
       if (tRes.status === 401) {
         setIsAuthenticated(false);
         setShowAdminLogin(true);
-        setLoading(false);
         return;
       }
-
-      const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers, credentials: 'include' });
-      const refundsRes = await fetch(apiUrl('/api/admin/refund-requests'), { headers, credentials: 'include' });
-
-      const oJson = await oRes.json();
       const tJson = await tRes.json();
-      const batchesJson = await batchesRes.json();
-      const refundsJson = refundsRes.ok ? await refundsRes.json() : { refunds: [] };
-
-      if (oRes.ok) {
-        const fetchedOrders = oJson.orders || [];
-        setOrders(fetchedOrders);
-        try { localStorage.setItem('admin_orders', JSON.stringify(fetchedOrders)); } catch(e) { /* ignore cache errors */ }
-      }
-      if (tRes.ok && oRes.ok) {
-        // Merge server transactions with orders as synthetic transaction rows for orders missing transactions
-        const serverTxs = tJson.transactions || [];
-        const ordersList = oJson.orders || [];
+      if (tRes.ok) {
+        const serverTxs = tJson.transactions || [] as Transaction[];
+        // use current orders as fallback to synthesize missing txs
+        const ordersList = orders || [];
         const txByOrder = new Set((serverTxs as Transaction[]).map((tx) => tx.order_id));
         const ordersAsTxs = ordersList.filter((o: Order) => !txByOrder.has(o.id)).map((o: Order) => ({
           id: `order-${o.id}`,
@@ -643,12 +701,29 @@ const AdminDashboard: React.FC = () => {
           created_at: ((o as { updated_at?: string }).updated_at) || o.created_at
         }));
         const merged = [...(serverTxs as Transaction[]), ...ordersAsTxs];
-        setTransactions(merged);
-        try { localStorage.setItem('admin_transactions', JSON.stringify(merged)); } catch(e) { /* ignore cache errors */ }
-      } else if (tRes.ok) {
-        setTransactions(tJson.transactions || []);
-        try { localStorage.setItem('admin_transactions', JSON.stringify(tJson.transactions || [])); } catch(e) { /* ignore cache errors */ }
+        if (!opts?.silent) {
+          setTransactions(merged);
+          try { localStorage.setItem('admin_transactions', JSON.stringify(merged)); } catch(e) { /* ignore cache errors */ }
+        } else {
+          if (!shallowTransactionsEqual(transactions, merged)) setTransactions(merged);
+        }
       }
+    } catch (error) {
+      console.warn('[AdminDashboard] fetchTransactionsOnly error', error);
+    }
+  };
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([fetchOrdersOnly(), fetchTransactionsOnly()]);
+
+      const headers = getAuthHeader();
+      const batchesRes = await fetch(apiUrl('/api/admin/payout-batches'), { headers, credentials: 'include' });
+      const refundsRes = await fetch(apiUrl('/api/admin/refund-requests'), { headers, credentials: 'include' });
+
+      const batchesJson = await batchesRes.json();
+      const refundsJson = refundsRes.ok ? await refundsRes.json() : { refunds: [] };
 
       if (batchesRes.ok) {
         setBatches(batchesJson.batches || []);
@@ -1558,7 +1633,7 @@ const AdminDashboard: React.FC = () => {
     
     {/* Modal Invoice Viewer */}
     {invoiceViewerOpen && (
-      <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm">
+      <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center backdrop-blur-sm">
         <div className="bg-white rounded-lg w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col shadow-2xl">
           <div className="p-4 border-b flex items-center justify-between">
             <h3 className="text-lg font-semibold">{invoiceViewerTitle}</h3>

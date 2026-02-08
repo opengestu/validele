@@ -115,6 +115,16 @@ const BuyerDashboard = () => {
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
+
+  const isRefreshingRef = React.useRef(false);
+  const shallowOrdersEqual = (a: Order[] = [], b: Order[] = []) => {
+    try {
+      if ((a || []).length !== (b || []).length) return false;
+      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      return aKey === bKey;
+    } catch (e) { return false; }
+  };
   const isOnline = useNetwork();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
   const [processingPayment, setProcessingPayment] = useState(false);
@@ -139,6 +149,28 @@ const BuyerDashboard = () => {
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   // Ajout d'un état pour stocker l'order_id
   const [orderId, setOrderId] = useState<string | null>(null);
+
+  // Client-side cache settings (short TTL) to speed initial render
+  const ORDERS_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+  // If we have a recent cached orders snapshot, load it immediately to avoid waiting
+  React.useEffect(() => {
+    if (!user?.id || typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(`cached_buyer_orders_${user.id}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const ts = typeof parsed?.ts === 'number' ? parsed.ts : (Array.isArray(parsed) ? Date.now() : 0);
+      if (Date.now() - ts > ORDERS_CACHE_TTL) return;
+      const cachedOrders = Array.isArray(parsed.orders) ? parsed.orders : (Array.isArray(parsed) ? parsed : null);
+      if (cachedOrders) {
+        setOrders(cachedOrders as Order[]);
+        console.log('[BuyerDashboard] Loaded cached orders for immediate render');
+      }
+    } catch (e) {
+      // ignore cache errors
+    }
+  }, [user?.id]);
 
   // Invoice viewer modal states (buyer)
   const [invoiceViewerOpen, setInvoiceViewerOpen] = useState(false);
@@ -241,10 +273,12 @@ const BuyerDashboard = () => {
   const [paymentWebViewUrl, setPaymentWebViewUrl] = useState('');
 
   // Fonction pour charger les commandes de l'acheteur (doit être dans le composant pour accéder à user, setOrders...)
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
     if (!user && !smsSessionStr) return;
-    setOrdersLoading(true);
+    if (opts?.silent && isRefreshingRef.current) return;
+    if (opts?.silent) isRefreshingRef.current = true;
+    if (!opts?.silent) setOrdersLoading(true);
     try {
       const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) {
@@ -348,8 +382,12 @@ const BuyerDashboard = () => {
       const cacheKey = `cached_buyer_orders_${buyerId}`;
       try {
         if (normalizedOrders.length > 0) {
-          localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() }));
-          setOrders(normalizedOrders);
+          try { if (!opts?.silent) localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() })); } catch (e) { /* ignore */ }
+          if (!opts?.silent) {
+            setOrders(normalizedOrders);
+          } else {
+            if (!shallowOrdersEqual(orders, normalizedOrders)) setOrders(normalizedOrders);
+          }
         } else {
           // Si la réponse est vide, tenter d'utiliser le cache récent (<5min)
           const raw = localStorage.getItem(cacheKey);
@@ -357,20 +395,24 @@ const BuyerDashboard = () => {
             const parsed = JSON.parse(raw);
             if (parsed && parsed.orders && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
               console.warn('[BUYER] backend returned empty orders — using cached orders to avoid flicker');
-              setOrders(parsed.orders as Order[]);
+              if (!opts?.silent) setOrders(parsed.orders as Order[]);
+              else if (!shallowOrdersEqual(orders, parsed.orders)) setOrders(parsed.orders as Order[]);
               // Schedule a quick retry to get fresh data
               setTimeout(() => { fetchOrders(); }, 2000);
             } else {
               // Cache stale or absent — clear orders
-              setOrders([]);
+              if (!opts?.silent) setOrders([]);
             }
           } else {
-            setOrders([]);
+            if (!opts?.silent) setOrders([]);
           }
         }
       } catch (e) {
         console.warn('[BUYER] cache error:', e);
-        setOrders(normalizedOrders);
+        if (!opts?.silent) setOrders(normalizedOrders);
+        else if (!shallowOrdersEqual(orders, normalizedOrders)) setOrders(normalizedOrders);
+      } finally {
+        if (opts?.silent) isRefreshingRef.current = false;
       }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
@@ -1550,7 +1592,7 @@ const BuyerDashboard = () => {
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
-        <div className="fixed inset-0 z-[100] bg-black bg-opacity-50 flex items-center justify-center backdrop-blur-sm">
+        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center backdrop-blur-sm">
           <div className="flex flex-col items-center gap-4 bg-white rounded-lg px-8 py-6 shadow-xl">
             <Spinner size="xl" />
             <span className="text-lg font-semibold text-gray-700">Paiement en cours...</span>
@@ -2368,7 +2410,7 @@ const BuyerDashboard = () => {
 
       {/* Modal de résultat de recherche produit */}
       {searchModalOpen && searchResult && (
-        <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
             <div className="p-6 border-b flex items-center justify-between">
               <h3 className="text-xl font-bold flex items-center gap-2">

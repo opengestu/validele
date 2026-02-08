@@ -697,6 +697,13 @@ const QRScanner = () => {
           description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
         });
 
+        // Rediriger l'utilisateur vers le dashboard Livraison -> onglet En cours (avec order_id pour faciliter la localisation)
+        try {
+          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+        } catch (e) {
+          console.warn('[QRScanner] navigation to /delivery failed:', e);
+        }
+
       } catch (backendErr) {
         console.warn('Backend mark-in-delivery failed, falling back to client update', backendErr);
         const { error } = await supabase
@@ -731,6 +738,12 @@ const QRScanner = () => {
           title: 'Commande récupérée',
           description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
         });
+
+        try {
+          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
+        } catch (e) {
+          console.warn('[QRScanner] navigation to /delivery failed (fallback):', e);
+        }
       }
     } catch (error) {
       console.error('Erreur lors du démarrage de la livraison:', error);
@@ -951,7 +964,7 @@ const QRScanner = () => {
         // Si backend répond mais pas de commande
         toast({
           title: "Commande non trouvée",
-          description: `Aucune commande trouvée avec ce code (client + backend). Vérifiez le statut et le code.`,
+          description: `Aucune commande trouvée avec ce code. Vérifiez le code et le statut.`,
           variant: "destructive",
         });
       } catch (e) {
@@ -1333,7 +1346,17 @@ const QRScanner = () => {
         // If the order is already in_delivery and assigned to *this* user, show modal
         if (currentOrder.status === 'in_delivery') {
           if (String(currentOrder.delivery_person_id) === String(user.id)) {
-            setOrderModalOpen(true);
+            // If autoOpenScanner requested, open the scanner directly instead of showing the modal
+            if (autoOpenScanner) {
+              try {
+                openScannerSafely();
+              } catch (e) {
+                console.warn('[QRScanner] auto open scanner failed, falling back to modal', e);
+                setOrderModalOpen(true);
+              }
+            } else {
+              setOrderModalOpen(true);
+            }
           } else {
             // Order is in delivery by another person — inform and do not open scanner
             toast({ title: 'Commande non disponible', description: 'Cette commande est déjà prise en charge par un autre livreur.', variant: 'destructive' });

@@ -228,6 +228,64 @@ const VendorDashboard = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [pageLoading, setPageLoading] = useState<boolean>(true);
+
+  const isRefreshingRef = React.useRef(false);
+  const shallowOrdersEqual = (a: Order[] = [], b: Order[] = []) => {
+    try {
+      if ((a || []).length !== (b || []).length) return false;
+      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      return aKey === bKey;
+    } catch (e) { return false; }
+  }; 
+
+  // Client-side cache settings (short TTL) to speed initial render
+  const VENDOR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+  // Immediate load cached snapshots for orders/products/transactions when fresh
+  React.useEffect(() => {
+    const id = smsUser?.id || (user as any)?.id || (effectiveUser as any)?.id;
+    if (!id || typeof window === 'undefined') return;
+    try {
+      const rawOrders = localStorage.getItem(`cached_orders_${id}`);
+      if (rawOrders) {
+        const parsed = JSON.parse(rawOrders);
+        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
+        const maybeOrders = Array.isArray(parsed.orders) ? parsed.orders : (Array.isArray(parsed) ? parsed : null);
+        if (maybeOrders && Date.now() - ts <= VENDOR_CACHE_TTL) {
+          setOrders(maybeOrders as Order[]);
+          console.log('[VendorDashboard] Loaded cached orders for immediate render');
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const rawProducts = localStorage.getItem(`cached_products_${id}`);
+      if (rawProducts) {
+        const parsed = JSON.parse(rawProducts);
+        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
+        const maybeProducts = Array.isArray(parsed.products) ? parsed.products : (Array.isArray(parsed) ? parsed : null);
+        if (maybeProducts && Date.now() - ts <= VENDOR_CACHE_TTL) {
+          setProducts(maybeProducts as Product[]);
+          console.log('[VendorDashboard] Loaded cached products for immediate render');
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const rawTx = localStorage.getItem(`cached_transactions_${id}`);
+      if (rawTx) {
+        const parsed = JSON.parse(rawTx);
+        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
+        const maybeTx = Array.isArray(parsed.transactions) ? parsed.transactions : null;
+        if (maybeTx && Date.now() - ts <= VENDOR_CACHE_TTL) {
+          setTransactions(maybeTx as any);
+          console.log('[VendorDashboard] Loaded cached transactions for immediate render');
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }, [user, smsUser]);
+
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -430,9 +488,11 @@ const VendorDashboard = () => {
     };
   }, []);
   // Nouvelle version : toujours utiliser le backend pour les commandes (comme BuyerDashboard)
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const caller = smsUser || user;
     if (!caller) return;
+    if (opts?.silent && isRefreshingRef.current) return;
+    if (opts?.silent) isRefreshingRef.current = true;
     console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable });
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
@@ -522,9 +582,18 @@ const VendorDashboard = () => {
         console.warn('[VendorDashboard] fetchOrders buyer name enrichment failed', e);
       }
 
-      setOrders(filtered);
-      console.log('[VendorDashboard] fetchOrders success', filtered.length);
-      try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
+      if (!opts?.silent) {
+        setOrders(filtered);
+        console.log('[VendorDashboard] fetchOrders success', filtered.length);
+        try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify({ orders: filtered, ts: Date.now() })); } catch (e) { /* ignore */ }
+      } else {
+        // silent poll: update only if changed
+        try {
+          if (!shallowOrdersEqual(orders, filtered)) setOrders(filtered);
+          // do not write cache on silent polls
+        } catch (e) { /* ignore */ }
+      }
+      if (opts?.silent) isRefreshingRef.current = false; 
     } catch (error: any) {
       const msg = (error && error.message) ? String(error.message) : String(error);
       if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
@@ -536,10 +605,13 @@ const VendorDashboard = () => {
       try {
         const cached = localStorage.getItem(`cached_orders_${caller?.id}`);
         if (cached) {
-          const parsed = JSON.parse(cached) as Order[];
-          setOrders(parsed);
-          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
-          return;
+          const parsed = JSON.parse(cached);
+          const data = Array.isArray(parsed) ? parsed : (parsed?.orders ?? null);
+          if (data && Array.isArray(data)) {
+            setOrders(data as Order[]);
+            toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
+            return;
+          }
         }
       } catch (e) { /* ignore */ }
       console.error('[VendorDashboard] fetchOrders error', error);
@@ -607,17 +679,21 @@ const VendorDashboard = () => {
       })) as Product[];
 
       if (mappedData.length > 0) {
-        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
+        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify({ products: mappedData, ts: Date.now() })); } catch (e) { /* ignore */ }
         setProducts(mappedData);
       } else {
         // Empty result: try using recent cache (<5m) and schedule a quick retry
         try {
           const raw = localStorage.getItem(`cached_products_${caller.id}`);
           if (raw) {
-            const parsed = JSON.parse(raw) as Product[];
-            // no ts on old cache -> accept it
-            setProducts(parsed);
-            setTimeout(() => { fetchProducts(); }, 2000);
+            const parsed = JSON.parse(raw);
+            const data = Array.isArray(parsed) ? parsed : (parsed?.products ?? null);
+            if (data && Array.isArray(data)) {
+              setProducts(data as Product[]);
+              setTimeout(() => { fetchProducts(); }, 2000);
+            } else {
+              setProducts([]);
+            }
           } else {
             setProducts([]);
           }

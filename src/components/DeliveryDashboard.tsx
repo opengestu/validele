@@ -84,6 +84,28 @@ const DeliveryDashboard = () => {
       phone: ''
     }
   );
+  // Highlight an order id coming from navigation (e.g., ?order_id=...)
+  const [highlightOrderId, setHighlightOrderId] = useState<string | null>(null);
+
+  // Client-side cache settings to speed up initial render (short TTL)
+  const DELIVERIES_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+  // If we have a recent cached deliveries snapshot, load it immediately to avoid waiting
+  React.useEffect(() => {
+    if (!user?.id || typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(`cached_deliveries_${user.id}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.ts !== 'number') return;
+      if (Date.now() - parsed.ts > DELIVERIES_CACHE_TTL) return;
+      if (Array.isArray(parsed.myDeliveries)) setMyDeliveries(parsed.myDeliveries);
+      if (Array.isArray(parsed.deliveries)) setDeliveries(parsed.deliveries);
+      console.log('[DeliveryDashboard] Loaded cached deliveries for immediate render');
+    } catch (e) {
+      // ignore cache errors
+    }
+  }, [user?.id]);
 
   // Controlled tab state from URL query param (supports ?tab=in_progress|completed|profile)
   const location = useLocation();
@@ -97,8 +119,17 @@ const DeliveryDashboard = () => {
   React.useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tab = params.get('tab');
+    const orderId = params.get('order_id');
     if (tab && ['in_progress','completed','profile'].includes(tab)) {
       setActiveTab(tab as any);
+    }
+    // If an order_id is provided in the URL we want to highlight/scroll to it
+    if (orderId) {
+      setHighlightOrderId(orderId);
+      // If the tab isn't already in_progress, switch there so the order is visible
+      if (tab !== 'in_progress') {
+        setActiveTab('in_progress');
+      }
     }
   }, [location.search]);
 
@@ -165,10 +196,54 @@ const DeliveryDashboard = () => {
     fetchOrCreateProfile();
   }, [user]);
 
+  // When deliveries update, scroll to a highlighted order id (if present in the URL)
+  useEffect(() => {
+    if (!highlightOrderId) return;
+    // Both arrays may contain the order depending on assignment
+    const all = [...deliveries, ...myDeliveries];
+    const found = all.find(d => String(d.id) === String(highlightOrderId));
+    if (!found) return;
+    // Wait a tick to ensure DOM rendered
+    setTimeout(() => {
+      const el = document.getElementById(`delivery-card-${highlightOrderId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // add a temporary highlight ring
+        el.classList.add('ring-4', 'ring-primary', 'ring-opacity-30');
+        setTimeout(() => el.classList.remove('ring-4', 'ring-primary', 'ring-opacity-30'), 3000);
+      }
+    }, 300);
+  }, [deliveries, myDeliveries, highlightOrderId]);
+
   useEffect(() => {
     // Initial load when component mounts
     fetchDeliveries();
     fetchTransactions();
+
+    // Background polling: deliveries every 1s (silent), transactions every 5s
+    let deliveriesInterval: any = null;
+    let transactionsInterval: any = null;
+    if (user?.id) {
+      deliveriesInterval = setInterval(async () => {
+        if (isRefreshingRef.current) return;
+        isRefreshingRef.current = true;
+        try {
+          await fetchDeliveries({ silent: true });
+        } catch (e) {
+          console.warn('[DeliveryDashboard] background delivery refresh failed', e);
+        } finally {
+          isRefreshingRef.current = false;
+        }
+      }, 1000);
+
+      transactionsInterval = setInterval(async () => {
+        try {
+          await fetchTransactions();
+        } catch (e) {
+          console.warn('[DeliveryDashboard] background transactions refresh failed', e);
+        }
+      }, 5000);
+    }
 
     if (!user?.id) return;
     const channelName = `delivery-orders-${user.id}`;
@@ -187,6 +262,8 @@ const DeliveryDashboard = () => {
       .subscribe();
     return () => {
       try { supabase.removeChannel(channel); } catch (e) { console.warn('[DeliveryDashboard] removeChannel failed', e); }
+      try { if (deliveriesInterval) clearInterval(deliveriesInterval); } catch (e) {}
+      try { if (transactionsInterval) clearInterval(transactionsInterval); } catch (e) {}
     };
   }, [user]);
 
@@ -220,7 +297,18 @@ const DeliveryDashboard = () => {
     return () => window.removeEventListener('delivery:started', handler as EventListener);
   }, [user]);
 
-  const fetchDeliveries = async () => {
+  const isRefreshingRef = React.useRef(false);
+
+  const shallowDeliveriesEqual = (a: DeliveryOrder[] = [], b: DeliveryOrder[] = []) => {
+    try {
+      if ((a || []).length !== (b || []).length) return false;
+      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      return aKey === bKey;
+    } catch (e) { return false; }
+  };
+
+  const fetchDeliveries = async (opts?: { silent?: boolean }) => {
     if (!user?.id) return;
 
     try {
@@ -417,18 +505,52 @@ const DeliveryDashboard = () => {
 
       } catch (e) { /* ignore */ }
 
-      setDeliveries((availableDeliveries ?? []) as DeliveryOrder[]);
-      // Avoid overwriting a previously-loaded non-empty deliveries list with an empty result from a later failing fetch.
-      setMyDeliveries(prev => {
-        try {
-          const newLen = (finalMyDeliveries || []).length;
-          const prevLen = (prev || []).length;
-          if (newLen === 0 && prevLen > 0) {
-            return prev;
-          }
-        } catch (e) { /* if anything goes wrong, fall through and set the new value */ }
-        return finalMyDeliveries;
-      });
+      try {
+        // Cache deliveries snapshot for quick next load (short TTL)
+        if (typeof window !== 'undefined' && user?.id) {
+          try {
+            const cachedObj = { ts: Date.now(), myDeliveries: finalMyDeliveries, deliveries: (availableDeliveries ?? []) };
+            // Write cache only when not a silent background poll OR when data changed
+            if (!opts?.silent) {
+              try { localStorage.setItem(`cached_deliveries_${user.id}`, JSON.stringify(cachedObj)); } catch (e) { /* ignore */ }
+            }
+          } catch (e) { /* ignore cache write failures */ }
+        }
+      } catch (e) { /* ignore */ }
+
+      const newDeliveries = (availableDeliveries ?? []) as DeliveryOrder[];
+
+      if (!opts?.silent) {
+        // Normal path: update UI (existing behavior)
+        setDeliveries(newDeliveries);
+        // Avoid overwriting a previously-loaded non-empty deliveries list with an empty result from a later failing fetch.
+        setMyDeliveries(prev => {
+          try {
+            const newLen = (finalMyDeliveries || []).length;
+            const prevLen = (prev || []).length;
+            if (newLen === 0 && prevLen > 0) {
+              return prev;
+            }
+          } catch (e) { /* if anything goes wrong, fall through and set the new value */ }
+          return finalMyDeliveries;
+        });
+      } else {
+        // Silent background poll: apply state updates only if there is a meaningful change
+        const deliveriesChanged = !shallowDeliveriesEqual(deliveries, newDeliveries);
+        const myDeliveriesChanged = !shallowDeliveriesEqual(myDeliveries, finalMyDeliveries);
+        if (deliveriesChanged) setDeliveries(newDeliveries);
+        if (myDeliveriesChanged) {
+          setMyDeliveries(prev => {
+            // preserve previous when new result is empty
+            try {
+              const newLen = (finalMyDeliveries || []).length;
+              const prevLen = (prev || []).length;
+              if (newLen === 0 && prevLen > 0) return prev;
+            } catch (e) {}
+            return finalMyDeliveries;
+          });
+        }
+      }
     } catch (error) {
       console.error('Erreur lors du chargement des livraisons:', error);
       console.warn('Impossible de charger les livraisons. Vérifiez votre connexion.');
@@ -693,7 +815,7 @@ const DeliveryDashboard = () => {
     const payoutTransaction = transactions.find(t => t.order_id === delivery.id && t.transaction_type === 'payout');
     
     return (
-      <Card key={delivery.id} className={`border ${variant === 'current' ? 'border-orange-200' : 'border-primary/20'} shadow-sm`}>
+      <Card id={`delivery-card-${delivery.id}`} key={delivery.id} className={`border ${variant === 'current' ? 'border-orange-200' : 'border-primary/20'} shadow-sm`}>
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-3">
             <span className={`font-mono text-xs px-2 py-0.5 rounded-full ${variant === 'current' ? 'bg-orange-100 text-orange-700' : 'bg-primary/10 text-primary'}`}>
@@ -767,7 +889,7 @@ const DeliveryDashboard = () => {
               {delivery.status === 'in_delivery' && (
                 <Button
                   className="w-full btn-delivery"
-                  onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}`)}
+                  onClick={() => navigate(`/scanner?orderId=${delivery.id}&orderCode=${encodeURIComponent(String(delivery.order_code || ''))}&autoStart=1`)}
                 >
                   Scanner Qrcode Client
                 </Button>

@@ -7,6 +7,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 // INSPECT: using supabase client import
@@ -53,6 +54,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // Ajouté : pour bloquer l'envoi OTP si profil existe
   const [hasCheckedProfile, setHasCheckedProfile] = useState(false);
   const [isResetPin, setIsResetPin] = useState(false);
+  // Mobile fallback: dialog for role selection (avoids native select overlay on some devices)
+  const [roleSheetOpen, setRoleSheetOpen] = useState(false);
   const [existingProfile, setExistingProfile] = useState<{ id: string; full_name: string; role: string; pin_hash: string | null } | null>(null);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
@@ -1291,25 +1294,93 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             </div>
             <div>
               <Label className="text-sm font-medium mb-2 block">Vous êtes...</Label>
-              <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
-                <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white">
-                  <SelectItem value="buyer" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                    <User className="h-5 w-5 text-primary" />
-                    <span>Client(e)</span>
-                  </SelectItem>
-                  <SelectItem value="vendor" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                    <ShoppingCart className="h-5 w-5 text-green-600" />
-                    <span>Vendeur(se)</span>
-                  </SelectItem>
-                  <SelectItem value="delivery" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                    <Truck className="h-5 w-5 text-blue-600" />
-                    <span>Livreur</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              {/* Mobile fallback: show a dialog sheet on small viewports to avoid native overlay issues */}
+              {typeof window !== 'undefined' && window.innerWidth <= 640 ? (
+                <>
+                  <Button
+                    onClick={() => setRoleSheetOpen(true)}
+                    className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold justify-between w-full"
+                    aria-haspopup="dialog"
+                    aria-expanded={roleSheetOpen}
+                    aria-label={`Rôle: ${formData.role === 'buyer' ? 'Client(e)' : formData.role === 'vendor' ? 'Vendeur(se)' : 'Livreur'}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      {formData.role === 'buyer' && <User className="h-5 w-5 text-primary" />}
+                      {formData.role === 'vendor' && <ShoppingCart className="h-5 w-5 text-primary" />}
+                      {formData.role === 'delivery' && <Truck className="h-5 w-5 text-primary" />}
+                      <span className="text-base font-semibold truncate min-w-0 ml-1 text-primary">
+                        {formData.role === 'buyer' ? 'Client(e)' : formData.role === 'vendor' ? 'Vendeur(se)' : 'Livreur'}
+                      </span>
+                    </div>
+                    <span className="ml-2 opacity-60">▾</span>
+                  </Button>
+
+                  <Dialog open={roleSheetOpen} onOpenChange={setRoleSheetOpen}>
+                    <DialogContent className="max-w-md w-[95vw] p-3 sm:max-w-sm">
+                      <DialogHeader>
+                        <DialogTitle>Choisissez votre rôle</DialogTitle>
+                      </DialogHeader>
+                      <div className="grid gap-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => { handleInputChange('role', 'buyer'); setRoleSheetOpen(false); }}
+                          className="w-full p-3 rounded-xl border bg-white flex items-center gap-3"
+                        >
+                          <User className="h-5 w-5 text-primary" />
+                          <div>
+                            <div className="font-medium text-primary">Client(e)</div>
+                            <div className="text-sm text-muted-foreground">Achetez des produits</div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => { handleInputChange('role', 'vendor'); setRoleSheetOpen(false); }}
+                          className="w-full p-3 rounded-xl border bg-white flex items-center gap-3"
+                        >
+                          <ShoppingCart className="h-5 w-5 text-primary" />
+                          <div>
+                            <div className="font-medium text-primary">Vendeur(se)</div>
+                            <div className="text-sm text-muted-foreground">Vendez vos produits</div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => { handleInputChange('role', 'delivery'); setRoleSheetOpen(false); }}
+                          className="w-full p-3 rounded-xl border bg-white flex items-center gap-3"
+                        >
+                          <Truck className="h-5 w-5 text-primary" />
+                          <div>
+                            <div className="font-medium text-primary">Livreur</div>
+                            <div className="text-sm text-muted-foreground">Livrez des commandes</div>
+                          </div>
+                        </button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              ) : (
+                <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white">
+                    <SelectItem value="buyer" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <User className="h-5 w-5 text-primary" />
+                      <span className="text-primary">Client(e)</span>
+                    </SelectItem>
+                    <SelectItem value="vendor" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <ShoppingCart className="h-5 w-5 text-primary" />
+                      <span className="text-primary">Vendeur(se)</span>
+                    </SelectItem>
+                    <SelectItem value="delivery" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <Truck className="h-5 w-5 text-primary" />
+                      <span className="text-primary">Livreur</span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             {/* Champs spécifiques selon le rôle */}
             {formData.role === 'delivery' ? (
