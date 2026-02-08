@@ -2457,8 +2457,16 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
     if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
-    // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
-    const { data: orders, error } = await supabase
+    // Use service_role key for all DB operations in this endpoint
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return res.status(500).json({ success: false, error: 'SUPABASE_SERVICE_ROLE_KEY not configured on server' });
+    }
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    // Fetch orders eligible for batching (delivered & requested)
+    const { data: orders, error } = await supabaseAdmin
       .from('orders')
       .select('id, vendor_id, total_amount, payment_confirmed_at, status')
       .eq('status', 'delivered')
@@ -2476,7 +2484,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
     // Insert batch (store commission_pct)
-    const { data: batch, error: batchErr } = await supabase
+    const { data: batch, error: batchErr } = await supabaseAdmin
       .from('payout_batches')
       .insert({ created_by: createdBy, scheduled_at: scheduled_at || new Date().toISOString(), total_amount: totalAmount, notes, commission_pct: pct })
       .select('*')
@@ -2495,7 +2503,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
       return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount };
     });
 
-    const { error: itemsErr } = await supabase.from('payout_batch_items').insert(items);
+    const { error: itemsErr } = await supabaseAdmin.from('payout_batch_items').insert(items);
     if (itemsErr) {
       console.error('[ADMIN] create payout batch - insert items error:', itemsErr);
       throw itemsErr;
@@ -2503,7 +2511,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
 
     // Mark orders as scheduled
     const orderIds = orders.map(o => o.id);
-    const { error: updateOrdersErr } = await supabase.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
+    const { error: updateOrdersErr } = await supabaseAdmin.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
     if (updateOrdersErr) {
       console.error('[ADMIN] create payout batch - updating orders error:', updateOrdersErr);
     }
