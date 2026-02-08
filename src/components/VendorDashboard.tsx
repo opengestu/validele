@@ -1024,17 +1024,7 @@ const VendorDashboard = () => {
                 setOrders(prev => {
                   try {
                     if (!prev || !Array.isArray(prev)) return prev;
-                    const next = prev.map(o => (o.id === newRow.id ? { ...o, ...newRow } : o));
-
-                    // If status changed, show a concise toast to the vendor
-                    try {
-                      if (oldRow && oldRow.status !== newRow.status) {
-                        const label = STATUS_LABELS_FR[newRow.status] || newRow.status;
-                        try { toast({ title: 'Mise à jour commande', description: `${newRow.order_code ? `${newRow.order_code} — ` : ''}${label}` }); } catch (e) { /* ignore */ }
-                      }
-                    } catch (e) { /* ignore */ }
-
-                    return next;
+                    return prev.map(o => (o.id === newRow.id ? { ...o, ...newRow } : o));
                   } catch (e) { return prev; }
                 });
                 fetchTransactions();
