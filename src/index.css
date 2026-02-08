@@ -15,10 +15,10 @@
     --popover-foreground: 222 39% 11%;
 
     /* Couleurs principales */
-    --primary: 0 0% 10%;                /* Noir adouci (moins intense) */
+    --primary: 0 0% 16%;                /* Noir adouci (moins intense) — augmenté pour réduire l'intensité */
     --primary-foreground: 0 0% 100%;
 
-    --accent: 0 0% 10%;                /* Noir Doux #1A1A1A */
+    --accent: 0 0% 16%;                /* Noir Doux (ajusté) */
     --accent-foreground: 0 0% 100%;
 
     /* Statuts / fonctionnels */
@@ -57,9 +57,9 @@
 
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 222 39% 11%;
-    --sidebar-primary: 0 0% 10%;
+    --sidebar-primary: 0 0% 16%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent: 0 0% 16%;
     --sidebar-accent-foreground: 0 0% 100%;
     --sidebar-border: 214 18% 92%;
     --sidebar-ring: 223 86% 53%;
@@ -76,10 +76,10 @@
     --popover: 222 39% 11%;
     --popover-foreground: 0 0% 100%;
 
-    --primary: 0 0% 10%;
+    --primary: 0 0% 16%;
     --primary-foreground: 0 0% 100%;
 
-    --accent: 0 0% 10%;
+    --accent: 0 0% 16%;
     --accent-foreground: 0 0% 100%;
 
     --success: 142 76% 36%;
@@ -106,9 +106,9 @@
 
     --sidebar-background: 222 39% 11%;
     --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 10%;
+    --sidebar-primary: 0 0% 16%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent: 0 0% 16%;
     --sidebar-accent-foreground: 0 0% 100%;
     --sidebar-border: 222 39% 11%;
     --sidebar-ring: 223 86% 53%;
