@@ -2618,18 +2618,29 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
     const totalNet = rows.reduce((s, r) => s + r.net, 0);
 
-    // Simple HTML invoice
+    // Format date in French: '09 février 2026'
+    function formatFrenchDate(date) {
+      const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+      const d = new Date(date);
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      return `${day} ${month} ${year}`;
+    }
+    const factureDate = formatFrenchDate(batch.created_at || batch.scheduled_at || Date.now());
+
+    // Simple HTML invoice with new title and heading
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Invoice - Batch ${batchId}</title>
+          <title>Facture de paiement du ${factureDate}</title>
           <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <h2>Facture de paiement - Batch ${batchId}</h2>
+          <h2>Facture de paiement du ${factureDate}</h2>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${new Date(batch.created_at || batch.scheduled_at || Date.now()).toLocaleString()}</p>
+          <p><strong>Date:</strong> ${factureDate}</p>
           <h3>Détails</h3>
           <table>
             <thead><tr><th>Commande</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
