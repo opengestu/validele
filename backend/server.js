@@ -22,6 +22,7 @@ const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
+const { supabase } = require('./supabase');
 
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
@@ -927,7 +928,15 @@ app.get('/api/debug/admin/orders', requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
     const vendorId = req.query.vendor_id;
-    let q = supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      console.error('[DEBUG] SUPABASE_SERVICE_ROLE_KEY missing - admin debug endpoint requires service role key');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+    }
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    let q = supabaseAdmin.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
     if (vendorId) q = q.eq('vendor_id', vendorId);
     const { data, error } = await q;
     if (error) {
@@ -948,7 +957,15 @@ app.get('/api/debug/admin/orders-audit', requireAdmin, async (req, res) => {
     if (!order_id) return res.status(400).json({ success: false, error: 'order_id query param required' });
 
     const limit = Math.min(parseInt(String(req.query.limit || '200'), 10) || 200, 1000);
-    const { data, error } = await supabase.from('orders_audit').select('*').eq('order_id', order_id).order('changed_at', { ascending: false }).limit(limit);
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      console.error('[DEBUG] SUPABASE_SERVICE_ROLE_KEY missing - admin debug endpoint requires service role key');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+    }
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    const { data, error } = await supabaseAdmin.from('orders_audit').select('*').eq('order_id', order_id).order('changed_at', { ascending: false }).limit(limit);
     if (error) {
       console.error('[DEBUG] /api/debug/admin/orders-audit supabase error:', error);
       return res.status(500).json({ success: false, error: error.message || 'DB error' });
@@ -966,7 +983,13 @@ app.post('/api/debug/admin/reconcile-payments', requireAdmin, async (req, res) =
   try {
     const reconcileMinutes = parseInt(minutes || process.env.PAYMENT_RECONCILE_MINUTES || '15', 10);
     const threshold = new Date(Date.now() - reconcileMinutes * 60 * 1000).toISOString();
-    const { data: txs, error } = await supabase
+
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) return res.status(500).json({ error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    const { data: txs, error } = await supabaseAdmin
       .from('payment_transactions')
       .select('*')
       .in('status', ['PENDING1','PENDING2'])
@@ -1876,13 +1899,21 @@ app.post('/api/admin/login', async (req, res) => {
     const expiresIn = Number(loginData.session.expires_in || process.env.ADMIN_TOKEN_TTL || 3600);
 
 
-    // Vérification stricte du rôle admin dans profiles
+    // Vérification stricte du rôle admin dans profiles (use service role client when available)
     const { data: userRes } = await supabase.auth.getUser(accessToken);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid credentials' });
 
-    // Vérifier que le profil a bien role = 'admin'
-    const { data: profile, error: profileErr } = await supabase
+    // Use service role key for profile role check to bypass RLS if available
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = null;
+    if (serviceKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    } else {
+      console.warn('[ADMIN] SUPABASE_SERVICE_ROLE_KEY missing - falling back to app client for profile check');
+    }
+    const { data: profile, error: profileErr } = await (supabaseAdmin || supabase)
       .from('profiles')
       .select('role')
       .eq('id', user.id)
@@ -1938,9 +1969,15 @@ app.post('/api/admin/refresh', async (req, res) => {
     const { data: userRes } = await supabase.auth.getUser(accessToken);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = null;
+    if (serviceKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
     const adminIdEnv = process.env.ADMIN_USER_ID;
     if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      const { data: adminRow } = await (supabaseAdmin || supabase).from('admin_users').select('id').eq('id', user.id).maybeSingle();
       if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
 
@@ -1971,9 +2008,15 @@ app.get('/api/admin/validate', async (req, res) => {
     const { data: userRes } = await supabase.auth.getUser(token);
     const user = userRes?.user;
     if (!user) return res.status(401).json({ success: false, error: 'Invalid session' });
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = null;
+    if (serviceKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
     const adminIdEnv = process.env.ADMIN_USER_ID;
     if (adminIdEnv && user.id !== adminIdEnv) {
-      const { data: adminRow } = await supabase.from('admin_users').select('id').eq('id', user.id).maybeSingle();
+      const { data: adminRow } = await (supabaseAdmin || supabase).from('admin_users').select('id').eq('id', user.id).maybeSingle();
       if (!adminRow || !adminRow.id) return res.status(403).json({ success: false, error: 'Forbidden: admin access required' });
     }
     return res.json({ success: true, user });
@@ -1989,8 +2032,14 @@ app.post('/api/admin/login-local', async (req, res) => {
     const { profileId, pin } = req.body || {};
     if (!profileId || !pin) return res.status(400).json({ success: false, error: 'profileId and pin required' });
 
-    // Fetch profile
-    const { data: profile, error: profileErr } = await supabase
+    // Fetch profile using service role if available
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let supabaseAdmin = null;
+    if (serviceKey) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    }
+    const { data: profile, error: profileErr } = await (supabaseAdmin || supabase)
       .from('profiles')
       .select('id, pin_hash, role')
       .eq('id', profileId)
