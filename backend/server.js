@@ -469,7 +469,7 @@ app.post('/api/vendor/orders', async (req, res) => {
           created_at,
           updated_at,
           products(*),
-          buyer:profiles!orders_buyer_id_fkey(full_name, phone),
+          buyer:profiles!orders_buyer_id_fkey(full_name, phone, address),
           delivery:profiles!orders_delivery_person_id_fkey(full_name, phone),
           qr_code
         `)
