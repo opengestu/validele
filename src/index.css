@@ -22,7 +22,7 @@
     --accent-foreground: 0 0% 100%;
 
     /* Statuts / fonctionnels */
-    --success: 142 76% 36%;             /* #16A34A */
+    --success: 0 0% 0%;                  /* Noir remplace le vert */
     --success-foreground: 0 0% 100%;
 
     --warning: 39 96% 50%;              /* #F59E0B */
@@ -50,7 +50,7 @@
     /* Roles (kept for component utilities) */
     --validel-vendor: 39 96% 50%;        /* orange #F59E0B */
     --validel-vendor-foreground: 0 0% 100%;
-    --validel-buyer: 142 76% 36%;        /* vert #16A34A */
+    --validel-buyer: 0 0% 0%;            /* noir (remplace vert) */
     --validel-buyer-foreground: 0 0% 100%;
     --validel-delivery: 262 83% 58%;     /* violet accent */
     --validel-delivery-foreground: 0 0% 100%;
@@ -154,7 +154,7 @@
   }
   
   .card-buyer {
-    @apply border-l-4 border-validel-buyer bg-gradient-to-br from-white to-green-50 dark:from-gray-900 dark:to-green-950/20;
+    @apply border-l-4 border-validel-buyer bg-gradient-to-br from-white to-black/5 dark:from-gray-900 dark:to-black/20;
   }
   
   .card-delivery {
@@ -173,7 +173,7 @@
   
   /* Status badges */
   .status-success {
-    @apply bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300;
+    @apply bg-black/5 text-black dark:bg-black/20 dark:text-black;
   }
   
   .status-warning {
@@ -295,11 +295,11 @@
   }
 
   .call-btn {
-    @apply bg-[#e6f0ff] text-[#2e7d32] border-none rounded-[8px] py-[6px] px-[14px] font-medium cursor-pointer flex items-center text-[15px];
+    @apply bg-[#e6f0ff] text-black border-none rounded-[8px] py-[6px] px-[14px] font-medium cursor-pointer flex items-center text-[15px];
   }
 
   .order-amount {
-    @apply text-[#2e7d32] text-[26px] font-bold mt-[16px];
+    @apply text-black text-[26px] font-bold mt-[16px];
   }
 
   /* Clavier numérique agrandi sur mobile */

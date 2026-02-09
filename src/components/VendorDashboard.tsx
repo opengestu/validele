@@ -1,8 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Mapping des statuts en français
-import waveIcon from '@/assets/wave.png';
-import orangeMoneyIcon from '@/assets/orange-money.png';
 const STATUS_LABELS_FR: Record<string, string> = {
   paid: 'Payée',
   assigned: 'Assignée',
@@ -18,35 +16,13 @@ const getStatusBadgeColor = (status: string): string => {
   switch (status) {
     case 'cancelled': return '#dc2626'; // rouge
     case 'failed': return '#dc2626'; // rouge
-    case 'delivered': return '#16a34a'; // vert
+    case 'delivered': return '#000000'; // noir (remplace vert)
     case 'in_delivery': return '#f59e0b'; // orange
     case 'paid': return '#2563eb'; // bleu
     case 'assigned': return '#8b5cf6'; // violet
     case 'refunded': return '#6b7280'; // gris
     default: return '#6b7280'; // gris par défaut
   }
-};
-
-const normalizeRefundTxStatus = (status?: string) => {
-  const s = String(status || '').toUpperCase();
-  if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(s)) return 'success';
-  if (['PENDING', 'PENDING1', 'PENDING2', 'PROCESSING', 'QUEUED'].includes(s)) return 'pending';
-  if (['FAILED', 'ERROR', 'CANCELLED'].includes(s)) return 'failed';
-  return s ? 'pending' : 'unknown';
-};
-
-// Pour VendorDashboard: les commandes annulées restent "Annulées" peu importe l'état du remboursement
-// (le vendeur ne doit pas voir le statut "Remboursée")
-const getEffectiveOrderStatus = (
-  order: Order,
-  orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>
-) => {
-  const current = order.status;
-  // Pour le vendeur: une commande annulée reste "Annulée" même après remboursement
-  // (le remboursement ne change pas le statut affiché au vendeur)
-  if (current === 'cancelled') return 'cancelled';
-  if (current === 'refunded') return 'refunded';
-  return current;
 };
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -82,7 +58,9 @@ import {
   StatsCard,
   StatusBadge
 } from '@/components/dashboard';
-const validelLogo = '/icons/validel-logo.svg';
+import validelLogo from '@/assets/validel-logo.png';
+const waveLogo = '/images/wave.png';
+const orangeMoneyLogo = '/images/orange_money.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
@@ -94,7 +72,6 @@ type ProfileRow = {
   wallet_type?: string | null;
 };
 const VendorDashboard = () => {
-
     const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
@@ -110,7 +87,7 @@ const VendorDashboard = () => {
   if (loading) {
     return (
       <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-[#24BD5C]" />
+        <Spinner size="xl" className="text-black" />
         <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
       </div>
     );
@@ -228,64 +205,6 @@ const VendorDashboard = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [pageLoading, setPageLoading] = useState<boolean>(true);
-
-  const isRefreshingRef = React.useRef(false);
-  const shallowOrdersEqual = (a: Order[] = [], b: Order[] = []) => {
-    try {
-      if ((a || []).length !== (b || []).length) return false;
-      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
-      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
-      return aKey === bKey;
-    } catch (e) { return false; }
-  }; 
-
-  // Client-side cache settings (short TTL) to speed initial render
-  const VENDOR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
-
-  // Immediate load cached snapshots for orders/products/transactions when fresh
-  React.useEffect(() => {
-    const id = smsUser?.id || (user as any)?.id || (effectiveUser as any)?.id;
-    if (!id || typeof window === 'undefined') return;
-    try {
-      const rawOrders = localStorage.getItem(`cached_orders_${id}`);
-      if (rawOrders) {
-        const parsed = JSON.parse(rawOrders);
-        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
-        const maybeOrders = Array.isArray(parsed.orders) ? parsed.orders : (Array.isArray(parsed) ? parsed : null);
-        if (maybeOrders && Date.now() - ts <= VENDOR_CACHE_TTL) {
-          setOrders(maybeOrders as Order[]);
-          console.log('[VendorDashboard] Loaded cached orders for immediate render');
-        }
-      }
-    } catch (e) { /* ignore */ }
-
-    try {
-      const rawProducts = localStorage.getItem(`cached_products_${id}`);
-      if (rawProducts) {
-        const parsed = JSON.parse(rawProducts);
-        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
-        const maybeProducts = Array.isArray(parsed.products) ? parsed.products : (Array.isArray(parsed) ? parsed : null);
-        if (maybeProducts && Date.now() - ts <= VENDOR_CACHE_TTL) {
-          setProducts(maybeProducts as Product[]);
-          console.log('[VendorDashboard] Loaded cached products for immediate render');
-        }
-      }
-    } catch (e) { /* ignore */ }
-
-    try {
-      const rawTx = localStorage.getItem(`cached_transactions_${id}`);
-      if (rawTx) {
-        const parsed = JSON.parse(rawTx);
-        const ts = typeof parsed?.ts === 'number' ? parsed.ts : 0;
-        const maybeTx = Array.isArray(parsed.transactions) ? parsed.transactions : null;
-        if (maybeTx && Date.now() - ts <= VENDOR_CACHE_TTL) {
-          setTransactions(maybeTx as any);
-          console.log('[VendorDashboard] Loaded cached transactions for immediate render');
-        }
-      }
-    } catch (e) { /* ignore */ }
-  }, [user, smsUser]);
-
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -302,46 +221,6 @@ const VendorDashboard = () => {
   const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
   const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
 
-  const getVendorAuth = async () => {
-    let token = (smsUser as any)?.access_token || '';
-    if (!token) {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
-      if (raw) token = raw;
-    }
-    if (!token) {
-      try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch { token = ''; }
-    }
-    const vendorId = smsUser?.id || (user as any)?.id || (effectiveUser as any)?.id || '';
-    return { token, vendorId };
-  };
-
-  const appendVendorIdIfNeeded = (url: string, vendorId: string) => {
-    if (!vendorId) return url;
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}vendor_id=${encodeURIComponent(vendorId)}`;
-  };
-
-  const vendorFetch = async (url: string, options: RequestInit = {}, requiresAuth = false) => {
-    const { token, vendorId } = await getVendorAuth();
-    const headers: Record<string, string> = {
-      ...(options.headers ? (options.headers as Record<string, string>) : {}),
-    };
-    if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
-    const fullUrl = appendVendorIdIfNeeded(url, vendorId);
-    let resp = await fetch(fullUrl, { ...options, headers });
-
-    if (resp.status === 401) {
-      const newToken = resp.headers.get('x-new-access-token');
-      if (newToken) {
-        localStorage.setItem('auth_token', newToken);
-        headers['Authorization'] = `Bearer ${newToken}`;
-        resp = await fetch(fullUrl, { ...options, headers });
-      }
-    }
-
-    return resp;
-  };
-
   // Open an invoice URL and render it inside an in-app modal (supports auth for vendor endpoints)
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
     try {
@@ -350,10 +229,16 @@ const VendorDashboard = () => {
       setInvoiceViewerHtml(null);
       setInvoiceViewerFilename(null);
 
-      const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
+      let token = (smsUser as any)?.access_token || '';
+      if (requiresAuth && !token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
 
-      const baseUrl = url.startsWith('http') ? url : apiUrl(url);
-      const resp = await vendorFetch(baseUrl, { method: 'GET', headers }, requiresAuth);
+      const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
+      if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
+
+      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      const resp = await fetch(fullUrl, { method: 'GET', headers });
 
       if (!resp.ok) {
         if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
@@ -405,8 +290,13 @@ const VendorDashboard = () => {
   async function fetchVendorBatches() {
     try {
       setBatchesLoading(true);
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
       const headers: Record<string,string> = {};
-      const resp = await vendorFetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers }, true);
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
       const json = await resp.json().catch(() => null);
       if (!resp.ok || !json || !json.success) {
         throw new Error(json?.error || `Backend returned ${resp.status}`);
@@ -458,8 +348,6 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
-  // Dropdown open state for custom wallet select
-  const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
 
   // (Global spinner overlay and body class logic removed)
 
@@ -488,11 +376,9 @@ const VendorDashboard = () => {
     };
   }, []);
   // Nouvelle version : toujours utiliser le backend pour les commandes (comme BuyerDashboard)
-  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchOrders = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
-    if (opts?.silent && isRefreshingRef.current) return;
-    if (opts?.silent) isRefreshingRef.current = true;
     console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable });
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
@@ -582,18 +468,9 @@ const VendorDashboard = () => {
         console.warn('[VendorDashboard] fetchOrders buyer name enrichment failed', e);
       }
 
-      if (!opts?.silent) {
-        setOrders(filtered);
-        console.log('[VendorDashboard] fetchOrders success', filtered.length);
-        try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify({ orders: filtered, ts: Date.now() })); } catch (e) { /* ignore */ }
-      } else {
-        // silent poll: update only if changed
-        try {
-          if (!shallowOrdersEqual(orders, filtered)) setOrders(filtered);
-          // do not write cache on silent polls
-        } catch (e) { /* ignore */ }
-      }
-      if (opts?.silent) isRefreshingRef.current = false; 
+      setOrders(filtered);
+      console.log('[VendorDashboard] fetchOrders success', filtered.length);
+      try { localStorage.setItem(`cached_orders_${caller.id}`, JSON.stringify(filtered)); } catch (e) { /* ignore */ }
     } catch (error: any) {
       const msg = (error && error.message) ? String(error.message) : String(error);
       if (msg.includes('fetch failed') || error.name === 'TypeError' || msg.includes('NetworkError')) {
@@ -605,13 +482,10 @@ const VendorDashboard = () => {
       try {
         const cached = localStorage.getItem(`cached_orders_${caller?.id}`);
         if (cached) {
-          const parsed = JSON.parse(cached);
-          const data = Array.isArray(parsed) ? parsed : (parsed?.orders ?? null);
-          if (data && Array.isArray(data)) {
-            setOrders(data as Order[]);
-            toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
-            return;
-          }
+          const parsed = JSON.parse(cached) as Order[];
+          setOrders(parsed);
+          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
+          return;
         }
       } catch (e) { /* ignore */ }
       console.error('[VendorDashboard] fetchOrders error', error);
@@ -679,21 +553,17 @@ const VendorDashboard = () => {
       })) as Product[];
 
       if (mappedData.length > 0) {
-        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify({ products: mappedData, ts: Date.now() })); } catch (e) { /* ignore */ }
+        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
         setProducts(mappedData);
       } else {
         // Empty result: try using recent cache (<5m) and schedule a quick retry
         try {
           const raw = localStorage.getItem(`cached_products_${caller.id}`);
           if (raw) {
-            const parsed = JSON.parse(raw);
-            const data = Array.isArray(parsed) ? parsed : (parsed?.products ?? null);
-            if (data && Array.isArray(data)) {
-              setProducts(data as Product[]);
-              setTimeout(() => { fetchProducts(); }, 2000);
-            } else {
-              setProducts([]);
-            }
+            const parsed = JSON.parse(raw) as Product[];
+            // no ts on old cache -> accept it
+            setProducts(parsed);
+            setTimeout(() => { fetchProducts(); }, 2000);
           } else {
             setProducts([]);
           }
@@ -783,9 +653,14 @@ const VendorDashboard = () => {
   // Download a vendor invoice (payout batch). Uses auth to fetch protected invoice endpoint and force download.
   async function handleDownloadInvoice(url: string) {
     try {
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
       const fullUrl = url.startsWith('http') ? url : apiUrl(url);
       const headers: Record<string, string> = { 'Accept': '*/*' };
-      const resp = await vendorFetch(fullUrl, { method: 'GET', headers }, true);
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(fullUrl, { method: 'GET', headers });
       if (!resp.ok) {
         toast({ title: 'Erreur', description: 'Impossible de télécharger la facture', variant: 'destructive' });
         return;
@@ -814,8 +689,13 @@ const VendorDashboard = () => {
   // Download the latest vendor payout batch invoice and force download
   async function handleDownloadLatestBatchInvoice() {
     try {
+      let token = (smsUser as any)?.access_token || '';
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      }
       const headers: Record<string,string> = { 'Accept': '*/*' };
-      const resp = await vendorFetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers }, true);
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
 
       if (resp.status === 404) {
         toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'default' });
@@ -1364,11 +1244,7 @@ const VendorDashboard = () => {
   const activeProducts = products.filter(p => p.is_available).length;
   const totalOrders = orders.length;
   // Nombre de commandes non livrées (ex: paid, in_delivery)
-  const nonDeliveredCount = orders.filter(o => {
-    const orderTransactions = transactions.filter(t => t.order_id === o.id);
-    const effectiveStatus = getEffectiveOrderStatus(o, orderTransactions);
-    return !['delivered', 'cancelled', 'refunded'].includes(effectiveStatus || '');
-  }).length;
+  const nonDeliveredCount = orders.filter(o => !['delivered','cancelled','refunded'].includes(o.status || '')).length;
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
@@ -1397,16 +1273,16 @@ const VendorDashboard = () => {
       {/* Header Moderne - Style similaire à BuyerDashboard */}
       <header className="bg-primary rounded-b-2xl shadow-lg mb-6">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
-          <h1 className="text-3xl md:text-4xl font-extrabold text-primary-foreground drop-shadow-lg text-center tracking-tight">
+          <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
           </h1>
-          <p className="text-primary-foreground/90 text-sm mt-1">Espace Vendeur(se)</p>
+          <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
       {/* Offline banner */}
       {!isOnline && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
-          <div className="bg-muted border-l-4 border-warning text-warning px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
         </div>
       )}
       {/* Main Content */}
@@ -1436,7 +1312,7 @@ const VendorDashboard = () => {
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
-                className="bg-primary text-primary-foreground shadow-md flex-shrink-0 text-sm px-4 py-2"
+                className="bg-black hover:bg-black/90 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Ajouter
@@ -1485,15 +1361,16 @@ const VendorDashboard = () => {
                   <div className="space-y-2 mb-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Prix:</span>
-                      <span className="font-semibold text-primary">
+                      <span className="font-semibold text-black">
                         {product.price?.toLocaleString()} CFA
                       </span>
                     </div>
                   </div>
-                    <div className="flex space-x-2">
+                  <div className="flex space-x-2">
                     <Button
+                      variant="outline"
                       size="sm"
-                      className="bg-primary text-primary-foreground flex-1"
+                      className="flex-1"
                       onClick={() => {
                         setEditProduct({
                           ...product,
@@ -1528,7 +1405,7 @@ const VendorDashboard = () => {
               <div className="mt-3">
                 <Button
                   onClick={() => setAddModalOpen(true)}
-                  className="bg-primary text-primary-foreground text-sm px-3 py-1"
+                  className="bg-black hover:bg-black/90 text-white text-sm px-3 py-1"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Ajouter un produit
@@ -1543,10 +1420,10 @@ const VendorDashboard = () => {
             <div className="flex items-center gap-1 whitespace-nowrap">
               <h3 className="text-xs md:text-sm font-semibold text-gray-900 m-0 leading-none">Commandes</h3>
               <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
-              <span className="ml-2 text-[11px] md:text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
+              <span className="ml-2 text-[11px] md:text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
             </div>
-              <div>
-              <Button size="sm" onClick={showVendorBatches} className="bg-primary text-primary-foreground text-[11px] px-2 py-1 rounded-md h-7 shadow">
+            <div>
+              <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
                 Facture paiement
               </Button>
             </div>
@@ -1559,21 +1436,19 @@ const VendorDashboard = () => {
               <div className="space-y-4">
                 {orders.map((order) => {
                   // Trouver la transaction de paiement associée à cette commande
-                  const orderTransactions = transactions.filter(t => t.order_id === order.id);
-                  const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
-                  const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
+                  const payoutTransaction = transactions.find(t => t.order_id === order.id);
                   return (
                     <div
                       key={order.id}
-                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm w-full"
-                      style={{ maxWidth: '100%' }}
+                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
+                      style={{ maxWidth: 350 }}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <span role="img" aria-label="box" className="text-primary text-lg">📦</span>
+                          <span role="img" aria-label="box" className="text-black text-lg">📦</span>
                           <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                         </div>
-                        <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
+                        <span className="font-bold" style={{ color: "#000000", fontSize: 16 }}>
                           {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                         </span>
                       </div>
@@ -1605,43 +1480,35 @@ const VendorDashboard = () => {
 
                       <div className="flex items-center text-sm text-gray-800 mb-1">
                         <strong>Adresse :</strong>
-                        <span className="text-muted-foreground" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
+                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
                       </div>
 
                       <div className="flex items-center mb-1 mt-2">
                         <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                        <span className="text-xs font-bold text-primary-foreground" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
-                          {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
+                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
+                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                         </span>
                       </div>
-
-                      {/* Afficher la raison d'annulation si la commande est annulée */}
-                      {effectiveStatus === 'cancelled' && (order as any).cancellation_reason && (
-                        <div className="flex items-start text-xs text-gray-600 mb-1 bg-red-50 rounded p-2">
-                          <span className="font-semibold mr-1">Raison :</span>
-                          <span>{(order as any).cancellation_reason}</span>
-                        </div>
-                      )}
 
                       {/* Boutons Facture et QR Code */}
                       <div className="flex items-center mt-3 gap-2">
                         {/* Bouton Voir facture */}
                         <Button
                           size="sm"
-                          onClick={() => openInvoiceInModal(`/api/vendor/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, true)}
-                          className="flex-1 bg-muted text-muted-foreground hover:bg-muted/90"
+                          onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                          className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
                         >
                           Voir facture
                         </Button>
                         
                         {/* Bouton QR Code Commande */}
-                        {(effectiveStatus === 'paid' || effectiveStatus === 'assigned') && order.order_code && (
+                        {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
                           <Button
                             size="sm"
                             onClick={() => handleShowVendorQR(order)}
-                            className="flex-1 bg-primary text-primary-foreground text-xs px-1.5 py-0.5 h-8"
+                            className="flex-1 bg-gradient-to-r from-black to-neutral-800 hover:from-black/90 hover:to-neutral-700 text-white"
                           >
-                            <QrCode className="h-3 w-3 mr-0.5" />
+                            <QrCode className="h-4 w-4 mr-2" />
                             QR Code Commande
                           </Button>
                         )}
@@ -1667,7 +1534,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <TrendingUp className="h-5 w-5 mr-2 text-primary" />
+                  <TrendingUp className="h-5 w-5 mr-2 text-black" />
                   Performances
                 </CardTitle>
               </CardHeader>
@@ -1691,7 +1558,7 @@ const VendorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-primary" />
+                  <Users className="h-5 w-5 mr-2 text-black" />
                   Clients
                 </CardTitle>
               </CardHeader>
@@ -1737,12 +1604,22 @@ const VendorDashboard = () => {
                     <div>
                       <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
                       <p className="text-lg">
-                        {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                        {userProfile?.wallet_type === 'wave-senegal' ? (
+                          <span className="inline-flex items-center gap-2">
+                            <img src={waveLogo} alt="Wave" className="h-5 w-5 object-contain rounded-sm bg-white" />
+                            <span>Wave</span>
+                          </span>
+                        ) : userProfile?.wallet_type === 'orange-money' ? (
+                          <span className="inline-flex items-center gap-2">
+                            <img src={orangeMoneyLogo} alt="Orange Money" className="h-5 w-5 object-contain rounded-sm bg-white" />
+                            <span>Orange Money</span>
+                          </span>
+                        ) : 'Non défini'}
                       </p>
                     </div>
                     <Button
                       onClick={() => setIsEditingProfile(true)}
-                      className="bg-primary text-primary-foreground hover:bg-primary/90"
+                      className="bg-black text-white hover:bg-black/90"
                     >
                       Modifier le profil
                     </Button>
@@ -1785,52 +1662,56 @@ const VendorDashboard = () => {
                     </div>
                     <div>
                       <label className="text-sm font-medium">Compte de paiement</label>
-                      <div>
-                        <label className="sr-only">Sélectionner un moyen de paiement</label>
-                        <div role="radiogroup" aria-label="Moyen de paiement" className="grid grid-cols-2 gap-3 mt-1">
-                          <button
-                            type="button"
-                            role="radio"
-                            aria-checked={editProfile.wallet_type === 'wave-senegal'}
-                            tabIndex={0}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' })); } }}
-                            onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' }))}
-                            className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'wave-senegal' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
-                          >
-                            <div className="relative w-full flex justify-center">
-                              <img src={waveIcon} alt="Wave" className="w-10 h-10" />
-                              {editProfile.wallet_type === 'wave-senegal' && (
-                                <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
-                              )}
+                      <div className="grid grid-cols-2 gap-3 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' }))}
+                          className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                            editProfile.wallet_type === 'wave-senegal'
+                              ? 'border-black bg-black/5'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          aria-pressed={editProfile.wallet_type === 'wave-senegal'}
+                          title="Wave"
+                        >
+                          <img src={waveLogo} alt="Wave" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                          <span className="text-sm font-semibold mt-1">Wave</span>
+                          {editProfile.wallet_type === 'wave-senegal' && (
+                            <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center mt-1">
+                              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
                             </div>
-                            <span className="text-sm font-medium">Wave</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            role="radio"
-                            aria-checked={editProfile.wallet_type === 'orange-money'}
-                            tabIndex={0}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'orange-money' })); } }}
-                            onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
-                            className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'orange-money' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
-                          >
-                            <div className="relative w-full flex justify-center">
-                              <img src={orangeMoneyIcon} alt="Orange Money" className="w-10 h-10" />
-                              {editProfile.wallet_type === 'orange-money' && (
-                                <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
-                              )}
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
+                          className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                            editProfile.wallet_type === 'orange-money'
+                              ? 'border-orange-500 bg-orange-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          aria-pressed={editProfile.wallet_type === 'orange-money'}
+                          title="Orange Money"
+                        >
+                          <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                          <span className="text-sm font-semibold mt-1">Orange Money</span>
+                          {editProfile.wallet_type === 'orange-money' && (
+                            <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center mt-1">
+                              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
                             </div>
-                            <span className="text-sm font-medium">Orange Money</span>
-                          </button>
-                        </div>
+                          )}
+                        </button>
                       </div>
                     </div>
                     <div className="flex space-x-2 mt-4">
                       <Button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
-                        className="btn-vendor"
+                        className="bg-black text-white hover:bg-black/90"
                       >
                         {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                       </Button>
@@ -1889,7 +1770,7 @@ const VendorDashboard = () => {
                   {products.length > 0 && (
                     <Button
                       onClick={() => setAddModalOpen(true)}
-                      className="bg-primary text-primary-foreground shadow-md flex-shrink-0 text-xs px-3 py-2"
+                      className="bg-black hover:bg-black/90 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       Ajouter
@@ -1943,13 +1824,13 @@ const VendorDashboard = () => {
                               </span>
                             </div>
                             <div className="mt-2">
-                              <span className="text-sm font-medium text-primary whitespace-nowrap">{product.price} CFA</span>
+                              <span className="text-sm font-medium text-black whitespace-nowrap">{product.price} CFA</span>
                             </div>
                           </div>
                         </div>
                         {/* Boutons en bas côte-à-côte sur mobile */}
                         <div className="mt-4 flex gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground text-sm">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-black text-white hover:bg-black/90 text-sm">
                             Modifier
                           </Button>
                           <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-sm">
@@ -1965,7 +1846,7 @@ const VendorDashboard = () => {
                     <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                     <p className="text-sm">Commencez par ajouter un produit.</p>
                     <div className="mt-3">
-                      <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground text-sm px-3 py-1">
+                      <Button onClick={() => setAddModalOpen(true)} className="bg-black hover:bg-black/90 text-white text-sm px-3 py-1">
                         <Plus className="h-4 w-4 mr-2" />
                         Ajouter un produit
                       </Button>
@@ -1980,9 +1861,9 @@ const VendorDashboard = () => {
                   <div className="flex items-center gap-1 whitespace-nowrap">
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
                     <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
-                    <span className="ml-2 text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
+                    <span className="ml-2 text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
                   </div>
-                  <Button size="sm" onClick={showVendorBatches} className="bg-primary text-primary-foreground text-[11px] px-2 py-1 rounded-md h-7 shadow">
+                  <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
                     Facture paiement
                   </Button>
                 </div>
@@ -1996,37 +1877,27 @@ const VendorDashboard = () => {
                         <div key={dateKey}>
                           {/* Date header */}
                           <div className="flex items-center gap-3 mb-3">
-                            <div className="flex-shrink-0 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg shadow-sm">
+                            <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1.5 rounded-lg shadow-sm">
                               <span className="text-sm font-semibold">{dateKey}</span>
                             </div>
-                            <div className="flex-grow h-px bg-muted"></div>
-                            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                            <div className="flex-grow h-px bg-gradient-to-r from-orange-200 to-transparent"></div>
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
                               {groups[dateKey].length} commande{groups[dateKey].length > 1 ? 's' : ''}
                             </span>
                           </div>
                           
                           {/* Orders for this date */}
                           <div className="grid gap-4">
-                            {groups[dateKey].map((order) => {
-                              const orderTransactions = transactions.filter(t => t.order_id === order.id);
-                              const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions);
-                              return (
-                              <Card 
-                                key={order.id} 
-                                className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm w-full overflow-hidden"
-                                style={{
-                                  maxWidth: "100%",
-                                  boxSizing: "border-box"
-                                }}
-                              >
-                                <CardContent className="p-3" style={{ boxSizing: "border-box" }}>
+                            {groups[dateKey].map((order) => (
+                              <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
+                                <CardContent className="p-4">
                                   {/* Ligne 1 : Icône + nom produit + prix à droite */}
                                   <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
-                                      <span role="img" aria-label="box" className="text-primary text-lg">📦</span>
+                                      <span role="img" aria-label="box" className="text-black text-lg">📦</span>
                                       <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
                                     </div>
-                                    <span className="font-bold" style={{ color: "#11B122", fontSize: 16 }}>
+                                    <span className="font-bold" style={{ color: "#000000", fontSize: 16 }}>
                                       {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                                     </span>
                                   </div>
@@ -2067,44 +1938,36 @@ const VendorDashboard = () => {
                                   {/* Statut tout en bas */}
                                   <div className="flex items-center mb-1 mt-2">
                                     <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(effectiveStatus || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(effectiveStatus || '')}22`, marginLeft: 8}}>
-                                      {effectiveStatus && STATUS_LABELS_FR[effectiveStatus as keyof typeof STATUS_LABELS_FR] || effectiveStatus}
+                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
+                                      {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
                                     </span>
                                   </div>
-                                  {/* Afficher la raison d'annulation si la commande est annulée */}
-                                  {effectiveStatus === 'cancelled' && (order as any).cancellation_reason && (
-                                    <div className="flex items-start text-xs text-gray-600 mb-1 bg-red-50 rounded p-2">
-                                      <span className="font-semibold mr-1">Raison :</span>
-                                      <span>{(order as any).cancellation_reason}</span>
-                                    </div>
-                                  )}
                                   {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
                                   <div className="flex items-center mt-2 gap-2">
                                     {/* Order invoice (public endpoint) - open in modal */}
                                     <Button
                                       size="sm"
-                                      onClick={() => openInvoiceInModal(`/api/vendor/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, true)}
+                                      onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
                                       className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
                                     >
                                       Voir facture
                                     </Button>
                                     
                                     {/* Bouton QR Code Commande */}
-                                    {(effectiveStatus === 'paid' || effectiveStatus === 'assigned') && order.order_code && (
+                                    {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
                                       <Button
                                         size="sm"
                                         onClick={() => handleShowVendorQR(order)}
-                                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs px-1.5 py-0.5 h-8"
+                                        className="flex-1 bg-gradient-to-r from-black to-neutral-800 hover:from-black/90 hover:to-neutral-700 text-white"
                                       >
-                                        <QrCode className="h-3 w-3 mr-0.5" />
+                                        <QrCode className="h-4 w-4 mr-2" />
                                         QR Code Commande
                                       </Button>
                                     )}
                                   </div>
                                 </CardContent>
                               </Card>
-                              );
-                            })}
+                            ))}
                           </div>
                         </div>
                       ))}
@@ -2141,25 +2004,23 @@ const VendorDashboard = () => {
                         </div>
                         <div>
                           <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
-                          <p className="text-lg flex items-center gap-2">
+                          <p className="text-lg">
                             {userProfile?.wallet_type === 'wave-senegal' ? (
-                              <>
-                                <img src={waveIcon} alt="Wave" style={{ width: 24, height: 24 }} />
+                              <span className="inline-flex items-center gap-2">
+                                <img src={waveLogo} alt="Wave" className="h-5 w-5 object-contain rounded-sm bg-white" />
                                 <span>Wave</span>
-                              </>
+                              </span>
                             ) : userProfile?.wallet_type === 'orange-money' ? (
-                              <>
-                                <img src={orangeMoneyIcon} alt="Orange Money" style={{ width: 24, height: 24 }} />
+                              <span className="inline-flex items-center gap-2">
+                                <img src={orangeMoneyLogo} alt="Orange Money" className="h-5 w-5 object-contain rounded-sm bg-white" />
                                 <span>Orange Money</span>
-                              </>
-                            ) : (
-                              'Non défini'
-                            )}
+                              </span>
+                            ) : 'Non défini'}
                           </p>
                         </div>
                         <Button
                           onClick={() => setIsEditingProfile(true)}
-                          className="w-full bg-primary text-primary-foreground hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                          className="w-full bg-black text-white hover:bg-black/90"
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
@@ -2195,42 +2056,49 @@ const VendorDashboard = () => {
                           />
                         </div>
                         <div>
-                          <label className="sr-only">Sélectionner un moyen de paiement</label>
-                          <div role="radiogroup" aria-label="Moyen de paiement" className="grid grid-cols-2 gap-3 mt-1">
+                          <label className="text-sm font-medium">Wallet utilisé</label>
+                          <div className="grid grid-cols-2 gap-3 mt-2">
                             <button
                               type="button"
-                              role="radio"
-                              aria-checked={editProfile.wallet_type === 'wave-senegal'}
-                              tabIndex={0}
-                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' })); } }}
                               onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'wave-senegal' }))}
-                              className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'wave-senegal' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                              className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                                editProfile.wallet_type === 'wave-senegal'
+                                  ? 'border-black bg-black/5'
+                                  : 'border-gray-200 hover:border-gray-300'
+                              }`}
+                              aria-pressed={editProfile.wallet_type === 'wave-senegal'}
+                              title="Wave"
                             >
-                              <div className="relative w-full flex justify-center">
-                                <img src={waveIcon} alt="Wave" className="w-10 h-10" />
-                                {editProfile.wallet_type === 'wave-senegal' && (
-                                  <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
-                                )}
-                              </div>
-                              <span className="text-sm font-medium">Wave</span>
+                              <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                              <span className="text-sm font-semibold mt-1">Wave</span>
+                              {editProfile.wallet_type === 'wave-senegal' && (
+                                <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center mt-1">
+                                  <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              )}
                             </button>
-
                             <button
                               type="button"
-                              role="radio"
-                              aria-checked={editProfile.wallet_type === 'orange-money'}
-                              tabIndex={0}
-                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditProfile(p => ({ ...p, wallet_type: 'orange-money' })); } }}
                               onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
-                              className={`w-full rounded-lg p-3 flex flex-col items-center gap-2 border ${editProfile.wallet_type === 'orange-money' ? 'border-2 border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}
+                              className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                                editProfile.wallet_type === 'orange-money'
+                                  ? 'border-orange-500 bg-orange-50'
+                                  : 'border-gray-200 hover:border-gray-300'
+                              }`}
+                              aria-pressed={editProfile.wallet_type === 'orange-money'}
+                              title="Orange Money"
                             >
-                              <div className="relative w-full flex justify-center">
-                                <img src={orangeMoneyIcon} alt="Orange Money" className="w-10 h-10" />
-                                {editProfile.wallet_type === 'orange-money' && (
-                                  <span className="absolute -bottom-2 bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">✓</span>
-                                )}
-                              </div>
-                              <span className="text-sm font-medium">Orange Money</span>
+                              <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                              <span className="text-sm font-semibold mt-1">Orange Money</span>
+                              {editProfile.wallet_type === 'orange-money' && (
+                                <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center mt-1">
+                                  <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -2238,7 +2106,7 @@ const VendorDashboard = () => {
                           <Button
                             onClick={handleSaveProfile}
                             disabled={savingProfile}
-                            className="btn-vendor flex-1"
+                            className="flex-1 bg-black text-white hover:bg-black/90"
                           >
                             {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                           </Button>
@@ -2251,7 +2119,7 @@ const VendorDashboard = () => {
                           </Button>
                         </div>
                         <Button
-                          variant="destructive"
+                          variant="outline"
                           onClick={signOut}
                           className="w-full mt-2 flex items-center justify-center"
                         >
@@ -2271,21 +2139,21 @@ const VendorDashboard = () => {
               <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                 <TabsTrigger
                   value="products"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
                 >
                   <Package className="h-5 w-5" />
                   <span className="text-xs font-medium">Produits</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="orders"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
                 >
                   <ShoppingCart className="h-5 w-5" />
                   <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="profile"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-xl transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
                 >
                   <User className="h-5 w-5" />
                   <span className="text-xs font-medium">Compte</span>
@@ -2307,7 +2175,7 @@ const VendorDashboard = () => {
               </DialogHeader>
               {typeof window !== 'undefined' && window.innerWidth <= 640 && (
                 <div className="flex gap-2 ml-2">
-                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
               )}
@@ -2320,7 +2188,7 @@ const VendorDashboard = () => {
                   {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
                   {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
                     <div className="flex justify-end gap-2 mb-2">
-                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
+                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
                       <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                     </div>
                   )}
@@ -2355,21 +2223,19 @@ const VendorDashboard = () => {
             )}
             {!batchesLoading && vendorBatches && vendorBatches.length > 0 && (
               <div className="space-y-3 max-h-[60vh] overflow-auto">
-                {(vendorBatchesShowAll ? vendorBatches : vendorBatches.slice(0,5))
-                  .filter(b => b.status !== 'failed' && b.status !== 'échoué')
-                  .map(b => (
-                    <div key={b.id} className="flex items-center justify-between border p-2 rounded">
-                      <div className="text-sm">
-                        <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
-                        <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
-                        <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
-                        <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-primary text-primary-foreground">Télécharger</Button>
-                      </div>
+                {(vendorBatchesShowAll ? vendorBatches : vendorBatches.slice(0,5)).map(b => (
+                  <div key={b.id} className="flex items-center justify-between border p-2 rounded">
+                    <div className="text-sm">
+                      <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
+                      <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
+                      <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
                     </div>
-                  ))}
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
+                      <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-black text-white">Télécharger</Button>
+                    </div>
+                  </div>
+                ))}
                 {vendorBatches.length > 5 && (
                   <div className="flex justify-center mt-2">
                     {!vendorBatchesShowAll ? (
@@ -2437,7 +2303,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleAddProduct}
               disabled={adding}
-              className="bg-primary text-primary-foreground"
+              className="bg-black text-white hover:bg-black/90"
             >
               {adding ? 'Ajout...' : 'Ajouter'}
             </Button>
@@ -2495,7 +2361,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleEditProduct}
               disabled={editing}
-              className="bg-primary text-primary-foreground"
+              className="bg-black text-white hover:bg-black/90"
             >
               {editing ? 'Modification...' : 'Modifier'}
             </Button>
@@ -2538,7 +2404,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setCallModalOpen(false)}>
               Annuler
             </Button>
-            <Button className="bg-primary text-primary-foreground" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
+            <Button className="bg-black text-white" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
               Appeler
             </Button>
           </DialogFooter>
@@ -2550,7 +2416,7 @@ const VendorDashboard = () => {
         <DialogContent className="max-w-md w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5 text-primary" />
+              <QrCode className="h-5 w-5 text-black" />
               QR Code Commande
             </DialogTitle>
           </DialogHeader>
@@ -2561,14 +2427,14 @@ const VendorDashboard = () => {
                   <p className="text-sm text-gray-600 mb-4">
                     Présentez ce QR code au livreur pour qu'il puisse récupérer la commande
                   </p>
-                  <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-primary/20">
+                  <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-black/10">
                     <SimpleQRCode value={selectedOrderForQR.order_code || selectedOrderForQR.id} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 200 : 240} />
                   </div>
                 </div>
-                <div className="bg-primary/10 p-3 rounded-lg">
+                <div className="bg-black/5 p-3 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-semibold text-gray-700">Code commande :</span>
-                    <span className="text-lg font-mono font-bold text-primary">
+                    <span className="text-lg font-mono font-bold text-black">
                       {selectedOrderForQR.order_code || selectedOrderForQR.id}
                     </span>
                   </div>

@@ -25,8 +25,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
     },
     delivered: {
       label: 'Livrée',
-      color: 'bg-green-100 text-green-800 border-green-200',
-      dot: 'bg-green-400'
+      color: 'bg-black text-white border-black',
+      dot: 'bg-black'
     },
 
     cancelled: {
@@ -46,8 +46,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
     },
     active: {
       label: 'Actif',
-      color: 'bg-green-100 text-green-800 border-green-200',
-      dot: 'bg-green-400'
+      color: 'bg-black text-white border-black',
+      dot: 'bg-black'
     },
     inactive: {
       label: 'Inactif',

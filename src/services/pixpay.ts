@@ -122,11 +122,22 @@ export class PixPayService {
       // Sur mobile natif, tenter d'ouvrir directement l'application via App.openUrl
       if (Capacitor.isNativePlatform()) {
         try {
-          await App.openUrl({ url: smsLink });
-          console.log('[PixPay] App.openUrl success:', smsLink);
+          // Some Capacitor AppPlugin versions don't include openUrl in typings.
+          // Use a safe runtime check and cast to any to call it when available.
+          // If unavailable, fall back to setting window.location.
+          const appAny = App as any;
+          if (appAny && typeof appAny.openUrl === 'function') {
+            await appAny.openUrl({ url: smsLink });
+            console.log('[PixPay] App.openUrl success:', smsLink);
+            return;
+          }
+
+          // If openUrl not available, use window.location as fallback
+          (window as any).location.href = smsLink;
+          console.log('[PixPay] App.openUrl not available in this runtime — used window.location as fallback:', smsLink);
           return;
         } catch (appErr) {
-          console.warn('[PixPay] App.openUrl a échoué, fallback vers ouverture externe:', appErr);
+          console.warn('[PixPay] App.openUrl a échoué ou absent, fallback vers ouverture externe:', appErr);
           // Ne pas ouvrir d'in-app browser — on passe à l'ouverture externe
           try {
             // Sur native, fallback sur window.location (ouvrira le navigateur externe)

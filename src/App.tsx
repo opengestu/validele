@@ -23,10 +23,10 @@ const AdminRedirect: React.FC = () => {
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
 
-  if (loading) {
+    if (loading) {
     return (
       <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-[#24BD5C]" />
+        <Spinner size="xl" className="text-black" />
         <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
       </div>
     );

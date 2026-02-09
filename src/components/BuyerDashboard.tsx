@@ -100,7 +100,7 @@ const BuyerDashboard = () => {
   if (loading) {
     return (
       <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-[#24BD5C]" />
+        <Spinner size="xl" className="text-black" />
         <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
       </div>
     );
@@ -115,16 +115,6 @@ const BuyerDashboard = () => {
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
-
-  const isRefreshingRef = React.useRef(false);
-  const shallowOrdersEqual = (a: Order[] = [], b: Order[] = []) => {
-    try {
-      if ((a || []).length !== (b || []).length) return false;
-      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
-      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
-      return aKey === bKey;
-    } catch (e) { return false; }
-  };
   const isOnline = useNetwork();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
   const [processingPayment, setProcessingPayment] = useState(false);
@@ -149,28 +139,6 @@ const BuyerDashboard = () => {
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   // Ajout d'un état pour stocker l'order_id
   const [orderId, setOrderId] = useState<string | null>(null);
-
-  // Client-side cache settings (short TTL) to speed initial render
-  const ORDERS_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
-
-  // If we have a recent cached orders snapshot, load it immediately to avoid waiting
-  React.useEffect(() => {
-    if (!user?.id || typeof window === 'undefined') return;
-    try {
-      const raw = localStorage.getItem(`cached_buyer_orders_${user.id}`);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      const ts = typeof parsed?.ts === 'number' ? parsed.ts : (Array.isArray(parsed) ? Date.now() : 0);
-      if (Date.now() - ts > ORDERS_CACHE_TTL) return;
-      const cachedOrders = Array.isArray(parsed.orders) ? parsed.orders : (Array.isArray(parsed) ? parsed : null);
-      if (cachedOrders) {
-        setOrders(cachedOrders as Order[]);
-        console.log('[BuyerDashboard] Loaded cached orders for immediate render');
-      }
-    } catch (e) {
-      // ignore cache errors
-    }
-  }, [user?.id]);
 
   // Invoice viewer modal states (buyer)
   const [invoiceViewerOpen, setInvoiceViewerOpen] = useState(false);
@@ -264,21 +232,17 @@ const BuyerDashboard = () => {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState('');
-  const [refundOtherReason, setRefundOtherReason] = useState('');
   const [refundLoading, setRefundLoading] = useState(false);
-  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>>([]);
 
   // États pour la WebView de paiement
   const [showPaymentWebView, setShowPaymentWebView] = useState(false);
   const [paymentWebViewUrl, setPaymentWebViewUrl] = useState('');
 
   // Fonction pour charger les commandes de l'acheteur (doit être dans le composant pour accéder à user, setOrders...)
-  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchOrders = useCallback(async () => {
     const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
     if (!user && !smsSessionStr) return;
-    if (opts?.silent && isRefreshingRef.current) return;
-    if (opts?.silent) isRefreshingRef.current = true;
-    if (!opts?.silent) setOrdersLoading(true);
+    setOrdersLoading(true);
     try {
       const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) {
@@ -380,24 +344,10 @@ const BuyerDashboard = () => {
       // Cache les dernières commandes connues pour éviter le "flash" si le backend
       // renvoie temporairement une liste vide (problèmes de session / propagation).
       const cacheKey = `cached_buyer_orders_${buyerId}`;
-
-      // Debug: when debug=1 in URL, print vendor/profile info to help diagnose missing company_name
-      try {
-        if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1') {
-          try {
-            console.debug('[BUYER][DEBUG] sample normalized orders vendor info:', (normalizedOrders || []).slice(0,5).map(o => ({ id: o.id, vendor_id: o.vendor_id, profiles: (o as any).profiles || (o as any).vendor || (o as any).vendor_profile || null })));
-          } catch (e) { /* ignore debug safety */ }
-        }
-      } catch (e) { /* ignore */ }
-
       try {
         if (normalizedOrders.length > 0) {
-          try { if (!opts?.silent) localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() })); } catch (e) { /* ignore */ }
-          if (!opts?.silent) {
-            setOrders(normalizedOrders);
-          } else {
-            if (!shallowOrdersEqual(orders, normalizedOrders)) setOrders(normalizedOrders);
-          }
+          localStorage.setItem(cacheKey, JSON.stringify({ orders: normalizedOrders, ts: Date.now() }));
+          setOrders(normalizedOrders);
         } else {
           // Si la réponse est vide, tenter d'utiliser le cache récent (<5min)
           const raw = localStorage.getItem(cacheKey);
@@ -405,24 +355,20 @@ const BuyerDashboard = () => {
             const parsed = JSON.parse(raw);
             if (parsed && parsed.orders && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
               console.warn('[BUYER] backend returned empty orders — using cached orders to avoid flicker');
-              if (!opts?.silent) setOrders(parsed.orders as Order[]);
-              else if (!shallowOrdersEqual(orders, parsed.orders)) setOrders(parsed.orders as Order[]);
+              setOrders(parsed.orders as Order[]);
               // Schedule a quick retry to get fresh data
               setTimeout(() => { fetchOrders(); }, 2000);
             } else {
               // Cache stale or absent — clear orders
-              if (!opts?.silent) setOrders([]);
+              setOrders([]);
             }
           } else {
-            if (!opts?.silent) setOrders([]);
+            setOrders([]);
           }
         }
       } catch (e) {
         console.warn('[BUYER] cache error:', e);
-        if (!opts?.silent) setOrders(normalizedOrders);
-        else if (!shallowOrdersEqual(orders, normalizedOrders)) setOrders(normalizedOrders);
-      } finally {
-        if (opts?.silent) isRefreshingRef.current = false;
+        setOrders(normalizedOrders);
       }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
@@ -487,52 +433,13 @@ const BuyerDashboard = () => {
     }
   }, [user, toast]);
 
-  const fetchRefundRequests = useCallback(async () => {
-    const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
-    if (!user && !smsSessionStr) return;
-
-    try {
-      const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
-      if (!buyerId) return;
-
-      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
-      let token = sms?.access_token || sms?.token || sms?.jwt || '';
-      if (!token) {
-        try {
-          const sessRes = await supabase.auth.getSession();
-          const sess = sessRes.data?.session ?? null;
-          token = sess?.access_token || '';
-        } catch (e) {
-          token = '';
-        }
-      }
-
-      const url = apiUrl(`/api/buyer/refund-requests?buyer_id=${buyerId}`);
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const resp = await fetch(url, { method: 'GET', headers });
-      const json = await resp.json().catch(() => null);
-      if (!resp.ok || !json || !json.success) {
-        console.warn('[REFUND] Failed to fetch refund requests:', json?.error || resp.status);
-        return;
-      }
-
-      const refunds = (json.refund_requests || []) as Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>;
-      setRefundRequests(refunds);
-    } catch (error) {
-      console.error('[REFUND] Erreur lors du chargement des demandes de remboursement:', error);
-    }
-  }, [user]);
-
   useEffect(() => {
     // Wait for auth initialization to complete before fetching orders/txs.
     // This avoids empty results when the session is still being restored.
     if (loading) return;
     fetchOrders();
     fetchTransactions();
-    fetchRefundRequests();
-  }, [fetchOrders, fetchTransactions, fetchRefundRequests, loading]);
+  }, [fetchOrders, fetchTransactions, loading]);
 
   // Offline banner is rendered within the layout UI below
 
@@ -804,16 +711,10 @@ const BuyerDashboard = () => {
     } catch (error) {
       setSearchResult(null);
       setSearchModalOpen(false);
-      // Construire un message d'erreur lisible pour l'utilisateur (ne pas afficher du JSON brut)
-      const rawMessage = toFrenchErrorMessage(error, '');
-      // Retirer d'éventuels blocs JSON/objets du message pour éviter d'exposer du contenu technique
-      const sanitized = rawMessage.replace(/\{[\s\S]*\}/g, '').trim();
-      const userMessage = sanitized || `Aucun produit trouvé avec le code "${searchCode}"`;
       toast({
         title: "Produit non trouvé",
-        description: `${userMessage}. Vérifiez le code et réessayez ou contactez le vendeur.`,
+        description: "Aucun produit trouvé avec ce code",
         variant: "destructive",
-        duration: 7000,
       });
     } finally {
       setSearchLoading(false);
@@ -885,10 +786,9 @@ const BuyerDashboard = () => {
 
   const handlePaymentError = () => {
     toast({
-      title: "Erreur paiement",
-      description: "Une erreur est survenue lors du processus de paiement. Vérifiez votre connexion, vos informations de paiement et réessayez. Si l'erreur persiste, contactez le support.",
+      title: "Erreur",
+      description: "Une erreur est survenue lors du paiement",
       variant: "destructive",
-      duration: 7000,
     });
     setPaymentModalOpen(false);
   };
@@ -1254,12 +1154,10 @@ const BuyerDashboard = () => {
         errorMessage = 'Le serveur met trop de temps à répondre. Réessayez.';
       }
       
-      // Provide a clearer, actionable message to the user
       toast({
-        title: 'Erreur création commande',
-        description: `${errorMessage}. Vérifiez votre connexion, le code produit, la disponibilité du produit, ou réessayez plus tard. Si le problème persiste, contactez le support.`,
+        title: 'Erreur',
+        description: errorMessage,
         variant: 'destructive',
-        duration: 8000,
       });
     } finally {
       setProcessingPayment(false);
@@ -1409,17 +1307,6 @@ const BuyerDashboard = () => {
     }
   };
 
-  // Helper to determine vendor display name from different payload shapes
-  const getVendorDisplayName = (order: Order) => {
-    // Try multiple possible locations for vendor profile depending on which API returned it
-    const p: any = (order as any).profiles || (order as any).vendor || (order as any).vendor_profile || (order as any).vendorProfile || null;
-    if (p) {
-      return p.company_name || p.companyName || p.full_name || p.fullName || 'N/A';
-    }
-    return 'N/A';
-  };
-
-
 
   const renderStatusBadge = (status?: string) => {
     if (!status) return null;
@@ -1429,10 +1316,9 @@ const BuyerDashboard = () => {
     let dot = 'bg-gray-400';
     if (status === 'in_delivery') { bg = 'bg-blue-100 text-blue-700'; dot = 'bg-blue-500'; }
     else if (status === 'paid') { bg = 'bg-purple-100 text-purple-700'; dot = 'bg-purple-500'; }
-    else if (status === 'delivered') { bg = 'bg-green-100 text-green-700'; dot = 'bg-green-500'; }
+    else if (status === 'delivered') { bg = 'bg-black/5 text-black'; dot = 'bg-black'; }
     else if (status === 'pending') { bg = 'bg-yellow-100 text-yellow-700'; dot = 'bg-yellow-500'; }
     else if (status === 'cancelled') { bg = 'bg-red-100 text-red-700'; dot = 'bg-red-500'; }
-    else if (status === 'refunded') { bg = 'bg-gray-100 text-gray-700'; dot = 'bg-gray-500'; }
 
     return (
       <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${bg}`} role="status" aria-label={text}>
@@ -1440,48 +1326,6 @@ const BuyerDashboard = () => {
         <span className="leading-none">{text}</span>
       </span>
     );
-  };
-
-  const normalizeRefundTxStatus = (status?: string) => {
-    const s = String(status || '').toUpperCase();
-    if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(s)) return 'success';
-    if (['PENDING', 'PENDING1', 'PENDING2', 'PROCESSING', 'QUEUED'].includes(s)) return 'pending';
-    if (['FAILED', 'ERROR', 'CANCELLED'].includes(s)) return 'failed';
-    return s ? 'pending' : 'unknown';
-  };
-
-  const getEffectiveOrderStatus = (
-    order: Order,
-    orderTransactions: Array<{ id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string }>,
-    refundRequests?: Array<{ id: string; order_id: string; reviewed_at: string | null; status: string }>
-  ) => {
-    const current = order.status;
-    
-    // Si la commande est déjà marquée comme remboursée dans la base
-    if (current === 'refunded') return 'refunded';
-    
-    // Si la commande est annulée, vérifier si elle a un remboursement approuvé
-    if (current === 'cancelled') {
-      // D'abord chercher si refundRequests a été chargé
-      const refund = refundRequests?.find(r => r.order_id === order.id);
-      if (refund && refund.reviewed_at) {
-        return 'refunded';
-      }
-      
-      // Fallback: si pas de refundRequests encore chargé, chercher une transaction de remboursement réussie
-      const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
-      if (refundTx) {
-        const txStatus = String(refundTx.status || '').toUpperCase();
-        if (['SUCCESS', 'SUCCESSFUL', 'PAID', 'COMPLETED'].includes(txStatus)) {
-          return 'refunded';
-        }
-      }
-      
-      return 'cancelled';
-    }
-    
-    // Autres statuts ne changent pas
-    return current;
   };
 
   // Fonction de demande de remboursement
@@ -1509,9 +1353,7 @@ const BuyerDashboard = () => {
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           orderId: refundOrder.id,
-          reason: refundReason === 'Autre' && refundOtherReason 
-            ? `Autre: ${refundOtherReason}` 
-            : (refundReason || 'Non satisfaction client')
+          reason: refundReason || 'Non satisfaction client'
         }),
       });
 
@@ -1546,7 +1388,6 @@ const BuyerDashboard = () => {
         setShowRefundModal(false);
         setRefundOrder(null);
         setRefundReason('');
-        setRefundOtherReason('');
         fetchOrders();
         fetchTransactions();
       } else {
@@ -1568,7 +1409,6 @@ const BuyerDashboard = () => {
   const openRefundModal = (order: Order) => {
     setRefundOrder(order);
     setRefundReason('');
-    setRefundOtherReason('');
     setShowRefundModal(true);
   };
 
@@ -1613,7 +1453,7 @@ const BuyerDashboard = () => {
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
-        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center backdrop-blur-sm">
+        <div className="fixed inset-0 z-[100] bg-black bg-opacity-50 flex items-center justify-center backdrop-blur-sm">
           <div className="flex flex-col items-center gap-4 bg-white rounded-lg px-8 py-6 shadow-xl">
             <Spinner size="xl" />
             <span className="text-lg font-semibold text-gray-700">Paiement en cours...</span>
@@ -1621,7 +1461,7 @@ const BuyerDashboard = () => {
         </div>
       )}
 
-      {/* Header Client moderne - application bar uses primary color */}
+      {/* Header Client moderne - utilise la couleur primaire (comme espace livreur) */}
       <header className="bg-primary rounded-b-2xl shadow-lg mb-6 relative">
         <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-col items-center md:items-start">
@@ -1694,30 +1534,28 @@ const BuyerDashboard = () => {
                 placeholder="Votre numéro de téléphone"
               />
             </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
               <div style={{ display: 'flex', gap: 12 }}>
-                <Button
+                <button
                   onClick={handleSaveProfile}
                   disabled={savingProfile}
-                  className="btn-buyer flex-1"
+                  style={{ flex: 1, background: '#111827', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer', opacity: savingProfile ? 0.7 : 1 }}
                 >
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
-                </Button>
-                <Button
+                </button>
+                <button
                   onClick={() => setDrawerOpen(false)}
-                  variant="outline"
-                  className="flex-1"
+                  style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer' }}
                 >
                   Annuler
-                </Button>
+                </button>
               </div>
-              <Button
+              <button
                 onClick={handleSignOut}
-                variant="destructive"
-                className="w-full"
+                style={{ width: '100%', background: '#e53e3e', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
               >
                 Se déconnecter
-              </Button>
+              </button>
             </div>
           </div>
         </div>
@@ -1794,9 +1632,8 @@ const BuyerDashboard = () => {
                       {displayedOrders.map((order) => {
                         // Trouver les transactions associées à cette commande
                         const orderTransactions = transactions.filter(t => t.order_id === order.id);
+                        const paymentTransaction = orderTransactions.find(t => t.transaction_type !== 'payout');
                         const payoutTransaction = orderTransactions.find(t => t.transaction_type === 'payout');
-                        const refundTransaction = orderTransactions.find(t => t.transaction_type === 'refund');
-                        const effectiveStatus = getEffectiveOrderStatus(order, orderTransactions, refundRequests);
                         const isExpanded = expandedOrderIds.has(order.id);
                         const toggleDetails = () => {
                           setExpandedOrderIds((prev) => {
@@ -1820,7 +1657,7 @@ const BuyerDashboard = () => {
                                     {order.products?.name || 'Commande'}
                                   </p>
                                   <div className="flex items-center gap-3">
-                                    <span className="text-lg font-bold text-green-700">
+                                    <span className="text-lg font-bold text-black">
                                       {order.total_amount?.toLocaleString()} FCFA
                                     </span>
                                   </div>
@@ -1829,7 +1666,7 @@ const BuyerDashboard = () => {
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{getVendorDisplayName(order)}</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">
@@ -1850,7 +1687,7 @@ const BuyerDashboard = () => {
                                             href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-green-50 text-green-700 text-sm font-semibold hover:bg-green-100 transition min-w-[40px]"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/5 text-black text-sm font-semibold hover:bg-black/10 transition min-w-[40px]"
                                             title="Contacter sur WhatsApp"
                                           >
                                             <WhatsAppIcon className="h-5 w-5" size={18} />
@@ -1898,7 +1735,7 @@ const BuyerDashboard = () => {
                                     className={
                                       `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
                                       (payoutTransaction.status === 'SUCCESSFUL'
-                                        ? 'bg-green-100 text-green-700'
+                                        ? 'bg-black/5 text-black'
                                         : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
                                           ? 'bg-yellow-100 text-yellow-700'
                                           : 'bg-red-100 text-red-700')
@@ -1915,19 +1752,19 @@ const BuyerDashboard = () => {
                             )}
 
                             {/* Affichage du remboursement si existant */}
-                            {refundTransaction && (
+                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
                               <div className="rounded-md bg-orange-50 p-2">
                                 <p className="text-xs font-medium text-orange-700">
                                   💸 Remboursement:
                                   <span
                                     className={
                                       `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
-                                      (normalizeRefundTxStatus(refundTransaction.status) === 'success'
-                                        ? 'bg-green-100 text-green-700'
+                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                        ? 'bg-black/5 text-black'
                                         : 'bg-yellow-100 text-yellow-700')
                                     }
                                   >
-                                    {normalizeRefundTxStatus(refundTransaction.status) === 'success'
+                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
                                       ? '✓ Effectué'
                                       : '⏳ En cours'}
                                   </span>
@@ -1952,9 +1789,9 @@ const BuyerDashboard = () => {
                               )}
 
                               <button
-                                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground bg-muted hover:bg-muted/90 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
+                                className="rounded-md border border-black px-3 py-1.5 text-sm font-medium text-black bg-black/5 hover:bg-black/10 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
                                 style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
-                                onClick={() => openInvoiceInModal(`/api/buyer/orders/${order.id}/invoice`, 'Facture de la commande', true)}
+                                onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                               >
                                 Voir facture
                               </button>
@@ -1971,7 +1808,7 @@ const BuyerDashboard = () => {
                             {isExpanded && (
                               <div className="flex flex-wrap gap-2">
                                 {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
-                                {(effectiveStatus === 'paid' || effectiveStatus === 'in_delivery') && (
+                                {(order.status === 'paid' || order.status === 'in_delivery') && (
                                   <button
                                     className="flex items-center gap-1 rounded-md border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 min-w-[32px]"
                                     onClick={() => openRefundModal(order)}
@@ -1988,7 +1825,7 @@ const BuyerDashboard = () => {
                             {/* Statut (déplacé en bas de la carte) */}
                             <div className="mt-4">
                               <div className="text-sm flex items-center gap-2">
-                                {renderStatusBadge(effectiveStatus)}
+                                {renderStatusBadge(order.status)}
                               </div>
                             </div>
                           </div>
@@ -2044,7 +1881,7 @@ const BuyerDashboard = () => {
             {!invoiceViewerLoading && invoiceViewerHtml && (
               <div>
                 <div className="flex justify-end gap-2 mb-2">
-                  <Button size="sm" onClick={downloadVisibleInvoice} className="btn-buyer">Télécharger</Button>
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
                 <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
@@ -2289,7 +2126,7 @@ const BuyerDashboard = () => {
               <DialogTitle>Choisissez le mode de paiement Orange Money</DialogTitle>
             </DialogHeader>
             <div className="flex flex-col gap-4 mt-4">
-              <Button className="w-full btn-buyer" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
+              <Button className="w-full bg-black hover:bg-black/80 text-white" onClick={() => onOrangeChoice && onOrangeChoice('qr')}>
                 Payer par QR Code
               </Button>
               <Button className="w-full bg-yellow-500 hover:bg-yellow-600" onClick={() => onOrangeChoice && onOrangeChoice('otp')}>
@@ -2356,29 +2193,6 @@ const BuyerDashboard = () => {
                 </select>
               </div>
 
-              {/* Champ texte pour "Autre" raison */}
-              {refundReason === 'Autre' && (
-                <div>
-                  <label htmlFor="refund-other-reason" className="block text-sm font-medium mb-2">
-                    Précisez la raison <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    id="refund-other-reason"
-                    placeholder="Ex: Produit endommagé, Mauvaise taille, etc."
-                    className="w-full border rounded-lg p-2"
-                    value={refundOtherReason}
-                    onChange={(e) => setRefundOtherReason(e.target.value)}
-                    maxLength={200}
-                  />
-                  {refundOtherReason.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {refundOtherReason.length}/200 caractères
-                    </p>
-                  )}
-                </div>
-              )}
-
               {/* Boutons */}
               <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <Button 
@@ -2388,7 +2202,6 @@ const BuyerDashboard = () => {
                     setShowRefundModal(false);
                     setRefundOrder(null);
                     setRefundReason('');
-                    setRefundOtherReason('');
                   }}
                   disabled={refundLoading}
                 >
@@ -2397,7 +2210,7 @@ const BuyerDashboard = () => {
                 <Button 
                   className="w-full sm:flex-1 bg-red-600 hover:bg-red-700"
                   onClick={handleRequestRefund}
-                  disabled={refundLoading || (refundReason === 'Autre' && !refundOtherReason.trim())}
+                  disabled={refundLoading}
                 >
                   {refundLoading ? (
                     <>
@@ -2431,11 +2244,11 @@ const BuyerDashboard = () => {
 
       {/* Modal de résultat de recherche produit */}
       {searchModalOpen && searchResult && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
             <div className="p-6 border-b flex items-center justify-between">
               <h3 className="text-xl font-bold flex items-center gap-2">
-                <Package className="h-6 w-6 text-green-600" />
+                <Package className="h-6 w-6 text-black" />
                 Produit trouvé
               </h3>
               <button
@@ -2465,7 +2278,7 @@ const BuyerDashboard = () => {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-3xl font-bold text-green-600">{searchResult.price.toLocaleString()} FCFA</p>
+                    <p className="text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
                     <p className="text-sm text-gray-500 mt-1">Code: {searchResult.code}</p>
                   </div>
                 </div>
@@ -2525,14 +2338,14 @@ const BuyerDashboard = () => {
                       onClick={() => setPaymentMethod('wave')}
                       className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                         paymentMethod === 'wave' 
-                          ? 'border-green-500 bg-green-50' 
+                          ? 'border-black bg-black/5' 
                           : 'border-gray-200 hover:border-gray-300'
                       }`}
                     >
                       <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
                       <span className="text-sm font-semibold">Wave</span>
                       {paymentMethod === 'wave' && (
-                        <div className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
+                        <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center">
                           <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                           </svg>
@@ -2581,7 +2394,7 @@ const BuyerDashboard = () => {
                 <Button
                   onClick={handleCreateOrderAndShowPayment}
                   disabled={processingPayment}
-                  className={`flex-1 ${paymentMethod === 'wave' ? 'bg-green-500 hover:bg-green-600' : 'bg-orange-600 hover:bg-orange-700'}`}
+                  className={`flex-1 ${paymentMethod === 'wave' ? 'bg-black hover:bg-black/80 text-white' : 'bg-orange-600 hover:bg-orange-700'}`}
                 >
                   {processingPayment ? (
                     <>

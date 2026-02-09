@@ -683,15 +683,18 @@ const AdminDashboard: React.FC = () => {
         throw new Error(json?.error || `Erreur lors de l\'approbation (${res.status})`);
       }
       
+      // If backend returns provider info or tx id, surface it to the admin for debugging
+      const providerId = json?.transaction_id || json?.provider_transaction_id || (json?.transaction && (json.transaction as any).provider_transaction_id) || getProviderId(json?.provider_response as any);
+
       toast({ 
-        title: '✅ Remboursement approuvé', 
-        description: 'Le remboursement a été traité avec succès. Mise à jour des données...' 
+        title: providerId ? '✅ Remboursement approuvé — transaction envoyée' : '✅ Remboursement approuvé', 
+        description: providerId ? `Provider TX: ${providerId} — Mise à jour des données...` : 'Le remboursement a été traité avec succès. Mise à jour des données...',
       });
-      
-      // Reload immediately to get updated data from backend
-      console.log('[AdminDashboard] Fetching updated data...');
-      await fetchData();
-      
+
+      // Reload immediately to get updated data from backend and transactions
+      console.log('[AdminDashboard] Fetching updated data and transactions...');
+      await Promise.all([fetchData(), fetchTransactionsOnly()]);
+
       // Also reload after delay to ensure backend fully processed
       setTimeout(() => {
         console.log('[AdminDashboard] Fetching data again after delay...');

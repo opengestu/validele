@@ -25,19 +25,19 @@ const StatsCard: React.FC<StatsCardProps> = ({
 }) => {
   const colorConfig = {
     vendor: {
-      bg: 'from-green-500 to-emerald-500',
-      text: 'text-green-600',
-      bgLight: 'bg-green-50'
+      bg: 'from-black to-neutral-800',
+      text: 'text-black',
+      bgLight: 'bg-black/5'
     },
     buyer: {
-      bg: 'from-green-500 to-emerald-500', 
-      text: 'text-green-600',
-      bgLight: 'bg-green-50'
+      bg: 'from-black to-neutral-800', 
+      text: 'text-black',
+      bgLight: 'bg-black/5'
     },
     delivery: {
-      bg: 'from-green-500 to-emerald-500',
-      text: 'text-green-600', 
-      bgLight: 'bg-green-50'
+      bg: 'from-black to-neutral-800',
+      text: 'text-black', 
+      bgLight: 'bg-black/5'
     },
     default: {
       bg: 'from-gray-500 to-gray-600',
@@ -50,7 +50,7 @@ const StatsCard: React.FC<StatsCardProps> = ({
 
   const getTrendColor = (trend: 'up' | 'down' | 'neutral') => {
     switch (trend) {
-      case 'up': return 'text-green-600';
+      case 'up': return 'text-black';
       case 'down': return 'text-red-600';
       case 'neutral': return 'text-gray-600';
     }
