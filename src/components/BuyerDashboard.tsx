@@ -374,11 +374,8 @@ const BuyerDashboard = () => {
       }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
-      toast({
-        title: "Erreur",
-        description: "Impossible de charger les commandes",
-        variant: "destructive",
-      });
+      // Suppressed user-facing destructive toast; use cached data / silent fallback instead
+      console.debug('[BUYER] fetchOrders failed, handled silently');
     } finally {
       if (!opts?.silent) setOrdersLoading(false);
     }
@@ -426,7 +423,8 @@ const BuyerDashboard = () => {
         const cached = localStorage.getItem(`cached_buyer_transactions_${user?.id}`);
         if (cached) {
           setTransactions(JSON.parse(cached));
-          toast({ title: 'Hors-ligne', description: 'Affichage des transactions en cache' });
+          // Use cached transactions silently (no toast)
+          console.info('[BuyerDashboard] using cached transactions silently');
           return;
         }
       } catch (e) {
@@ -1480,7 +1478,7 @@ const BuyerDashboard = () => {
       )}
 
       {/* Header Client moderne - utilise la couleur primaire (comme espace livreur) */}
-      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 relative">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 sticky top-0 z-40 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-col items-center md:items-start">
             <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">

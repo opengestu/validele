@@ -1843,11 +1843,20 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           try {
             const { data: orderDetails } = await dbClient
               .from('orders')
-              .select('buyer_id, vendor_id, order_code, total_amount')
+              .select('buyer_id, vendor_id, order_code, total_amount, product_id')
               .eq('id', orderId)
               .single();
 
             if (orderDetails) {
+              // Essayer de déterminer le nom du produit (si disponible)
+              let productName = null;
+              try {
+                if (orderDetails.product_id) {
+                  const { data: prod } = await dbClient.from('products').select('name').eq('id', orderDetails.product_id).single();
+                  productName = prod?.name || null;
+                }
+              } catch (e) { /* ignore */ }
+
               // Notification acheteur (push_tokens -> fallback profiles.push_token)
               const { data: buyerTokens } = await dbClient
                 .from('push_tokens')
@@ -1858,7 +1867,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               const buyerNotif = getNotificationTemplate('PAYMENT_CONFIRMED', {
                 orderCode: orderDetails.order_code,
                 amount: orderDetails.total_amount,
-                orderId: orderId
+                orderId: orderId,
+                productName
               });
 
               if (buyerTokens && buyerTokens.length > 0) {
@@ -1888,7 +1898,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               const vendorNotif = getNotificationTemplate('PAYMENT_RECEIVED', {
                 orderCode: orderDetails.order_code,
                 amount: orderDetails.total_amount,
-                orderId: orderId
+                orderId: orderId,
+                productName
               });
 
               if (vendorTokens && vendorTokens.length > 0) {
@@ -2037,7 +2048,7 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     // Fetch the order
     const { data: order, error: orderErr } = await supabaseAdmin
       .from('orders')
-      .select('id, order_code, status, buyer_id, vendor_id, total_amount')
+      .select('id, order_code, status, buyer_id, vendor_id, total_amount, product_id')
       .eq('id', orderId)
       .single();
 
@@ -2079,10 +2090,20 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
         .eq('is_active', true);
 
       if (buyerTokens && buyerTokens.length > 0) {
+        // Try to resolve product name for the notification
+        let productName = null;
+        try {
+          if (order.product_id) {
+            const { data: prod } = await supabaseAdmin.from('products').select('name').eq('id', order.product_id).single();
+            productName = prod?.name || null;
+          }
+        } catch (e) { /* ignore */ }
+
         const notif = getNotificationTemplate('PAYMENT_CONFIRMED', {
           orderCode: order.order_code,
           amount: order.total_amount,
-          orderId: orderId
+          orderId: orderId,
+          productName
         });
 
         for (const { token } of buyerTokens) {
@@ -2099,10 +2120,12 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
         .eq('is_active', true);
 
       if (vendorTokens && vendorTokens.length > 0) {
+        // Reuse productName resolved above if any
         const notif = getNotificationTemplate('PAYMENT_RECEIVED', {
           orderCode: order.order_code,
           amount: order.total_amount,
-          orderId: orderId
+          orderId: orderId,
+          productName: typeof productName !== 'undefined' ? productName : null
         });
 
         for (const { token } of vendorTokens) {
@@ -5689,6 +5712,15 @@ app.post('/api/orders', async (req, res) => {
 
     // Envoyer une notification au vendeur
     try {
+      // Récupérer le nom du produit au besoin
+      let productName = null;
+      try {
+        if (product_id) {
+          const { data: prod } = await supabaseAdmin.from('products').select('name').eq('id', product_id).single();
+          productName = prod?.name || null;
+        }
+      } catch (e) { /* ignore */ }
+
       const { data: vendorTokens } = await supabaseAdmin
         .from('push_tokens')
         .select('token')
@@ -5699,7 +5731,8 @@ app.post('/api/orders', async (req, res) => {
         const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
           orderCode: order_code,
           amount: total_amount,
-          orderId: order.id
+          orderId: order.id,
+          productName
         });
 
         for (const { token } of vendorTokens) {
@@ -6160,6 +6193,15 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
 
     // Envoyer une notification au vendeur
     try {
+      // Récupérer le nom du produit si possible
+      let productName = null;
+      try {
+        if (product_id) {
+          const { data: prod } = await supabase.from('products').select('name').eq('id', product_id).single();
+          productName = prod?.name || null;
+        }
+      } catch (e) { /* ignore */ }
+
       const { data: vendorTokens } = await supabase
         .from('push_tokens')
         .select('token')
@@ -6170,7 +6212,8 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
         const notif = getNotificationTemplate('NEW_ORDER_VENDOR', {
           orderCode: order_code,
           amount: total_amount,
-          orderId: order.id
+          orderId: order.id,
+          productName
         });
 
         for (const { token } of vendorTokens) {
@@ -6744,11 +6787,18 @@ app.post('/api/paydunya/notification', async (req, res) => {
       try {
         const { data: orderDetails } = await supabase
           .from('orders')
-          .select('buyer_id, vendor_id, order_code, total_amount')
+          .select('buyer_id, vendor_id, order_code, total_amount, product_id')
           .eq('id', orderId)
           .single();
 
         if (orderDetails) {
+          let productName = null;
+          try {
+            if (orderDetails.product_id) {
+              const { data: prod } = await supabase.from('products').select('name').eq('id', orderDetails.product_id).single();
+              productName = prod?.name || null;
+            }
+          } catch (e) { /* ignore */ }
           const { data: buyerTokens } = await supabase
             .from('push_tokens')
             .select('token')

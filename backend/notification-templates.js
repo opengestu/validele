@@ -125,6 +125,20 @@ const NOTIFICATION_TEMPLATES = {
     })
   },
 
+  // Vendor payment received after buyer payment (distinct from payout)
+  PAYMENT_RECEIVED: {
+    title: '💰 Paiement reçu',
+    body: (data) => `Vous avez reçu ${data.amount} FCFA pour ${data.productName || data.orderCode}`,
+    data: (data) => ({
+      type: 'payment_received',
+      order_id: data.orderId,
+      order_code: data.orderCode,
+      product_name: data.productName,
+      amount: data.amount,
+      screen: 'VendorOrders'
+    })
+  },
+
   BATCH_PAYOUT_PROCESSING: {
     title: '💳 Lot de paiement en cours',
     body: (data) => `Votre lot de paiement #${data.batchId} est en cours de traitement. Montant total: ${data.totalAmount} FCFA`,

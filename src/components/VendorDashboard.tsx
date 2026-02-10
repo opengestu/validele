@@ -381,7 +381,9 @@ const VendorDashboard = () => {
   const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const caller = smsUser || user;
     if (!caller) return;
-    console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable, silent: !!opts?.silent });
+    if (!opts?.silent) {
+      console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable, silent: !!opts?.silent });
+    }
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
       const token = smsUser?.access_token || localStorage.getItem('sms_auth_session') ? smsUser?.access_token : '';
@@ -486,16 +488,14 @@ const VendorDashboard = () => {
         if (cached) {
           const parsed = JSON.parse(cached) as Order[];
           setOrders(parsed);
-          toast({ title: 'Hors-ligne', description: 'Affichage des commandes en cache' });
+          // Using cached orders silently (no toast)
+          console.debug('[VendorDashboard] using cached orders (cached fallback)');
           return;
         }
       } catch (e) { /* ignore */ }
       console.error('[VendorDashboard] fetchOrders error', error);
-      toast({
-        title: "Erreur",
-        description: "Impossible de charger les commandes",
-        variant: "destructive",
-      });
+      // Suppressed user-facing destructive toast; fallback to cached data is used silently
+      console.debug('[VendorDashboard] fetchOrders failed but handled silently');
     }
    
   }, [user, smsUser, toast, getOrderBuyerName, getOrderBuyerId, normalizeBuyerName]);
@@ -896,7 +896,7 @@ const VendorDashboard = () => {
       Promise.resolve(fetchOrders({ silent: true }))
         .catch(e => console.warn('[VendorDashboard] periodic fetchOrders failed', e))
         .finally(() => { pollingRef.current.orders = false; });
-    }, 1000);
+    }, 3000);
 
     const txInterval = setInterval(() => {
       if (!mounted) return;
@@ -1290,7 +1290,7 @@ const VendorDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
       {/* Header Moderne - Style similaire à BuyerDashboard */}
-      <header className="bg-primary rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 sticky top-0 z-40 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl

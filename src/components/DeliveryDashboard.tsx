@@ -918,7 +918,7 @@ const DeliveryDashboard = () => {
       {/* Dev diagnostics banner (only in development) */}
 
       {/* Header Moderne - Style similaire à VendorDashboard */}
-      <header className="bg-primary rounded-b-2xl shadow-lg mb-6">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 sticky top-0 z-40 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
