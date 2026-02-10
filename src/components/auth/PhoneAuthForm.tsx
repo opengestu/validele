@@ -630,7 +630,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         throw new Error(body.error || 'Code PIN incorrect');
       }
       // Succès : stocker token et session
-      let accessToken = body.access_token || body.token || null;
+      let accessToken = body.token;
       console.log('[DEBUG] /auth/login-pin result body:', body);
       // Si c'est un vendeur, générer le JWT backend pour session SMS
       if (existingProfile.role === 'vendor') {
@@ -649,24 +649,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           console.error('Erreur génération JWT vendeur:', e);
         }
       }
-
-      // Inject Realtime auth token for SMS session if available
       if (accessToken) {
-        try {
-          // Persist for future requests
-          localStorage.setItem('auth_token', accessToken);
-          // Inject into Supabase Realtime so RLS sees auth.uid()
-          try {
-            supabase.realtime.setAuth(accessToken);
-            console.log('[Auth] Realtime auth injected (SMS login)');
-          } catch (e) {
-            console.warn('[Auth] supabase.realtime.setAuth failed', e);
-          }
-        } catch (e) {
-          console.warn('[Auth] storing access token failed', e);
-        }
+        localStorage.setItem('auth_token', accessToken);
       }
-
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: existingProfile.id,

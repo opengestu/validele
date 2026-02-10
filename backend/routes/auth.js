@@ -155,11 +155,8 @@ router.post('/login-pin', async (req, res) => {
     // Issue JWT if configured
     const jwtSecret = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
     if (jwtSecret) {
-      // Create a JWT compatible with Supabase RLS expectations: include `sub` (user id)
-      // and a simple `role` claim to help policies if needed.
-      const token = jwt.sign({ sub: user.id, role: 'authenticated', phone: user.phone }, jwtSecret, { expiresIn: '7d' });
-      // Return a conventional access_token name so clients can inject it directly into Realtime
-      return res.json({ success: true, access_token: token, expires_in: 7 * 24 * 3600 });
+      const token = jwt.sign({ sub: user.id, phone: user.phone }, jwtSecret, { expiresIn: '7d' });
+      return res.json({ success: true, token });
     }
 
     return res.json({ success: true });

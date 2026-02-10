@@ -348,19 +348,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
                     setUserProfile(profileObj);
                     writeCachedProfile(profileObj);
-                    // If SMS session contains an access_token, inject it into Realtime so RLS sees the correct auth.uid()
-                    try {
-                      if ((smsSession as any)?.access_token) {
-                        try {
-                          supabase.realtime.setAuth((smsSession as any).access_token);
-                          console.log('[Auth] Realtime auth injected (SMS session restore)');
-                        } catch (e) {
-                          console.warn('[Auth] supabase.realtime.setAuth failed during SMS session restore', e);
-                        }
-                      }
-                    } catch (e) {
-                      // ignore
-                    }
                     setLoading(false);
                     return; // Session SMS trouvée
                   }
@@ -381,16 +368,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                     created_at: new Date().toISOString()
                   } as User);
                   setUserProfile(fallbackProfile);
-                  writeCachedProfile(fallbackProfile);                  try {
-                    if ((smsSession as any)?.access_token) {
-                      try {
-                        supabase.realtime.setAuth((smsSession as any).access_token);
-                        console.log('[Auth] Realtime auth injected (SMS session fallback)');
-                      } catch (e) {
-                        console.warn('[Auth] supabase.realtime.setAuth failed during SMS session fallback', e);
-                      }
-                    }
-                  } catch (e) { /* ignore */ }                  setLoading(false);
+                  writeCachedProfile(fallbackProfile);
+                  setLoading(false);
                   return;
                 }
               }
