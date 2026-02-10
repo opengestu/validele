@@ -400,7 +400,8 @@ const AdminDashboard: React.FC = () => {
     failed: 'Échouée',
     cancelled: 'Annulée',
     // Pixpay statuses
-    PENDING1: 'En attente',
+    // Treat PENDING1 as a success (Pixpay uses PENDING1 for completed transfers in some cases)
+    PENDING1: 'Réussie ✓',
     PENDING2: 'En attente',
     SUCCESSFUL: 'Réussie ✓',
     SUCCESS: 'Réussie ✓',
@@ -410,8 +411,9 @@ const AdminDashboard: React.FC = () => {
   // Normalize status for consistent display
   const normalizeStatus = (s?: string): string => {
     const st = String(s || '').toUpperCase();
-    if (st === 'SUCCESSFUL' || st === 'SUCCESS') return 'paid';
-    if (st === 'PENDING1' || st === 'PENDING2') return 'pending';
+    // In Pixpay, PENDING1 indicates a completed transfer in some flows; treat it as paid
+    if (st === 'SUCCESSFUL' || st === 'SUCCESS' || st === 'PENDING1') return 'paid';
+    if (st === 'PENDING2') return 'pending';
     if (st === 'FAILED') return 'failed';
     return String(s || '').toLowerCase();
   };
@@ -1581,17 +1583,21 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                       <TableCell>{t.note || '-'}</TableCell>
                       <TableCell>
-                        <span className={`px-2 py-1 rounded text-sm ${
-                          t.status === 'paid' || t.status === 'SUCCESSFUL' || t.status === 'SUCCESS' 
-                            ? 'bg-green-100 text-green-800' 
-                            : t.status === 'processing' || t.status === 'PENDING1' || t.status === 'PENDING2'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : t.status === 'failed' || t.status === 'FAILED'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {t.status || '-'}
-                        </span>
+                        {/* Normalize the status for consistent label + color, treat PENDING1 as success per Pixpay behaviour */}
+                        {(() => {
+                          const normalized = normalizeStatus(t.status);
+                          const label = (TX_STATUS_LABELS_FR[t.status || ''] || TX_STATUS_LABELS_FR[normalized] || t.status || '-');
+                          const cls = normalized === 'paid' ? 'bg-green-100 text-green-800' :
+                                    normalized === 'processing' ? 'bg-blue-100 text-blue-800' :
+                                    normalized === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                    normalized === 'failed' ? 'bg-red-100 text-red-800' :
+                                    'bg-slate-100 text-slate-700';
+                          return (
+                            <span className={`px-2 py-1 rounded text-sm ${cls}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>{t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</TableCell>
                     </TableRow>

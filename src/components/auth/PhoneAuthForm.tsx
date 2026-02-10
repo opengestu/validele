@@ -70,6 +70,17 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const otpRef2 = useRef<HTMLInputElement>(null);
   const otpRef3 = useRef<HTMLInputElement>(null);
   const otpRefs = [otpRef0, otpRef1, otpRef2, otpRef3];
+
+  // Local storage key used to persist the in-progress auth state so the flow
+  // can be resumed if the app reloads / is backgrounded on mobile.
+  const STORAGE_KEY = 'phone_auth_state_v1';
+  // To avoid hammering clipboard reads on some mobile browsers, remember last attempt.
+  const lastClipboardAttemptRef = useRef<number>(0);
+
+  // Hidden ref used to receive iOS/Android SMS autofill (autocomplete="one-time-code").
+  const otpAutoFillRef = useRef<HTMLInputElement | null>(null);
+  // Flag to avoid clobbering paste handling with onChange events (some browsers fire both).
+  const isPastingRef = useRef<boolean>(false);
  
   const pinRef0 = useRef<HTMLInputElement>(null);
   const pinRef1 = useRef<HTMLInputElement>(null);
@@ -137,6 +148,83 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
   }, [step]);
 
+  // Paste handling is done per-input (onPaste) and via the hidden autofill input
+  // (autocomplete="one-time-code") to avoid duplicate handlers and race conditions.
+
+  // Handle autofill from SMS (QuickType) by monitoring a hidden input with autocomplete="one-time-code".
+  useEffect(() => {
+    if (!otpAutoFillRef.current) return;
+    const el = otpAutoFillRef.current;
+    const onInput = () => {
+      try {
+        const text = (el.value || '').replace(/\D/g, '').slice(0, 4);
+        if (text.length > 0) {
+          const newDigits = ['', '', '', ''];
+          text.split('').forEach((d, i) => { if (i < 4) newDigits[i] = d; });
+          setOtpDigits(newDigits);
+          if (text.length === 4) {
+            // small delay to let UI update
+            setTimeout(() => handleVerifyOTP(text), 80);
+          }
+        }
+      } catch (e) {
+        // ignore
+      } finally {
+        // clear the hidden input so next SMS autofill will fire again
+        try { el.value = ''; } catch {}
+      }
+    };
+    el.addEventListener('input', onInput);
+    return () => el.removeEventListener('input', onInput);
+  }, [otpAutoFillRef.current]);
+
+  // On mount: attempt to restore minimal state (phone + step) so the flow does not
+  // lose progress if the app reloads while backgrounded on mobile. We avoid
+  // reusing sensitive data (PIN/OTP) automatically.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s?.phone) {
+          setFormData(prev => ({ ...prev, phone: s.phone }));
+        }
+        if (s?.existingProfile) {
+          setExistingProfile({
+            id: s.existingProfile.id,
+            full_name: s.existingProfile.full_name || '',
+            role: s.existingProfile.role || 'buyer',
+            pin_hash: s.existingProfile.pin_hash ? '__SERVER__' : null
+          });
+          setHasCheckedProfile(true);
+        }
+        if (s?.step && ['phone','otp','login-pin','pin','confirm-pin','profile'].includes(s.step)) {
+          setStep(s.step);
+        }
+        if (s?.isResetPin) setIsResetPin(true);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  // Persist minimal state on important changes so the user can resume the flow
+  // if the OS kills the app while backgrounded.
+  useEffect(() => {
+    try {
+      const s: any = {
+        step,
+        phone: formData.phone,
+        isResetPin,
+        existingProfile: existingProfile ? { id: existingProfile.id, full_name: existingProfile.full_name, role: existingProfile.role, pin_hash: !!existingProfile.pin_hash } : null,
+        updated: Date.now()
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    } catch (e) {
+      // ignore
+    }
+  }, [step, formData.phone, isResetPin, existingProfile]);
+
   // Inform parent page of the current step so it can hide/show contextual headers
   useEffect(() => {
     onStepChange?.(step);
@@ -179,7 +267,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   /* keypad helpers removed */
 
   // Gestion des inputs à 4 chiffres (style Wave)
-  const handleDigitInput = (
+  const handleDigitInput = async (
     index: number,
     value: string,
     digits: string[],
@@ -187,22 +275,66 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     refs: React.RefObject<HTMLInputElement | null>[],
     onComplete: (code: string) => void
   ) => {
+    // If a paste is already being handled, ignore the single-char onChange events
+    // that some browsers fire as part of the paste. The paste handler will set all digits.
+    if (isPastingRef.current) return;
+
     if (value.length > 1) {
-      // Si l'utilisateur colle un code complet
-      const pastedDigits = value.replace(/\D/g, '').slice(0, 4).split('');
+      // Si l'utilisateur colle plusieurs chiffres dans un champ, insérer à partir de l'index courant
+      const pastedDigits = value.replace(/\D/g, '').slice(0, digits.length).split('');
       const newDigits = [...digits];
       pastedDigits.forEach((digit, i) => {
-        if (i < 4) newDigits[i] = digit;
+        if (index + i < newDigits.length) newDigits[index + i] = digit;
       });
       setDigits(newDigits);
-      if (pastedDigits.length === 4) {
+      // si tous les champs sont remplis, déclencher la validation
+      if (!newDigits.includes('')) {
         onComplete(newDigits.join(''));
+      } else {
+        // sinon, focus sur le premier champ vide
+        const firstEmpty = newDigits.findIndex(d => d === '');
+        if (firstEmpty !== -1) refs[firstEmpty].current?.focus();
       }
       return;
     }
     const newDigits = [...digits];
     newDigits[index] = value.replace(/\D/g, '');
     setDigits(newDigits);
+
+    // Heuristic: on some mobile browsers the paste only inserts the first character
+    // into the focused single-char input. Try reading the clipboard as a fallback
+    // and fill remaining digits when clipboard contains more than 1 digit.
+    if (value.length === 1 && typeof navigator !== 'undefined' && (navigator as any).clipboard && (navigator as any).clipboard.readText) {
+      const now = Date.now();
+      if (now - lastClipboardAttemptRef.current > 1000) {
+        lastClipboardAttemptRef.current = now;
+        isPastingRef.current = true;
+        try {
+          const clip = await (navigator as any).clipboard.readText();
+          // Only read remaining slots starting at current index
+          const clipDigits = String(clip || '').replace(/\D/g, '').slice(0, digits.length - index);
+          if (clipDigits.length > 0) {
+            const filled = [...newDigits];
+            clipDigits.split('').forEach((d, i) => {
+              if (index + i < filled.length) filled[index + i] = d;
+            });
+            setDigits(filled);
+            if (!filled.includes('')) {
+              onComplete(filled.join(''));
+              return;
+            } else {
+              const firstEmpty = filled.findIndex(d => d === '');
+              if (firstEmpty !== -1) refs[firstEmpty].current?.focus();
+            }
+          }
+        } catch (err) {
+          // ignore clipboard read errors
+        } finally {
+          setTimeout(() => { isPastingRef.current = false; }, 200);
+        }
+      }
+    }
+
     // Passer au champ suivant
     if (value && index < 3) {
       refs[index + 1].current?.focus();
@@ -280,13 +412,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         console.log('Session email détectée, déconnexion pour éviter conflits:', currentSession.user.email);
         await supabase.auth.signOut();
       }
-      // D'abord vérifier si ce numéro existe déjà dans la base
-      if (!hasCheckedProfile) {
-        const digitsOnly = formattedPhone.replace(/\D/g, '');
-        const last9 = digitsOnly.slice(-9);
-        console.log('Recherche profil: formattedPhone=', formattedPhone, 'last9=', last9);
-
-        // Rechercher le profil via l'endpoint admin backend pour récupérer le flag `hasPin`
+      // D'abord vérifier si ce numéro existe déjà dans la base (sauf pour les flows de reset PIN)
+      if (!isResetPin) {
         try {
           const existsResp = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(formattedPhone)}`));
           if (existsResp.ok) {
@@ -427,6 +554,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           });
           
           // Activer le mode redirection pour afficher le spinner plein écran
+          // Clear persisted interim state so the flow does not resume afterward
+          try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
           setRedirecting(true);
           await new Promise(resolve => setTimeout(resolve, 800));
           
@@ -501,7 +630,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         throw new Error(body.error || 'Code PIN incorrect');
       }
       // Succès : stocker token et session
-      let accessToken = body.token;
+      let accessToken = body.access_token || body.token || null;
       console.log('[DEBUG] /auth/login-pin result body:', body);
       // Si c'est un vendeur, générer le JWT backend pour session SMS
       if (existingProfile.role === 'vendor') {
@@ -520,9 +649,24 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           console.error('Erreur génération JWT vendeur:', e);
         }
       }
+
+      // Inject Realtime auth token for SMS session if available
       if (accessToken) {
-        localStorage.setItem('auth_token', accessToken);
+        try {
+          // Persist for future requests
+          localStorage.setItem('auth_token', accessToken);
+          // Inject into Supabase Realtime so RLS sees auth.uid()
+          try {
+            supabase.realtime.setAuth(accessToken);
+            console.log('[Auth] Realtime auth injected (SMS login)');
+          } catch (e) {
+            console.warn('[Auth] supabase.realtime.setAuth failed', e);
+          }
+        } catch (e) {
+          console.warn('[Auth] storing access token failed', e);
+        }
       }
+
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: existingProfile.id,
@@ -538,6 +682,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
       
       // Activer le mode redirection pour afficher le spinner plein écran
+      // Clear persisted interim state so the flow does not resume afterward
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
@@ -640,6 +786,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
      
       // Activer le mode redirection pour afficher le spinner plein écran
+      // Clear persisted interim state so the flow does not resume afterward
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
      
@@ -732,6 +880,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
       
       // Activer le mode redirection pour afficher le spinner plein écran
+      // Clear persisted interim state so the flow does not resume afterward
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
@@ -859,27 +1009,46 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           key={index}
           ref={refs[index] as React.RefObject<HTMLInputElement>}
           type={hidden ? "password" : "text"}
-          inputMode="none"
-          readOnly
+          inputMode={step === 'otp' ? "numeric" : "none"}
+          readOnly={step !== 'otp'}
           pattern="[0-9]*"
           maxLength={1}
           value={digits[index]}
           onChange={(e) => handleDigitInput(index, e.target.value, digits, setDigits, refs, onComplete)}
           onKeyDown={(e) => handleDigitKeyDown(index, e, digits, setDigits, refs)}
-          onFocus={(e) => e.currentTarget.blur()}
-          onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
-            const pasted = e.clipboardData?.getData('text')?.replace(/\D/g, '').slice(0, 4);
+          onFocus={(e) => { if (step !== 'otp') e.currentTarget.blur(); }}
+          onPaste={async (e: React.ClipboardEvent<HTMLInputElement>) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // Signal that we are handling a paste so onChange handlers ignore single-char writes
+            isPastingRef.current = true;
+            setTimeout(() => { isPastingRef.current = false; }, 200);
+
+            // Récupère le texte collé, avec fallback à l'API Clipboard si nécessaire
+            let text = e.clipboardData?.getData('text') ?? '';
+            if (!text && navigator.clipboard && navigator.clipboard.readText) {
+              try { text = await navigator.clipboard.readText(); } catch { /* ignore */ }
+            }
+            // Limit pasted to remaining slots (from index)
+            const remaining = digits.length - index;
+            const pasted = text.replace(/\D/g, '').slice(0, remaining);
             if (pasted) {
               const newDigits = [...digits];
-              pasted.split('').forEach((d, i) => { if (i < newDigits.length) newDigits[i] = d; });
+              // Insère les chiffres à partir de l'index courant
+              pasted.split('').forEach((d, i) => { if (index + i < newDigits.length) newDigits[index + i] = d; });
               setDigits(newDigits);
-              if (newDigits.join('').length === refs.length) onComplete?.(newDigits.join(''));
+              // Clear hidden autofill input if present to avoid double-firing
+              try { if (otpAutoFillRef.current) otpAutoFillRef.current.value = ''; } catch (e) {}
+              if (!newDigits.includes('')) {
+                onComplete?.(newDigits.join(''));
+              } else {
+                const firstEmpty = newDigits.findIndex(d => d === '');
+                if (firstEmpty !== -1) refs[firstEmpty].current?.focus();
+              }
             }
-            e.preventDefault();
           }}
           aria-label={`Chiffre ${index + 1}`}
           className="w-16 h-16 text-center text-3xl font-bold md:w-20 md:h-20 md:text-4xl border-2 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all bg-white/95 shadow-md"
-          autoComplete="one-time-code"
         />
       ))}
     </div>
@@ -1183,10 +1352,20 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               <p className="text-base font-medium">Entrez le code reçu par SMS</p>
               <p className="text-sm text-muted-foreground mt-2">Saisissez le code à 4 chiffres envoyé sur votre téléphone</p>
             </div>
-            <div className="mt-6 mb-16 sm:mb-4">
+            {/* Hidden input to receive SMS autofill (autocomplete="one-time-code") */}
+            <input
+              ref={otpAutoFillRef as React.RefObject<HTMLInputElement>}
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              aria-hidden
+              tabIndex={-1}
+              style={{ position: 'absolute', left: -9999, width: 1, height: 1, opacity: 0 }}
+            />
+                <div className="mt-6 mb-16 sm:mb-4">
               {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
             </div>
-            {renderNumericKeypad()}
+
             <div className="text-center mt-2">
               <div className="flex items-center justify-between text-sm mt-4">
                 <button type="button" onClick={handleBack} className="text-muted-foreground hover:text-foreground font-medium">← Modifier</button>

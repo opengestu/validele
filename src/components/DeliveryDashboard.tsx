@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { postProfileUpdate, getProfileById, apiUrl } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
+/* import useBackgroundPolling from '@/hooks/use-background-polling'; */
 
 type ProfileRow = {
   full_name: string | null;
@@ -220,31 +221,6 @@ const DeliveryDashboard = () => {
     fetchDeliveries();
     fetchTransactions();
 
-    // Background polling: deliveries every 1s (silent), transactions every 5s
-    let deliveriesInterval: any = null;
-    let transactionsInterval: any = null;
-    if (user?.id) {
-      deliveriesInterval = setInterval(async () => {
-        if (isRefreshingRef.current) return;
-        isRefreshingRef.current = true;
-        try {
-          await fetchDeliveries({ silent: true });
-        } catch (e) {
-          console.warn('[DeliveryDashboard] background delivery refresh failed', e);
-        } finally {
-          isRefreshingRef.current = false;
-        }
-      }, 1000);
-
-      transactionsInterval = setInterval(async () => {
-        try {
-          await fetchTransactions();
-        } catch (e) {
-          console.warn('[DeliveryDashboard] background transactions refresh failed', e);
-        }
-      }, 5000);
-    }
-
     if (!user?.id) return;
     const channelName = `delivery-orders-${user.id}`;
 
@@ -262,10 +238,17 @@ const DeliveryDashboard = () => {
       .subscribe();
     return () => {
       try { supabase.removeChannel(channel); } catch (e) { console.warn('[DeliveryDashboard] removeChannel failed', e); }
-      try { if (deliveriesInterval) clearInterval(deliveriesInterval); } catch (e) {}
-      try { if (transactionsInterval) clearInterval(transactionsInterval); } catch (e) {}
     };
   }, [user]);
+
+  // Background polling (fallback) for deliveries and transactions, handled by shared hook
+  // useBackgroundPolling({
+  //   enabled: !!user?.id,
+  //   onPollOrders: () => fetchDeliveries({ silent: true }),
+  //   onPollTransactions: fetchTransactions,
+  //   ordersIntervalMs: 1000,
+  //   transactionsIntervalMs: 5000,
+  // });
 
   // Listen to app-level event when a delivery is started so we can refresh immediately
   useEffect(() => {
@@ -559,9 +542,9 @@ const DeliveryDashboard = () => {
     }
   };
 
-  const fetchTransactions = async () => {
+  async function fetchTransactions(opts?: { silent?: boolean }) {
     if (!user?.id) return;
-    
+
     try {
       // Use server endpoint to avoid RLS issues and unify auth handling (SMS or Supabase)
       const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
@@ -619,7 +602,7 @@ const DeliveryDashboard = () => {
     } catch (error) {
       console.error('Erreur lors du chargement des transactions:', error);
     }
-  };
+  }
 
   const deliveriesInProgress = myDeliveries.filter(d => d.status === 'in_delivery' || d.status === 'assigned' || d.status === 'cancelled');
   const deliveriesCompleted = myDeliveries.filter(d => d.status === 'delivered');

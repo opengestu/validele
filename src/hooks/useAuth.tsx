@@ -348,6 +348,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
                     setUserProfile(profileObj);
                     writeCachedProfile(profileObj);
+                    // If SMS session contains an access_token, inject it into Realtime so RLS sees the correct auth.uid()
+                    try {
+                      if ((smsSession as any)?.access_token) {
+                        try {
+                          supabase.realtime.setAuth((smsSession as any).access_token);
+                          console.log('[Auth] Realtime auth injected (SMS session restore)');
+                        } catch (e) {
+                          console.warn('[Auth] supabase.realtime.setAuth failed during SMS session restore', e);
+                        }
+                      }
+                    } catch (e) {
+                      // ignore
+                    }
                     setLoading(false);
                     return; // Session SMS trouvée
                   }
@@ -368,8 +381,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                     created_at: new Date().toISOString()
                   } as User);
                   setUserProfile(fallbackProfile);
-                  writeCachedProfile(fallbackProfile);
-                  setLoading(false);
+                  writeCachedProfile(fallbackProfile);                  try {
+                    if ((smsSession as any)?.access_token) {
+                      try {
+                        supabase.realtime.setAuth((smsSession as any).access_token);
+                        console.log('[Auth] Realtime auth injected (SMS session fallback)');
+                      } catch (e) {
+                        console.warn('[Auth] supabase.realtime.setAuth failed during SMS session fallback', e);
+                      }
+                    }
+                  } catch (e) { /* ignore */ }                  setLoading(false);
                   return;
                 }
               }
@@ -485,6 +506,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Vérifier la session initiale, puis écouter les changements
     checkSession();
+
+    // Inject Realtime token at startup (supabase-js v2)
+    try {
+      supabase.auth.getSession().then(({ data }) => {
+        const accessToken = data?.session?.access_token;
+        if (accessToken) {
+          try {
+            supabase.realtime.setAuth(accessToken);
+            console.log('[Auth] Realtime auth injected');
+          } catch (e) {
+            console.warn('[Auth] failed to inject realtime auth at startup', e);
+          }
+        }
+      }).catch((err) => console.warn('[Auth] supabase.auth.getSession() failed', err));
+    } catch (e) {
+      console.warn('[Auth] supabase.auth.getSession() threw', e);
+    }
 
     // Watchdog: si le bootstrap d'auth reste bloqué (>5s), sortir du mode loading
     // avec autoRefreshToken désactivé, le timeout peut être plus court

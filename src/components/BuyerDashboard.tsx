@@ -1552,7 +1552,7 @@ const BuyerDashboard = () => {
               </div>
               <button
                 onClick={handleSignOut}
-                style={{ width: '100%', background: '#e53e3e', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
+                style={{ width: '100%', background: '#111827', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
               >
                 Se déconnecter
               </button>
