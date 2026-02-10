@@ -116,6 +116,8 @@ const BuyerDashboard = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const isOnline = useNetwork();
+  // Polling guard to avoid overlapping fetches during periodic polling
+  const pollingRef = React.useRef({ orders: false, transactions: false });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
   const [processingPayment, setProcessingPayment] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -239,14 +241,14 @@ const BuyerDashboard = () => {
   const [paymentWebViewUrl, setPaymentWebViewUrl] = useState('');
 
   // Fonction pour charger les commandes de l'acheteur (doit être dans le composant pour accéder à user, setOrders...)
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
     if (!user && !smsSessionStr) return;
-    setOrdersLoading(true);
+    if (!opts?.silent) setOrdersLoading(true);
     try {
       const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) {
-        setOrdersLoading(false);
+        if (!opts?.silent) setOrdersLoading(false);
         return;
       }
       let data: Array<Record<string, unknown>> = [];
@@ -378,7 +380,7 @@ const BuyerDashboard = () => {
         variant: "destructive",
       });
     } finally {
-      setOrdersLoading(false);
+      if (!opts?.silent) setOrdersLoading(false);
     }
   }, [user, toast]);
 
@@ -640,7 +642,7 @@ const BuyerDashboard = () => {
   // (Synchronisation déjà gérée ci-dessus)
 
   useEffect(() => {
-    // Subscribe to orders for this buyer to get realtime status updates
+    // Subscribe to orders for this buyer to get realtime status updates (orders only) + silent polling
     const buyerId = user?.id || (() => { try { const smsRaw = localStorage.getItem('sms_auth_session'); return smsRaw ? (JSON.parse(smsRaw || '{}')?.profileId || null) : null; } catch (e) { return null; } })();
     if (!buyerId) return;
 
@@ -649,18 +651,34 @@ const BuyerDashboard = () => {
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `buyer_id=eq.${buyerId}` }, payload => {
         console.log('[BuyerDashboard] Realtime order event', payload);
-        fetchOrders();
-      })
-      // Keep transactions subscription but only trigger a light refresh
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, payload => {
-        console.log('[BuyerDashboard] Realtime payment_transactions event', payload);
-        fetchTransactions();
-        // Also refresh orders in case payment triggered an order status change
-        fetchOrders();
+        try { fetchOrders({ silent: true }); } catch (e) { console.warn('[BuyerDashboard] fetchOrders silent failed', e); }
       })
       .subscribe();
 
+    let mounted = true;
+    // Polling: orders every 1s (silent), transactions every 5s
+    const ordersInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.orders) return;
+      pollingRef.current.orders = true;
+      Promise.resolve(fetchOrders({ silent: true }))
+        .catch(e => console.warn('[BuyerDashboard] periodic fetchOrders failed', e))
+        .finally(() => { pollingRef.current.orders = false; });
+    }, 1000);
+
+    const txInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.transactions) return;
+      pollingRef.current.transactions = true;
+      Promise.resolve(fetchTransactions())
+        .catch(e => console.warn('[BuyerDashboard] periodic fetchTransactions failed', e))
+        .finally(() => { pollingRef.current.transactions = false; });
+    }, 5000);
+
     return () => {
+      mounted = false;
+      clearInterval(ordersInterval);
+      clearInterval(txInterval);
       try { supabase.removeChannel(channel); } catch (e) { console.warn('[BuyerDashboard] removeChannel failed', e); }
     };
   }, [fetchOrders, fetchTransactions, user]);

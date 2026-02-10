@@ -22,11 +22,11 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYMENT_CONFIRMED: {
     title: '✅ Paiement confirmé',
-    body: (data) => `Votre paiement de ${data.amount} FCFA pour ${data.productName || data.orderCode} a été confirmé.`,
+    body: (data) => `Votre paiement de ${data.amount} FCFA pour le produit "${data.productName}" a été confirmé.`,
     data: (data) => ({
       type: 'payment_confirmed',
       order_id: data.orderId,
-      order_code: data.orderCode,
+      order_code: data.orderCode, // conservé pour compatibilité, mais non affiché
       product_name: data.productName,
       amount: data.amount,
       screen: 'OrderDetails'
@@ -87,7 +87,7 @@ const NOTIFICATION_TEMPLATES = {
   // === NOTIFICATIONS VENDEUR ===
   NEW_ORDER_VENDOR: {
     title: '🔔 Nouvelle commande',
-    body: (data) => `Nouvelle commande ${data.orderCode} reçue! Montant: ${data.amount} FCFA. Produit: ${data.productName}`,
+      body: (data) => `Vous avez une nouvelle commande de "${data.productName}". Montant: ${data.amount} FCFA.`,
     data: (data) => ({
       type: 'new_order_vendor',
       order_id: data.orderId,
@@ -203,11 +203,11 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYMENT_FAILED: {
     title: '❌ Échec de paiement',
-    body: (data) => `Paiement échoué pour ${data.productName || data.orderCode}. Montant: ${data.amount} FCFA`,
+    body: (data) => `Le paiement pour le produit "${data.productName}" a échoué. Montant: ${data.amount} FCFA`,
     data: (data) => ({
       type: 'payment_failed',
       order_id: data.orderId,
-      order_code: data.orderCode,
+      order_code: data.orderCode, // conservé pour compatibilité, mais non affiché
       product_name: data.productName,
       amount: data.amount,
       error: data.error,

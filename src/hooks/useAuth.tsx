@@ -486,23 +486,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Vérifier la session initiale, puis écouter les changements
     checkSession();
 
-    // Inject Realtime token at startup (supabase-js v2)
-    try {
-      supabase.auth.getSession().then(({ data }) => {
-        const accessToken = data?.session?.access_token;
-        if (accessToken) {
-          try {
-            supabase.realtime.setAuth(accessToken);
-            console.log('[Auth] Realtime auth injected');
-          } catch (e) {
-            console.warn('[Auth] failed to inject realtime auth at startup', e);
-          }
-        }
-      }).catch((err) => console.warn('[Auth] supabase.auth.getSession() failed', err));
-    } catch (e) {
-      console.warn('[Auth] supabase.auth.getSession() threw', e);
-    }
-
     // Watchdog: si le bootstrap d'auth reste bloqué (>5s), sortir du mode loading
     // avec autoRefreshToken désactivé, le timeout peut être plus court
     const authWatchdog = setTimeout(() => {

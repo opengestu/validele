@@ -228,15 +228,33 @@ const DeliveryDashboard = () => {
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `delivery_person_id=eq.${user.id}` }, (payload) => {
         console.log('DeliveryDashboard: Realtime order event', payload);
-        fetchDeliveries();
-        fetchTransactions();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, (payload) => {
-        console.log('DeliveryDashboard: Realtime transactions event', payload);
-        fetchTransactions();
+        try { fetchDeliveries({ silent: true }); } catch (e) { console.warn('[DeliveryDashboard] fetchDeliveries silent failed', e); }
       })
       .subscribe();
+
+    let mounted = true;
+    const ordersInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.orders) return;
+      pollingRef.current.orders = true;
+      Promise.resolve(fetchDeliveries({ silent: true }))
+        .catch(e => console.warn('[DeliveryDashboard] periodic fetchDeliveries failed', e))
+        .finally(() => { pollingRef.current.orders = false; });
+    }, 1000);
+
+    const txInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.transactions) return;
+      pollingRef.current.transactions = true;
+      Promise.resolve(fetchTransactions())
+        .catch(e => console.warn('[DeliveryDashboard] periodic fetchTransactions failed', e))
+        .finally(() => { pollingRef.current.transactions = false; });
+    }, 5000);
+
     return () => {
+      mounted = false;
+      clearInterval(ordersInterval);
+      clearInterval(txInterval);
       try { supabase.removeChannel(channel); } catch (e) { console.warn('[DeliveryDashboard] removeChannel failed', e); }
     };
   }, [user]);
@@ -281,6 +299,7 @@ const DeliveryDashboard = () => {
   }, [user]);
 
   const isRefreshingRef = React.useRef(false);
+  const pollingRef = React.useRef({ orders: false, transactions: false });
 
   const shallowDeliveriesEqual = (a: DeliveryOrder[] = [], b: DeliveryOrder[] = []) => {
     try {

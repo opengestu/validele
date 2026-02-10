@@ -364,6 +364,8 @@ const VendorDashboard = () => {
   );
   // Backend availability flag — used to disable backend requests on network errors
   const [backendAvailable, setBackendAvailable] = useState<boolean>(true);
+  // Polling guard to avoid overlapping fetches
+  const pollingRef = React.useRef({ orders: false, transactions: false });
 
   useEffect(() => {
     function handleOnline() { setIsOnline(true); }
@@ -376,10 +378,10 @@ const VendorDashboard = () => {
     };
   }, []);
   // Nouvelle version : toujours utiliser le backend pour les commandes (comme BuyerDashboard)
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const caller = smsUser || user;
     if (!caller) return;
-    console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable });
+    console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable, silent: !!opts?.silent });
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
       const token = smsUser?.access_token || localStorage.getItem('sms_auth_session') ? smsUser?.access_token : '';
@@ -868,9 +870,11 @@ const VendorDashboard = () => {
       total: isPageLoading
     });
   }, [pageLoading, loading, adding, editing, deleting, savingProfile, isPageLoading]);
-  // Live updates: écoute les changements sur les commandes du vendeur
+  // Live updates: écoute les changements sur les commandes du vendeur (orders only) + silent polling for resiliency
   useEffect(() => {
     if (!user?.id) return;
+    let mounted = true;
+
     const channel = supabase
       .channel(`orders-vendor-${user.id}`)
       .on(
@@ -878,20 +882,35 @@ const VendorDashboard = () => {
         { event: '*', schema: 'public', table: 'orders', filter: `vendor_id=eq.${user.id}` },
         (payload) => {
           console.log('VendorDashboard: Changement orders détecté', payload);
-          fetchOrders();
-          fetchTransactions();
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'payment_transactions' },
-        (payload) => {
-          console.log('VendorDashboard: Changement transactions détecté', payload);
-          fetchTransactions();
+          // fetch orders silently (avoid UI flicker)
+          try { fetchOrders({ silent: true }); } catch (e) { console.warn('[VendorDashboard] fetchOrders silent failed', e); }
         }
       )
       .subscribe();
+
+    // Polling: orders every 1s, transactions every 5s (silent)
+    const ordersInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.orders) return;
+      pollingRef.current.orders = true;
+      Promise.resolve(fetchOrders({ silent: true }))
+        .catch(e => console.warn('[VendorDashboard] periodic fetchOrders failed', e))
+        .finally(() => { pollingRef.current.orders = false; });
+    }, 1000);
+
+    const txInterval = setInterval(() => {
+      if (!mounted) return;
+      if (pollingRef.current.transactions) return;
+      pollingRef.current.transactions = true;
+      Promise.resolve(fetchTransactions())
+        .catch(e => console.warn('[VendorDashboard] periodic fetchTransactions failed', e))
+        .finally(() => { pollingRef.current.transactions = false; });
+    }, 5000);
+
     return () => {
+      mounted = false;
+      clearInterval(ordersInterval);
+      clearInterval(txInterval);
       supabase.removeChannel(channel);
     };
   }, [user?.id, fetchOrders, fetchTransactions]);
