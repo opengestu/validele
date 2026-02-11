@@ -222,16 +222,19 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
   const user = await getUserPushToken(buyerId);
   let pushResult = null;
   let smsResult = null;
-  let phone = null;
-  if (supabase) {
-    // Récupérer le numéro de téléphone du profil
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('phone')
-      .eq('id', buyerId)
-      .single();
-    if (!error && data?.phone) phone = data.phone;
+  // Prefer buyerPhone provided in orderDetails, else try to fetch from profiles
+  let phone = orderDetails.buyerPhone || null;
+  if (!phone && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', buyerId)
+        .single();
+      if (!error && data?.phone) phone = data.phone;
+    } catch (e) { /* ignore */ }
   }
+
   // Envoi push
   if (user?.token) {
     try {

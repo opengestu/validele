@@ -5105,31 +5105,45 @@ app.post('/api/notify/delivery-started', async (req, res) => {
       return res.status(400).json({ success: false, error: 'buyerId et orderId requis' });
     }
 
-    // Aller chercher le nom du produit et le numéro du livreur
+    // Aller chercher le nom du produit, le numéro du livreur et le numéro de l'acheteur si possible
     let productName = null;
     let deliveryPersonPhone = null;
     let order_code = orderCode;
+    let buyerPhone = null;
     try {
       const { data: order, error: orderError } = await supabase
         .from('orders')
-        .select('order_code, product:products(name), delivery_person:profiles!orders_delivery_person_id_fkey(phone)')
+        .select('order_code, product:products(name), delivery_person:profiles!orders_delivery_person_id_fkey(phone), buyer:profiles!orders_buyer_id_fkey(phone)')
         .eq('id', orderId)
         .single();
       if (!orderError && order) {
         if (order.product && order.product.name) productName = order.product.name;
         if (order.delivery_person && order.delivery_person.phone) deliveryPersonPhone = order.delivery_person.phone;
+        if (order.buyer && order.buyer.phone) buyerPhone = order.buyer.phone;
         if (order.order_code) order_code = order.order_code;
       }
     } catch (e) {
       console.error('[NOTIFY] Erreur récupération infos commande pour SMS:', e);
     }
 
+    // If buyerPhone still missing, try a direct profiles lookup
+    if (!buyerPhone) {
+      try {
+        const { data: profile } = await supabase.from('profiles').select('phone').eq('id', buyerId).single();
+        if (profile && profile.phone) buyerPhone = profile.phone;
+      } catch (e) { /* ignore */ }
+    }
+
     const result = await notificationService.notifyBuyerDeliveryStarted(buyerId, {
       orderId,
       orderCode: order_code,
       productName,
-      deliveryPersonPhone
+      deliveryPersonPhone,
+      buyerPhone
     });
+
+    console.log('[NOTIFY] delivery-started result:', result);
+    if (!result || !result.sent) console.warn('[NOTIFY] delivery-started: notification not sent', { buyerId, orderId, result });
 
     res.json({ success: true, ...result });
   } catch (error) {
