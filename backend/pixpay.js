@@ -140,7 +140,11 @@ async function initiatePayment(params) {
 async function sendMoney(params) {
   const { amount, phone, orderId, type = 'payout', walletType } = params;
 
+  // Log chaque appel payout, surtout pour Orange Money
+  console.log('[PIXPAY][sendMoney] INIT payout', { amount, phone, orderId, type, walletType });
+
   if (!PIXPAY_CONFIG.api_key) {
+    console.error('[PIXPAY][sendMoney] ERREUR: PIXPAY_API_KEY non configurée');
     throw new Error('PIXPAY_API_KEY non configurée');
   }
 
@@ -159,7 +163,9 @@ async function sendMoney(params) {
     service_id = PIXPAY_SERVICE_IDS.PIXPAY_TO_WAVE; // Forcé : PixPay -> Wave (payout)
   } else if (walletType === 'orange-senegal') {
     service_id = 214; // Orange Money CASHIN
+    console.log('[PIXPAY][sendMoney] Payout Orange Money détecté', { amount, phone, orderId });
   } else {
+    console.error('[PIXPAY][sendMoney] Type de wallet non supporté:', walletType);
     throw new Error(`Type de wallet non supporté: ${walletType}. Utilisez 'wave-senegal' ou 'orange-senegal'`);
   }
 
@@ -194,8 +200,7 @@ async function sendMoney(params) {
   });
 
   try {
-    console.log('[PIXPAY] Calling API:', `${PIXPAY_CONFIG.base_url}/transaction/airtime`);
-    
+    console.log('[PIXPAY][sendMoney] Calling API:', `${PIXPAY_CONFIG.base_url}/transaction/airtime`);
     const response = await axios.post(
       `${PIXPAY_CONFIG.base_url}/transaction/airtime`,
       payload,
@@ -205,13 +210,13 @@ async function sendMoney(params) {
       }
     );
 
-    console.log('[PIXPAY] Réponse complète:', JSON.stringify(response.data, null, 2));
+    console.log('[PIXPAY][sendMoney] Réponse complète:', JSON.stringify(response.data, null, 2));
 
     // Check if Pixpay returned a successful status code
     const isSuccess = response.data.statut_code === 200 || response.data.statut_code === '200';
     
     if (!isSuccess) {
-      console.error('[PIXPAY] API returned non-200 statut_code:', response.data.statut_code, response.data.message);
+      console.error('[PIXPAY][sendMoney] API returned non-200 statut_code:', response.data.statut_code, response.data.message);
     }
 
     return {
@@ -223,12 +228,21 @@ async function sendMoney(params) {
       raw: response.data
     };
   } catch (error) {
-    console.error('[PIXPAY] Erreur envoi:', {
+    // Log détaillé même en cas d'échec
+    console.error('[PIXPAY][sendMoney] ERREUR ENVOI:', {
       status: error.response?.status,
       statusText: error.response?.statusText,
       data: error.response?.data,
-      message: error.response?.data?.message || error.message
+      message: error.response?.data?.message || error.message,
+      config: error.config,
+      isAxiosError: error.isAxiosError,
+      toString: error.toString()
     });
+
+    // Log spécial Orange Money
+    if (walletType === 'orange-senegal') {
+      console.error('[PIXPAY][sendMoney] ECHEC payout Orange Money', { amount, phone, orderId, error: error.response?.data || error.message });
+    }
 
     // Return a structured error response instead of throwing
     // This allows the caller to handle it gracefully

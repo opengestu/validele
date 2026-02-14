@@ -1347,7 +1347,7 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filterBatches(batches).filter(b => !['completed','failed','cancelled'].includes(b.status || '')).map(b => (
+                  {filterBatches(batches).filter(b => !['completed','cancelled'].includes(b.status || '')).map(b => (
                     <TableRow key={b.id}>
                       <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
@@ -1372,7 +1372,7 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                       <TableCell className="flex gap-2">
                         <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
-                        <Button size="sm" disabled={b.status === 'processing' || processing} className={b.status === 'processing' ? 'bg-blue-400' : ''} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? '⏳ En cours...' : 'Traiter'}</Button>
+                        <Button size="sm" disabled={b.status === 'processing' || processing} className={b.status === 'processing' ? 'bg-blue-400' : ''} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: b.status === 'failed' ? 'Relance du batch initiée' : 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? '⏳ En cours...' : b.status === 'failed' ? 'Relancer' : 'Traiter'}</Button>
                         <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Annuler</Button>
                       </TableCell>
                     </TableRow>
@@ -1407,7 +1407,7 @@ const AdminDashboard: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filterBatches(batches).filter(b => ['completed','failed','cancelled'].includes(b.status || '')).map(b => (
+                  {filterBatches(batches).filter(b => ['completed','cancelled'].includes(b.status || '')).map(b => (
                     <TableRow key={b.id}>
                       <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
                       <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
@@ -1749,7 +1749,21 @@ const AdminDashboard: React.FC = () => {
           </Card>
         )}
       </div>
-    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={(vendorId) => openInvoiceInModal(`/api/admin/payout-batches/${selectedBatch?.id}/invoice?vendorId=${encodeURIComponent(vendorId)}`, `Facture Batch ${selectedBatch?.id?.slice(0, 8)} - Vendeur`)} />}
+    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={(vendorId) => openInvoiceInModal(`/api/admin/payout-batches/${selectedBatch?.id}/invoice?vendorId=${encodeURIComponent(vendorId)}`, `Facture Batch ${selectedBatch?.id?.slice(0, 8)} - Vendeur`)} onRetryItem={async (it) => {
+      setProcessing(true);
+      try {
+        if (!confirm('Confirmer la relance du payout pour cette commande ?')) return;
+        const res = await fetch(apiUrl('/api/admin/verify-and-payout'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId: it.order_id, execute: true }) });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || 'Erreur relance payout');
+        toast({ title: 'Succès', description: 'Relance initiée (processing).' });
+        fetchData();
+      } catch (err: unknown) {
+        toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' });
+      } finally {
+        setProcessing(false);
+      }
+    }} />}
     
     {/* Modal Invoice Viewer */}
     {invoiceViewerOpen && (
@@ -1790,7 +1804,7 @@ const AdminDashboard: React.FC = () => {
 
 // Batch details modal
 { /* Render a printable details modal when open */ }
-function BatchDetailsModal({ batch, items, onClose, onOpenInvoice }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string) => void }){
+function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string) => void; onRetryItem?: (item: PayoutBatchItem) => void }){
   if (!batch) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
@@ -1830,7 +1844,12 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice }:{ batch: Pay
                     <TableCell>{(it.net_amount||0).toLocaleString()} FCFA</TableCell>
                     <TableCell>{it.status}</TableCell>
                     <TableCell>
-                      <Button size="sm" onClick={() => onOpenInvoice(it.vendor_id || '')}>Invoice</Button>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => onOpenInvoice(it.vendor_id || '')}>Invoice</Button>
+                        {onRetryItem && it.status !== 'paid' && (
+                          <Button size="sm" variant="secondary" onClick={() => onRetryItem(it)}>Relancer</Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

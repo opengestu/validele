@@ -23,6 +23,7 @@ import { API_BASE, apiUrl, postProfileUpdate, getProfileById, safeJson } from '@
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import useNetwork from '@/hooks/useNetwork';
+import useBuyerOrders from '@/hooks/useBuyerOrders';
 import.meta.env;
 
 // Temporary placeholders for payment logos — replace with real imports if available
@@ -116,6 +117,21 @@ const BuyerDashboard = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const isOnline = useNetwork();
+
+  // Use React Query to fetch and persist buyer orders (hook persists via react-query persister configured in App)
+  const smsSessionStrGlobal = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+  const inferredBuyerId = user?.id || (smsSessionStrGlobal ? (JSON.parse(smsSessionStrGlobal || '{}')?.profileId || null) : null);
+  const { data: queryOrders, isLoading: queryOrdersLoading, refetch: refetchOrders } = useBuyerOrders({ buyerId: inferredBuyerId });
+
+  // Keep local `orders` state for compatibility with existing UI; hydrate from query result when available
+  useEffect(() => {
+    if (queryOrders && Array.isArray(queryOrders)) {
+      setOrders(queryOrders);
+    }
+  }, [queryOrders]);
+
+  // Mirror react-query loading state to the local `ordersLoading` variable used by the UI
+  useEffect(() => { setOrdersLoading(Boolean(queryOrdersLoading)); }, [queryOrdersLoading]);
   // Polling guard to avoid overlapping fetches during periodic polling
   const pollingRef = React.useRef({ orders: false, transactions: false });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wave');
@@ -359,7 +375,7 @@ const BuyerDashboard = () => {
               console.warn('[BUYER] backend returned empty orders — using cached orders to avoid flicker');
               setOrders(parsed.orders as Order[]);
               // Schedule a quick retry to get fresh data
-              setTimeout(() => { fetchOrders(); }, 2000);
+              setTimeout(() => { try { refetchOrders(); } catch (e) { /* ignore */ } }, 2000);
             } else {
               // Cache stale or absent — clear orders
               setOrders([]);
@@ -437,9 +453,10 @@ const BuyerDashboard = () => {
     // Wait for auth initialization to complete before fetching orders/txs.
     // This avoids empty results when the session is still being restored.
     if (loading) return;
-    fetchOrders();
+    // Use the react-query refetch (persistence keeps last known orders available offline)
+    try { refetchOrders(); } catch (e) { /* ignore */ }
     fetchTransactions();
-  }, [fetchOrders, fetchTransactions, loading]);
+  }, [refetchOrders, fetchTransactions, loading]);
 
   // Offline banner is rendered within the layout UI below
 
@@ -453,7 +470,7 @@ const BuyerDashboard = () => {
         
         // Rafraîchir les commandes après 1 seconde
         setTimeout(() => {
-          fetchOrders();
+          try { refetchOrders(); } catch (e) { /* ignore */ }
           fetchTransactions();
         }, 1000);
       });
@@ -649,7 +666,7 @@ const BuyerDashboard = () => {
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `buyer_id=eq.${buyerId}` }, payload => {
         console.log('[BuyerDashboard] Realtime order event', payload);
-        try { fetchOrders({ silent: true }); } catch (e) { console.warn('[BuyerDashboard] fetchOrders silent failed', e); }
+        try { refetchOrders(); } catch (e) { console.warn('[BuyerDashboard] refetchOrders failed', e); }
       })
       .subscribe();
 
@@ -659,8 +676,8 @@ const BuyerDashboard = () => {
       if (!mounted) return;
       if (pollingRef.current.orders) return;
       pollingRef.current.orders = true;
-      Promise.resolve(fetchOrders({ silent: true }))
-        .catch(e => console.warn('[BuyerDashboard] periodic fetchOrders failed', e))
+      Promise.resolve((async () => { try { await refetchOrders(); } catch (e) { throw e; } })())
+        .catch(e => console.warn('[BuyerDashboard] periodic refetchOrders failed', e))
         .finally(() => { pollingRef.current.orders = false; });
     }, 1000);
 
@@ -797,7 +814,7 @@ const BuyerDashboard = () => {
     });
     setPaymentModalOpen(false);
     setCurrentOrder(null);
-    await fetchOrders();
+    try { await refetchOrders(); } catch (e) { /* ignore */ }
   };
 
   const handlePaymentError = () => {
@@ -1506,6 +1523,14 @@ const BuyerDashboard = () => {
         </div>
       </header>
 
+      {!isOnline && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-4">
+          <div className="rounded-md bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-yellow-700" />
+            <span>Vous êtes hors‑ligne — affichage en lecture seule. Certaines actions sont désactivées.</span>
+          </div>
+        </div>
+      )}
 
 
       {/* Debug panel (visible when ?debug=1) */}
@@ -1619,6 +1644,12 @@ const BuyerDashboard = () => {
                 <CardTitle className="flex items-center space-x-2">
                   <ShoppingCart className="h-5 w-5" />
                   <span>Mes commandes</span>
+                  {!isOnline && (
+                    <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm bg-yellow-50 text-yellow-800 border border-yellow-100">
+                      <AlertTriangle className="h-4 w-4 text-yellow-700" />
+                      <span>Hors‑ligne</span>
+                    </span>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
