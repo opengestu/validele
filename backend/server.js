@@ -1975,24 +1975,29 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
             }
           } else {
             // Otherwise treat orderId as a batch id - use supabaseAdmin to bypass RLS
-            const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id, status, batch_id').eq('batch_id', orderId);
-            if (items && items.length > 0) {
-              const itemIds = items.map(i => i.id);
-              const orderIds = items.map(i => i.order_id).filter(Boolean);
+            // Correction: update payout_batch_items by provider_transaction_id (for both Orange and Wave)
+            // 1. Update all items in the batch with this provider_transaction_id to 'paid'
+            const { data: itemsToUpdate } = await supabaseAdmin
+              .from('payout_batch_items')
+              .select('id, order_id, batch_id')
+              .eq('batch_id', orderId)
+              .eq('provider_transaction_id', transaction_id);
+
+            if (itemsToUpdate && itemsToUpdate.length > 0) {
+              const itemIds = itemsToUpdate.map(i => i.id);
+              const orderIds = itemsToUpdate.map(i => i.order_id).filter(Boolean);
               await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
               if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
+            }
 
-              // AUTOMATION: Check if all items in the batch are now paid, and if so, mark batch as completed
-              const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('status').eq('batch_id', orderId);
-              const allPaid = allItems && allItems.length > 0 && allItems.every(i => i.status === 'paid');
-              if (allPaid) {
-                await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
-                console.log('[PIXPAY] Batch payout completed for batch:', orderId);
-              } else {
-                console.log('[PIXPAY] Batch payout: not all items are paid yet, batch remains in progress.');
-              }
+            // 2. Vérifie si tous les items du batch sont maintenant 'paid' et complète le batch si oui
+            const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('status').eq('batch_id', orderId);
+            const allPaid = allItems && allItems.length > 0 && allItems.every(i => i.status === 'paid');
+            if (allPaid) {
+              await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
+              console.log('[PIXPAY] Batch payout completed for batch:', orderId);
             } else {
-              console.log('[PIXPAY] Payout SUCCESSFUL but no order or batch found for id:', orderId);
+              console.log('[PIXPAY] Batch payout: not all items are paid yet, batch remains in progress.');
             }
           }
         }
