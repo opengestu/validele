@@ -1427,6 +1427,7 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
 
 // Créer un compte "virtuel" (Auth user + profile) pour la connexion SMS.
 // Objectif: avoir un id présent dans auth.users pour satisfaire la FK profiles.id -> users.id.
+
 app.post('/api/sms/register', async (req, res) => {
   try {
     const { full_name, phone, role, company_name, vehicle_info, wallet_type, pin, address } = req.body || {};
@@ -1461,7 +1462,23 @@ app.post('/api/sms/register', async (req, res) => {
     const last9 = digitsOnly.slice(-9);
     console.log('[SMS] Vérification doublon pour phone:', formattedPhone, 'last9:', last9);
 
-    const { data: existing, error: existingError } = await supabase
+    // Utiliser un client admin explicite pour toutes les opérations critiques
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[SMS] SERVICE_ROLE_KEY manquante');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Configuration serveur incomplète (service role)'
+      });
+    }
+
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from('profiles')
       .select('id, phone')
       .ilike('phone', `%${last9}%`)
@@ -1477,14 +1494,14 @@ app.post('/api/sms/register', async (req, res) => {
 
     // Créer un user Supabase Auth (admin) avec email "virtuel".
     const virtualEmail = `${formattedPhone.replace('+', '')}@sms.validele.app`;
-    
+
     // Vérifier si un utilisateur avec cet email virtuel existe déjà
-    const { data: existingUsers, error: userListError } = await supabase.auth.admin.listUsers();
+    const { data: existingUsers, error: userListError } = await supabaseAdmin.auth.admin.listUsers();
     if (userListError) {
       console.error('[SMS] Erreur listage utilisateurs:', userListError);
       return res.status(500).json({ success: false, error: 'Erreur serveur (vérification utilisateur)' });
     }
-    
+
     const existingUser = existingUsers.users.find(u => u.email === virtualEmail);
     if (existingUser) {
       console.log('[SMS] Utilisateur existe déjà avec email virtuel:', virtualEmail);
@@ -1493,7 +1510,7 @@ app.post('/api/sms/register', async (req, res) => {
 
     const randomPassword = `Sms#${Math.random().toString(36).slice(2)}${Date.now()}`;
 
-    const { data: created, error: createUserError } = await supabase.auth.admin.createUser({
+    const { data: created, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
       email: virtualEmail,
       password: randomPassword,
       email_confirm: true,
@@ -1507,12 +1524,10 @@ app.post('/api/sms/register', async (req, res) => {
 
     if (createUserError || !created?.user?.id) {
       console.error('[SMS] Erreur création user:', createUserError);
-      
       // Si l'erreur est "email exists", cela signifie qu'il y a une incohérence
       if (createUserError?.code === 'email_exists') {
         return res.status(409).json({ success: false, error: 'Un compte existe déjà pour ce numéro' });
       }
-      
       return res.status(500).json({ success: false, error: 'Erreur serveur (création utilisateur)' });
     }
 
@@ -1531,8 +1546,8 @@ app.post('/api/sms/register', async (req, res) => {
     // Créer le profil (id = userId) pour satisfaire la FK
     // Utiliser upsert pour éviter les erreurs de doublon
     console.log('[SMS] Tentative upsert profile pour userId:', userId);
-    
-    const { error: profileError } = await supabase
+
+    const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .upsert({
         id: userId,
@@ -1548,10 +1563,10 @@ app.post('/api/sms/register', async (req, res) => {
 
     if (profileError) {
       console.error('[SMS] Erreur création profile:', profileError);
-      console.error('[SMS] Client Supabase utilisé:', !!supabase, 'Service role key dispo:', !!SUPABASE_SERVICE_ROLE_KEY);
+      console.error('[SMS] Client Supabase utilisé: admin, Service role key dispo:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
       // Best-effort cleanup: supprimer le user créé si le profil échoue
       try {
-        await supabase.auth.admin.deleteUser(userId);
+        await supabaseAdmin.auth.admin.deleteUser(userId);
       } catch (cleanupErr) {
         console.error('[SMS] Erreur suppression user après échec profil:', cleanupErr);
       }

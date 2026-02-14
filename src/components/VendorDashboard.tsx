@@ -499,7 +499,7 @@ const VendorDashboard = () => {
     }
    
   }, [user, smsUser, toast, getOrderBuyerName, getOrderBuyerId, normalizeBuyerName]);
-// ...existing code...
+  // ...existing code...
   const fetchProducts = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
@@ -1628,7 +1628,7 @@ const VendorDashboard = () => {
                             <img src={waveLogo} alt="Wave" className="h-5 w-5 object-contain rounded-sm bg-white" />
                             <span>Wave</span>
                           </span>
-                        ) : userProfile?.wallet_type === 'orange-money' ? (
+                        ) : userProfile?.wallet_type === 'orange-senegal' ? (
                           <span className="inline-flex items-center gap-2">
                             <img src={orangeMoneyLogo} alt="Orange Money" className="h-5 w-5 object-contain rounded-sm bg-white" />
                             <span>Orange Money</span>
@@ -1676,7 +1676,7 @@ const VendorDashboard = () => {
                     <div>
                       <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
                       <p className="text-lg">
-                        {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-money' ? 'Orange Money' : 'Non défini'}
+                        {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-senegal' ? 'Orange Money' : 'Non défini'}
                       </p>
                     </div>
                     <div>
@@ -1705,18 +1705,18 @@ const VendorDashboard = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
+                          onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-senegal' }))}
                           className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
-                            editProfile.wallet_type === 'orange-money'
+                            editProfile.wallet_type === 'orange-senegal'
                               ? 'border-orange-500 bg-orange-50'
                               : 'border-gray-200 hover:border-gray-300'
                           }`}
-                          aria-pressed={editProfile.wallet_type === 'orange-money'}
+                          aria-pressed={editProfile.wallet_type === 'orange-senegal'}
                           title="Orange Money"
                         >
                           <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
                           <span className="text-sm font-semibold mt-1">Orange Money</span>
-                          {editProfile.wallet_type === 'orange-money' && (
+                          {editProfile.wallet_type === 'orange-senegal' && (
                             <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center mt-1">
                               <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
@@ -2029,7 +2029,7 @@ const VendorDashboard = () => {
                                 <img src={waveLogo} alt="Wave" className="h-5 w-5 object-contain rounded-sm bg-white" />
                                 <span>Wave</span>
                               </span>
-                            ) : userProfile?.wallet_type === 'orange-money' ? (
+                            ) : userProfile?.wallet_type === 'orange-senegal' ? (
                               <span className="inline-flex items-center gap-2">
                                 <img src={orangeMoneyLogo} alt="Orange Money" className="h-5 w-5 object-contain rounded-sm bg-white" />
                                 <span>Orange Money</span>
@@ -2100,18 +2100,18 @@ const VendorDashboard = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-money' }))}
+                              onClick={() => setEditProfile(p => ({ ...p, wallet_type: 'orange-senegal' }))}
                               className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
-                                editProfile.wallet_type === 'orange-money'
+                                editProfile.wallet_type === 'orange-senegal'
                                   ? 'border-orange-500 bg-orange-50'
                                   : 'border-gray-200 hover:border-gray-300'
                               }`}
-                              aria-pressed={editProfile.wallet_type === 'orange-money'}
+                              aria-pressed={editProfile.wallet_type === 'orange-senegal'}
                               title="Orange Money"
                             >
                               <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
                               <span className="text-sm font-semibold mt-1">Orange Money</span>
-                              {editProfile.wallet_type === 'orange-money' && (
+                              {editProfile.wallet_type === 'orange-senegal' && (
                                 <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center mt-1">
                                   <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />

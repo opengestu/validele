@@ -61,9 +61,9 @@ const RoleSpecificFields = ({
                 </div>
               </SelectItem>
               <SelectItem value="orange-money-senegal">
-                <div className="flex items-center gap-3">
-                  <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
-                  <span className="text-lg">Orange Money</span>
+                <div className="flex items-center gap-3" style={{ background: '#fff', padding: 2 }}>
+                  <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 36, width: 36, objectFit: 'contain', background: '#fff' }} />
+                  <span className="text-lg font-semibold" style={{ color: '#ff7900' }}>Orange Money</span>
                 </div>
               </SelectItem>
             </SelectContent>

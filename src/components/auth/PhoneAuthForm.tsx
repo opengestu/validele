@@ -817,9 +817,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
     setLoading(true);
     try {
-      // IMPORTANT: profiles.id est lié à auth.users(id) dans Supabase.
-      // Un insert direct avec un UUID aléatoire déclenche une violation FK.
-      // On crée donc le user + profile côté backend (service role).
+      // Correction : normalisation stricte du wallet_type pour l'inscription
+      let walletTypeToSend = formData.walletType;
+      if (formData.role === 'vendor') {
+        if (walletTypeToSend === 'orange-money' || walletTypeToSend === 'orange-money-senegal') {
+          walletTypeToSend = 'orange-senegal';
+        }
+        if (walletTypeToSend === 'wave-money' || walletTypeToSend === 'wave-money-senegal') {
+          walletTypeToSend = 'wave-senegal';
+        }
+      }
       const response = await fetch(apiUrl('/api/sms/register'), {
         method: 'POST',
         headers: {
@@ -831,7 +838,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           role: formData.role,
           company_name: formData.companyName,
           vehicle_info: formData.vehicleInfo,
-          wallet_type: formData.role === 'vendor' ? formData.walletType : null,
+          wallet_type: formData.role === 'vendor' ? walletTypeToSend : null,
           address: formData.address === 'Autre' ? formData.customAddress : formData.address,
           pin: formData.pin,
         }),
