@@ -669,6 +669,7 @@ app.post('/api/vendor/orders', async (req, res) => {
           id,
           order_code,
           total_amount,
+          quantity,
           status,
           buyer_id,
           product_id,

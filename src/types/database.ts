@@ -39,6 +39,7 @@ export interface Order {
   products?: {
     name: string;
   };
+  quantity?: number;
   profiles?: {
     company_name?: string;
     full_name?: string;

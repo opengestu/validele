@@ -12,7 +12,10 @@
     "monitor:orders": "node scripts/monitorOrders.js",
     "cap:sync:android": "npm run build && npx cap sync android",
     "cap:open:android": "npx cap open android",
-    "android:bundle:release": "cd android && gradlew.bat bundleRelease"
+    "android:bundle:release": "cd android && gradlew.bat bundleRelease",
+    "test": "vitest",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",
@@ -93,6 +96,9 @@
     "@capacitor/inappbrowser": "^3.0.0",
     "@eslint/js": "^9.9.0",
     "@tailwindcss/typography": "^0.5.15",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.19.11",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
@@ -103,12 +109,14 @@
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.9",
     "globals": "^15.9.0",
+    "jsdom": "^28.1.0",
     "lovable-tagger": "^1.1.7",
     "postcss": "^8.4.47",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.11",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.0.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
   }
 }

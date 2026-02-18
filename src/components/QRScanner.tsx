@@ -45,6 +45,12 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
   const [scanPaused, setScanPaused] = useState(false);
   const scanPausedRef = useRef<boolean>(scanPaused);
   useEffect(() => { scanPausedRef.current = scanPaused; }, [scanPaused]);
+  // Keep stable refs for callbacks so the scanner effect doesn't restart
+  // when parent re-renders and produces new function identities.
+  const onScanRef = useRef(onScan);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
   // Détection mobile
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent);
   const isMobileRef = useRef<boolean>(isMobile);
@@ -63,9 +69,9 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
     const update = () => {
       const w = el.clientWidth || (isMobileRef.current ? 360 : 600);
       const h = el.clientHeight || w;
-      // Use 92% of the smaller dimension so the scan-frame (CSS uses 92%)
-      const raw = Math.floor(Math.min(w, h) * 0.92);
-      const size = Math.max(120, Math.min(raw, Math.floor(Math.max(w, h))));
+      // Use 76% of the smaller dimension so the scan-frame (CSS uses 76%)
+      const raw = Math.floor(Math.min(w, h) * 0.76);
+      const size = Math.max(180, Math.min(raw, 380));
       // Only update when change is meaningful to avoid tiny oscillations
       setComputedQrbox(prev => (Math.abs(prev - size) > 8 ? size : prev));
     };
@@ -158,7 +164,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
         const el = containerRef.current;
         const w = el ? (el.clientWidth || (isMobileRef.current ? 360 : 600)) : (isMobileRef.current ? 360 : 600);
         const h = el ? (el.clientHeight || w) : w;
-        const startQrbox = Math.max(120, Math.floor(Math.min(w, h) * 0.92));
+        const startQrbox = Math.max(180, Math.min(Math.floor(Math.min(w, h) * 0.76), 380));
         setComputedQrbox(prev => (Math.abs(prev - startQrbox) > 8 ? startQrbox : prev));
 
         try {
@@ -189,7 +195,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
                 (decodedText) => {
                   if (scanPausedRef.current) return;
                   setScanPaused(true);
-                  onScan(decodedText);
+                  try { onScanRef.current && onScanRef.current(decodedText); } catch (e) { console.error(e); }
                   setTimeout(() => setScanPaused(false), 2000);
                 },
                 (err) => { console.debug('[QR] scan error:', err); }
@@ -203,7 +209,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
                 (decodedText) => {
                   if (scanPausedRef.current) return;
                   setScanPaused(true);
-                  onScan(decodedText);
+                  try { onScanRef.current && onScanRef.current(decodedText); } catch (e) { console.error(e); }
                   setTimeout(() => setScanPaused(false), 2000);
                 },
                 (err) => { console.debug('[QR] scan error (facingMode):', err); }
@@ -236,7 +242,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
                 if (!el2) return;
                 const w2 = el2.clientWidth || (isMobileRef.current ? 360 : 600);
                 const h2 = el2.clientHeight || w2;
-                const recalculated = Math.max(120, Math.floor(Math.min(w2, h2) * 0.92));
+                const recalculated = Math.max(180, Math.min(Math.floor(Math.min(w2, h2) * 0.76), 380));
                 if (Math.abs(recalculated - startQrbox) > 8 && !restartAttempted.val) {
                   restartAttempted.val = true;
                   try {
@@ -255,7 +261,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
                       (decodedText) => {
                         if (scanPausedRef.current) return;
                         setScanPaused(true);
-                        onScan(decodedText);
+                        try { onScanRef.current && onScanRef.current(decodedText); } catch (e) { console.error(e); }
                         setTimeout(() => setScanPaused(false), 2000);
                       },
                       (err) => console.debug('[QR] scan error:', err)
@@ -324,94 +330,148 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
       isMounted = false;
       doStop();
     };
-  }, [onScan, onError, resetSignal, active]);
+  }, [resetSignal, active]);
   return (
     <>
       <style>{`
         /* Container with rounded corners and subtle shadow */
         #${divId} {
-          display:flex;
-          justify-content:center;
-          align-items:center;
-          position:relative;
-          width:100%;
-          max-width:600px;
-          margin:12px auto;
-          aspect-ratio: 1 / 1;
-          border-radius:28px;
-          overflow:hidden;
-          background:#000;
-          box-shadow:0 20px 48px rgba(16,24,40,0.10);
+          position: fixed !important;
+          inset: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: 100vw !important;
+          max-height: 100vh !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          z-index: 1000;
+          background: transparent !important;
+          border-radius: 0 !important;
+          box-shadow: none !important;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          overflow: hidden;
         }
 
-        /* Video fills the container and inherits the rounded look via overflow:hidden */
         #${divId} video {
           object-fit: cover !important;
           object-position: center center !important;
           width: 100% !important;
           height: 100% !important;
-          display:block;
-          background-color:#000;
-          -webkit-border-radius: inherit;
-          border-radius: inherit;
+          min-width: 100% !important;
+          min-height: 100% !important;
+          max-width: 100% !important;
+          max-height: 100% !important;
+          display: block;
+          background: transparent !important;
+          border-radius: 0 !important;
         }
 
-        /* Ensure any canvas or html5-qrcode injected elements inherit rounded corners */
         #${divId} canvas,
         #${divId} [class*="html5-qrcode"],
         #${divId} .qrbox,
         #${divId} .html5-qrcode-video {
-          -webkit-border-radius: inherit !important;
-          border-radius: inherit !important;
+          border-radius: 0 !important;
           overflow: hidden !important;
+          background: transparent !important;
         }
 
-        /* Remove default library borders/boxes so our rounded scan-frame is the visual focus */
         #${divId} .qrbox,
         #${divId} .html5-qrcode-region {
           box-shadow: none !important;
           border: none !important;
+          background: transparent !important;
         }
 
         /* Overlay centered scan frame */
-        #${divId} .qr-overlay{
-          position:absolute;
-          inset:0;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          pointer-events:none;
+        #${divId} .qr-overlay {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          pointer-events: none;
         }
-        #${divId} .scan-frame{
-          /* Make the visual frame large and mostly transparent so the camera
-             feed is visible inside the frame. Keep it proportional to the
-             container so the clickable area is obvious to the user. */
-          width:92%;
-          aspect-ratio:1;
-          border-radius:28px;
-          box-shadow: inset 0 0 0 2px rgba(255,255,255,0.06);
-          position:relative;
-          display:block;
-          margin:auto;
+        #${divId} .scan-frame {
+          width: 76%;
+          aspect-ratio: 1;
+          border-radius: 12px;
+          position: relative;
+          display: block;
+          margin: auto;
           background: transparent;
         }
-
+        /* Blue corners */
+        #${divId} .corner {
+          position: absolute;
+          width: 20px; /* smaller corner length */
+          height: 20px; /* smaller corner length */
+          border: 3px solid #ffffff; /* white and visible */
+          background: transparent;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+        }
+        #${divId} .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
+        #${divId} .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
+        #${divId} .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
+        #${divId} .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
+        /* Red scanning line */
+        #${divId} .scan-line {
+          position: absolute;
+          left: 8%;
+          width: 84%;
+          height: 2px;
+          background: linear-gradient(90deg, transparent 0%, #f44336 50%, transparent 100%);
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 2;
+          animation: scan-move 1.6s linear infinite alternate;
+        }
+        @keyframes scan-move {
+          0% { top: 18%; }
+          100% { top: 82%; }
+        }
         /* Optional: subtle inner border for the scanning area */
-        #${divId} .scan-frame::after{
-          content:'';
-          position:absolute;
-          inset:0;
-          border-radius:20px;
+        #${divId} .scan-frame::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: 10px;
           box-shadow: 0 0 0 2px rgba(255,255,255,0.06) inset;
         }
       `}</style>
       <div
         id={divId}
         ref={containerRef}
-        style={{ width: '100%', maxWidth: isMobile ? '100%' : 600, aspectRatio: '1', margin: '12px auto' }}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          width: 'min(92vw, 420px)',
+          height: 'min(92vh, 760px)',
+          maxWidth: '92vw',
+          maxHeight: '92vh',
+          margin: 'auto',
+          padding: 0,
+          zIndex: 1000,
+          background: 'transparent',
+          borderRadius: 0,
+          boxShadow: 'none',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          overflow: 'hidden',
+        }}
       >
-        {/* Use the computedQrbox to size the visual scan-frame so the visible overlay matches the scanner's configured qrbox */}
-        <div className="qr-overlay"><div className="scan-frame" style={{ width: computedQrbox, height: computedQrbox, borderRadius: 28 }} /></div>
+        {/* Overlay with blue corners and animated red line */}
+        <div className="qr-overlay">
+          <div className="scan-frame" style={{ width: computedQrbox, height: computedQrbox, borderRadius: 24 }}>
+            <div className="corner tl" />
+            <div className="corner tr" />
+            <div className="corner bl" />
+            <div className="corner br" />
+            <div className="scan-line" />
+          </div>
+        </div>
       </div>
     </>
   );
@@ -435,14 +495,20 @@ function QRScanSection({
   const [cameraErrorMsg, setCameraErrorMsg] = useState('');
   const [hasScanned, setHasScanned] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [loadingScanner, setLoadingScanner] = useState(true);
 
   // When scanSessionId increments, reset internal scanner state so scanning resumes
   useEffect(() => {
     setHasScanned(false);
+    setLoadingScanner(true);
+    // Wait for scanner to mount and camera to initialize
+    // Hide loader after a short delay or when scanner is ready
+    const timeout = setTimeout(() => setLoadingScanner(false), 1800);
+    return () => clearTimeout(timeout);
   }, [scanSessionId]);
 
   const handleScan = (decodedText: string) => {
-    console.log('handleScan appelé, decodedText =', decodedText);
+    // console.log('handleScan appelé, decodedText =', decodedText);
     setScannedCode(decodedText);
     handleScanQR(decodedText, () => setHasScanned(false));
     setHasScanned(true); // Masquer le scanner dès qu'un code est détecté
@@ -489,22 +555,21 @@ function QRScanSection({
   const scanValid = validationResult && validationResult.status === 'valid';
 
   return (
-    <Card className="mb-8 rounded-3xl border-0 bg-white/80 backdrop-blur shadow-xl">
-      <CardHeader>
-        <CardTitle className="flex items-center text-xl">
-          <QrCode className="h-5 w-5 mr-2 text-primary" />
-          <span className="text-primary">
-            {scanVendorQRMode ? 'Scanner QR Commande' : 'Scanner de validation'}
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-6">
-          {/* Scanner et champ manuel masqués si scan validé OU si un code a été scanné */}
-          <div
-            className={`rounded-2xl p-6 sm:p-8 text-center transition-opacity duration-300 ${(scanValid || hasScanned) ? 'opacity-0 pointer-events-none h-0 p-0 m-0' : 'opacity-100'} bg-gradient-to-br from-indigo-50 to-sky-50 ring-1 ring-indigo-100`}
-            style={{ minHeight: (scanValid || hasScanned) ? 0 : 220 }}
-          >
+    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.95)', zIndex: 1000 }}>
+      {/* Scanner et champ manuel masqués si scan validé OU si un code a été scanné */}
+      {/* Loading spinner overlay */}
+      {loadingScanner && !cameraError && !scanValid && !hasScanned && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <Loader2 className="animate-spin" style={{ width: 64, height: 64, color: '#2196f3' }} />
+            <span style={{ color: '#fff', marginTop: 16, fontSize: 18 }}>Chargement du scanner…</span>
+          </div>
+        </div>
+      )}
+      <div
+        className={`transition-opacity duration-300 ${(scanValid || hasScanned) ? 'opacity-0 pointer-events-none h-0 p-0 m-0' : 'opacity-100'}`}
+        style={{ minHeight: (scanValid || hasScanned) ? 0 : 220 }}
+      >
             {/* Message différent selon le mode */}
             {scanVendorQRMode && !scanValid && !hasScanned && (
               <div className="mb-4 text-left bg-white/60 p-3 rounded-md">
@@ -524,14 +589,7 @@ function QRScanSection({
             {!cameraError && !scanValid && !hasScanned ? (
               <Html5QrcodeReact resetSignal={scanSessionId} onScan={handleScan} onError={handleError} active={active} />
             ) : null}
-            {!scanValid && !hasScanned && (
-              <>
-                <p className="text-gray-700 mt-4">
-                  {scanVendorQRMode ? 'Scannez le QR code de la commande' : 'Scannez le QR code du client avec la caméra'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Astuce : placez le QR code bien au centre du cadre et assurez-vous d'une bonne lumière pour accélérer la détection.</p>
-              </>
-            )}
+            {/* No instructions overlayed on the scanner for full transparency */}
             {cameraError && !scanValid && !hasScanned && (
               <div className="mt-4 flex flex-col items-center gap-3">
                 <p className="text-red-600 mt-2 text-sm text-center">{cameraErrorMsg || "Impossible d'accéder à la caméra. Autorisez l'accès ou réessayez."}</p>
@@ -556,42 +614,40 @@ function QRScanSection({
                 )}
               </div>
             )}
-          </div>
-          {/* Bloc de validation avec effet fondu */}
-          <div className={`transition-opacity duration-300 ${scanValid ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 p-0 m-0'} flex items-center justify-center min-h-[220px]`}
-            style={{ minHeight: scanValid ? 220 : 0 }}>
-            {validationResult && validationResult.status === 'valid' && (
-              <div className="flex flex-col items-center justify-center gap-5 w-full bg-primary/10 rounded-2xl p-6 ring-1 ring-primary/20">
-                <div className="flex items-center gap-2 text-primary text-center">
-                  <CheckCircle className="h-6 w-6 text-primary" />
-                  <span className="font-semibold text-lg">QR code valide et correspond à la commande</span>
-                </div>
-                <Button
-                  className="bg-primary text-primary-foreground mt-2 w-full max-w-xs rounded-xl"
-                  disabled={isConfirmingDelivery}
-                  onClick={async () => {
-                    await handleConfirmDelivery();
-                  }}
-                >
-                  {isConfirmingDelivery ? (
-                    <span className="inline-flex items-center"><Loader2 className="mr-2 h-4 w-4 animate-spin local-spinner" /> Confirmation…</span>
-                  ) : (
-                    'Confirmer la commande'
-                  )}
-                </Button>
-              </div>
-            )}
-          </div>
-          {/* Bloc d'erreur reste inchangé */}
-          {validationResult && validationResult.status === 'invalid' && (
-            <div className="flex items-center gap-2 text-red-700 mt-6 bg-red-50 rounded-xl p-3 ring-1 ring-red-100">
-              <AlertCircle className="h-6 w-6 text-red-600" />
-              <span className="font-semibold">QR code invalide : {validationResult.error}</span>
+      </div>
+      {/* Bloc de validation avec effet fondu */}
+      <div className={`transition-opacity duration-300 ${scanValid ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 p-0 m-0'} flex items-center justify-center min-h-[220px]`}
+        style={{ minHeight: scanValid ? 220 : 0 }}>
+        {validationResult && validationResult.status === 'valid' && (
+          <div className="flex flex-col items-center justify-center gap-5 w-full bg-primary/10 rounded-2xl p-6 ring-1 ring-primary/20">
+            <div className="flex items-center gap-2 text-primary text-center">
+              <CheckCircle className="h-6 w-6 text-primary" />
+              <span className="font-semibold text-lg">QR code valide et correspond à la commande</span>
             </div>
-          )}
+            <Button
+              className="bg-primary text-primary-foreground mt-2 w-full max-w-xs rounded-xl"
+              disabled={isConfirmingDelivery}
+              onClick={async () => {
+                await handleConfirmDelivery();
+              }}
+            >
+              {isConfirmingDelivery ? (
+                <span className="inline-flex items-center"><Loader2 className="mr-2 h-4 w-4 animate-spin local-spinner" /> Confirmation…</span>
+              ) : (
+                'Confirmer la commande'
+              )}
+            </Button>
+          </div>
+        )}
+      </div>
+      {/* Bloc d'erreur reste inchangé */}
+      {validationResult && validationResult.status === 'invalid' && (
+        <div className="flex items-center gap-2 text-red-700 mt-6 bg-red-50 rounded-xl p-3 ring-1 ring-red-100">
+          <AlertCircle className="h-6 w-6 text-red-600" />
+          <span className="font-semibold">QR code invalide : {validationResult.error}</span>
         </div>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 }
 
@@ -651,7 +707,7 @@ const QRScanner = () => {
     }
 
     try {
-      console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
+      // console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
       if (!currentOrder.id) throw new Error('Order id manquant');
 
       // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
@@ -664,12 +720,12 @@ const QRScanner = () => {
           const token = sessionResp?.data?.session?.access_token || sessionResp?.session?.access_token || null;
           if (token) {
             authHeader = { Authorization: `Bearer ${token}` };
-            console.log('[QRScanner] Using auth token for backend call');
+            // console.log('[QRScanner] Using auth token for backend call');
           } else {
-            console.log('[QRScanner] No auth token available for backend call');
+            // console.log('[QRScanner] No auth token available for backend call');
           }
         } catch (e) {
-          console.warn('[QRScanner] supabase.getSession() failed:', e);
+          // console.warn('[QRScanner] supabase.getSession() failed:', e);
         }
 
         const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
@@ -679,7 +735,7 @@ const QRScanner = () => {
         });
         const json = await resp.json();
         if (!resp.ok || !json || !json.success) {
-          console.error('Backend mark-in-delivery failed:', resp.status, json);
+          // console.error('Backend mark-in-delivery failed:', resp.status, json);
           throw new Error(json?.error || json?.message || 'Backend mark-in-delivery failed');
         }
 
@@ -689,9 +745,9 @@ const QRScanner = () => {
         try {
           window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
         } catch (e) {
-          console.warn('Unable to dispatch delivery:started event', e);
+          // console.warn('Unable to dispatch delivery:started event', e);
         }
-        console.log('Livraison démarrée avec succès (backend)', json);
+        // console.log('Livraison démarrée avec succès (backend)', json);
         toast({
           title: 'Commande récupérée',
           description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',

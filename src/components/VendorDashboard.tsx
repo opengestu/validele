@@ -93,7 +93,6 @@ const VendorDashboard = () => {
     );
   }
 
-  // ...existing code...
   // Correction : lire user depuis sms_auth_session si présent
   type SmsUser = {
     id: string;
@@ -289,14 +288,48 @@ const VendorDashboard = () => {
 
   async function fetchVendorBatches() {
     try {
+      // Dev-mode: quick demo batches for dev profiles
+      try {
+        const smsRaw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+        const devId = smsRaw ? (() => { try { return JSON.parse(smsRaw).profileId; } catch { return null; } })() : null;
+        if (devId && String(devId).startsWith('dev-')) {
+          setBatchesLoading(true);
+          setVendorBatches([{ id: 'dev-batch-1', created_at: new Date().toISOString(), total_amount: 1200, status: 'paid', item_count: 1, total_net: 1100 }]);
+          setBatchesLoading(false);
+          return;
+        }
+      } catch (e) { /* ignore dev detection errors */ }
+
       setBatchesLoading(true);
-      let token = (smsUser as any)?.access_token || '';
+
+      // Robust token resolution: try smsUser.access_token, explicit auth_token, parse sms_auth_session, then supabase session
+      let token = '';
+      if ((smsUser as any)?.access_token) token = (smsUser as any).access_token;
+      if (!token) token = (typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null) || '';
       if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+        const raw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            token = parsed?.access_token || parsed?.token || '';
+          } catch (e) { /* ignore parse error */ }
+        }
       }
+      if (!token) {
+        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { /* ignore */ }
+      }
+
       const headers: Record<string,string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
+
+      // If unauthorized, give a clear message and clear any stale sms session
+      if (resp.status === 401) {
+        try { localStorage.removeItem('sms_auth_session'); } catch (e) { /* ignore */ }
+        throw new Error('Vendor authentication required');
+      }
+
       const json = await resp.json().catch(() => null);
       if (!resp.ok || !json || !json.success) {
         throw new Error(json?.error || `Backend returned ${resp.status}`);
@@ -304,7 +337,8 @@ const VendorDashboard = () => {
       setVendorBatches(json.batches || []);
     } catch (err) {
       console.error('[VendorDashboard] fetchVendorBatches error', err);
-      toast({ title: 'Erreur', description: 'Impossible de charger les factures de batch', variant: 'destructive' });
+      const isAuth = err && typeof err === 'object' && 'message' in err && String((err as any).message).toLowerCase().includes('auth');
+      toast({ title: isAuth ? 'Non autorisé' : 'Erreur', description: isAuth ? 'Authentification requise. Veuillez vous reconnecter.' : 'Impossible de charger les factures de batch', variant: 'destructive' });
     } finally {
       setBatchesLoading(false);
     }
@@ -327,7 +361,10 @@ const VendorDashboard = () => {
     name: '',
     price: '',
     description: '',
-    warranty: ''
+    warranty: '',
+    // optional dev-only code field (visible only in dev sessions)
+    code: '',
+    category: ''
   });
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
@@ -381,6 +418,60 @@ const VendorDashboard = () => {
   const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
     const caller = smsUser || user;
     if (!caller) return;
+    // Dev/test vendor: aggregate dev/test orders from localStorage
+    // Mode test si profileId commence par 'dev-' OU si le numéro de téléphone (normalisé) est listé in DEV_TEST_LAST9S
+    const { isDevTestNumber } = await (async () => ({ isDevTestNumber: (await import('@/lib/devTestNumbers')).isDevTestNumber }))();
+    const isDevVendor = String(caller.id || '').startsWith('dev-') || isDevTestNumber(String(caller.phone || ''));
+    if (isDevVendor) {
+      // 1) Prefer explicit cached_buyer_orders_<buyerId> (set during fake payment)
+      let devOrders: Order[] = [];
+      try {
+        // Aggregate all dev_order_* for this vendor
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith('dev_order_')) {
+            try {
+              const parsed = JSON.parse(localStorage.getItem(k) || 'null');
+              if (parsed && parsed.vendor_id && String(parsed.vendor_id) === String(caller.id)) {
+                devOrders.push(parsed as Order);
+              } else if (parsed && parsed.vendor_id && String(parsed.vendor_id).startsWith('dev-') && String(caller.id).startsWith('dev-')) {
+                // accept dev->dev match by prefix
+                devOrders.push(parsed as Order);
+              }
+            } catch (e) { /* ignore parse errors */ }
+          }
+        }
+        // Also check for cached_buyer_orders for this vendor's orders
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith('cached_buyer_orders_')) {
+            try {
+              const parsed = JSON.parse(localStorage.getItem(k) || 'null');
+              if (parsed && Array.isArray(parsed.orders)) {
+                for (const o of parsed.orders) {
+                  if (o.vendor_id && String(o.vendor_id) === String(caller.id)) {
+                    devOrders.push(o as Order);
+                  }
+                }
+              }
+            } catch (e) { /* ignore parse errors */ }
+          }
+        }
+        // sort by created_at desc
+        devOrders.sort((a, b) => (new Date(b.created_at || '').getTime() || 0) - (new Date(a.created_at || '').getTime() || 0));
+        setOrders(devOrders);
+        if (!opts?.silent) console.log('[VendorDashboard] dev/test orders loaded:', devOrders.length);
+        return;
+      } catch (e) {
+        // fallback to empty
+        setOrders([]);
+        if (!opts?.silent) console.warn('[VendorDashboard] dev/test order aggregation failed', e);
+        return;
+      }
+    }
+    // --- Normal backend flow for non-dev vendors ---
     if (!opts?.silent) {
       console.log('[VendorDashboard] fetchOrders start for vendor', caller?.id, { backendAvailable, silent: !!opts?.silent });
     }
@@ -402,28 +493,55 @@ const VendorDashboard = () => {
       }
       const data = json.orders || [];
       // Convertir null en undefined pour compatibilité avec le type Order
-      const mappedOrders = (data || []).map(o => ({
-        ...o,
-        delivery_person_id: o.delivery_person_id ?? undefined,
-        order_code: o.order_code ?? undefined,
-        qr_code: o.qr_code ?? undefined,
-        status: o.status ?? undefined,
-        payment_confirmed_at: o.payment_confirmed_at ?? undefined,
-        assigned_at: o.assigned_at ?? undefined,
-        delivered_at: o.delivered_at ?? undefined,
-        token: o.token ?? undefined,
-        // Propager le numéro de l'acheteur s'il est exposé comme buyer_phone
-        profiles: (o.profiles || o.buyer_phone || o.buyer_full_name || (o.buyer && (o.buyer.full_name || o.buyer.phone))) ? {
-          full_name: (o.profiles && o.profiles.full_name) ? o.profiles.full_name : (o.buyer_full_name ?? (o.buyer ? (o.buyer.full_name || '') : '')),
-          phone: (o.profiles && o.profiles.phone) ? o.profiles.phone : (o.buyer_phone ?? (o.buyer ? o.buyer.phone : undefined))
-        } : undefined,
-        // Normaliser un objet buyer si le backend expose la structure `buyer` ou des champs buyer_*
-        buyer: (o.buyer || o.buyer_full_name || o.buyer_phone || o.buyer_address) ? {
-          full_name: o.buyer?.full_name ?? o.buyer_full_name ?? undefined,
-          phone: o.buyer?.phone ?? o.buyer_phone ?? undefined,
-          address: o.buyer?.address ?? o.buyer_address ?? undefined
-        } : undefined
-      })) as Order[];
+      const mappedOrders = (data || []).map(o => {
+        // Derive quantity with preferred fallbacks: o.quantity -> o.items?.length -> o.products quantities -> o.product_quantity -> default 1
+        const derivedQuantity = (() => {
+          try {
+            if (typeof o.quantity === 'number') return o.quantity;
+            if (Array.isArray(o.items)) return o.items.length;
+
+            // If products is an array and contains per-product `quantity` fields, sum them.
+            if (Array.isArray(o.products) && o.products.length > 0) {
+              const hasQty = o.products.some((p: any) => typeof p?.quantity === 'number');
+              if (hasQty) return o.products.reduce((sum: number, p: any) => sum + (Number(p?.quantity || 0)), 0);
+              // otherwise fall back to count of products
+              return o.products.length;
+            }
+
+            // products might be an object with a quantity field
+            if (o.products && typeof o.products.quantity === 'number') return o.products.quantity;
+            if (typeof o.product_quantity === 'number') return o.product_quantity;
+
+            return 1;
+          } catch (e) {
+            return 1;
+          }
+        })();
+
+        return {
+          ...o,
+          quantity: derivedQuantity,
+          delivery_person_id: o.delivery_person_id ?? undefined,
+          order_code: o.order_code ?? undefined,
+          qr_code: o.qr_code ?? undefined,
+          status: o.status ?? undefined,
+          payment_confirmed_at: o.payment_confirmed_at ?? undefined,
+          assigned_at: o.assigned_at ?? undefined,
+          delivered_at: o.delivered_at ?? undefined,
+          token: o.token ?? undefined,
+          // Propager le numéro de l'acheteur s'il est exposé comme buyer_phone
+          profiles: (o.profiles || o.buyer_phone || o.buyer_full_name || (o.buyer && (o.buyer.full_name || '') )) ? {
+            full_name: (o.profiles && o.profiles.full_name) ? o.profiles.full_name : (o.buyer_full_name ?? (o.buyer ? (o.buyer.full_name || '') : '')),
+            phone: (o.profiles && o.profiles.phone) ? o.profiles.phone : (o.buyer_phone ?? (o.buyer ? o.buyer.phone : undefined))
+          } : undefined,
+          // Normaliser un objet buyer si le backend expose la structure `buyer` ou des champs buyer_*
+          buyer: (o.buyer || o.buyer_full_name || o.buyer_phone || o.buyer_address) ? {
+            full_name: o.buyer?.full_name ?? o.buyer_full_name ?? undefined,
+            phone: o.buyer?.phone ?? o.buyer_phone ?? undefined,
+            address: o.buyer?.address ?? o.buyer_address ?? undefined
+          } : undefined
+        } as Order;
+      }) as Order[];
       let filtered = mappedOrders.filter(order => order.status !== 'pending');
 
       // Enrich missing buyer names from profiles using buyer_id
@@ -497,7 +615,6 @@ const VendorDashboard = () => {
       // Suppressed user-facing destructive toast; fallback to cached data is used silently
       console.debug('[VendorDashboard] fetchOrders failed but handled silently');
     }
-   
   }, [user, smsUser, toast, getOrderBuyerName, getOrderBuyerId, normalizeBuyerName]);
   // ...existing code...
   const fetchProducts = useCallback(async () => {
@@ -565,7 +682,6 @@ const VendorDashboard = () => {
             const parsed = JSON.parse(raw) as Product[];
             // no ts on old cache -> accept it
             setProducts(parsed);
-            setTimeout(() => { fetchProducts(); }, 2000);
           } else {
             setProducts([]);
           }
@@ -797,7 +913,56 @@ const VendorDashboard = () => {
       
       console.log('[VendorDashboard] fetchData start (init)');
       setPageLoading(true);
-      
+
+      // Dev-mode shortcut: if sms_auth_session.profileId begins with "dev-" provide demo data
+      try {
+        const smsRaw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+        const devId = (smsRaw ? (() => { try { return JSON.parse(smsRaw).profileId; } catch { return null; } })() : null) || user?.id;
+        if (devId && String(devId).startsWith('dev-')) {
+          console.log('[VendorDashboard] dev session detected — loading demo data');
+          const demoProduct = {
+            id: 'dev-prod-1',
+            vendor_id: devId,
+            name: 'Produit démo — Maïs',
+            description: 'Produit de démonstration pour tests',
+            price: 1200,
+            category: 'Épicerie',
+            image_url: '',
+            stock_quantity: 12,
+            is_available: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            code: 'PD-DEV-1'
+          };
+          setProducts([demoProduct]);
+          setOrders([{
+            id: 'dev-order-1',
+            buyer_id: 'dev-buyer-777693020',
+            vendor_id: devId,
+            product_id: demoProduct.id,
+            total_amount: 1200,
+            payment_method: 'wave',
+            delivery_address: 'Dakar - Almadies',
+            buyer_phone: '+221777000000',
+            order_code: 'DEV-1001',
+            qr_code: 'https://example.com/dev-qr-1',
+            status: 'paid',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            products: { name: demoProduct.name },
+            profiles: { full_name: 'Dev Buyer', phone: '+221777000000' }
+          }]);
+          setTransactions([{ id: 'dev-tx-1', order_id: 'dev-order-1', status: 'SUCCESSFUL', amount: 1200, transaction_type: 'payment', created_at: new Date().toISOString() }]);
+          setVendorBatches([{ id: 'dev-batch-1', created_at: new Date().toISOString(), total_amount: 1200, status: 'paid', item_count: 1, total_net: 1100 }]);
+          setUserProfile({ full_name: 'Dev Vendeur', phone: '+221777693020', wallet_type: 'wave-senegal' });
+          setEditProfile({ full_name: 'Dev Vendeur', phone: '+221777693020', wallet_type: 'wave-senegal' });
+          setPageLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.warn('[VendorDashboard] dev-mode detection failed', e);
+      }
+
       try {
         // fetchOrCreateProfile directement ici (sans dépendance)
         if (user?.id) {
@@ -871,49 +1036,31 @@ const VendorDashboard = () => {
     });
   }, [pageLoading, loading, adding, editing, deleting, savingProfile, isPageLoading]);
   // Live updates: écoute les changements sur les commandes du vendeur (orders only) + silent polling for resiliency
-  useEffect(() => {
-    if (!user?.id) return;
-    let mounted = true;
-
+  // Realtime orders listener (stable, unique, sans boucle)
+  // Listener Realtime uniquement pour les commandes (orders), sans polling, ni pour les transactions
+  React.useEffect(() => {
+    // Support both Supabase session `user.id` and SMS-auth `smsUser.profileId`
+    const vendorId = (smsUser as any)?.id || user?.id;
+    if (!vendorId) return;
+    let isMounted = true;
+    const ordersListener = (payload: any) => {
+      if (!isMounted) return;
+      console.log('VendorDashboard: Changement orders détecté', payload);
+      fetchOrders({ silent: true });
+    };
     const channel = supabase
-      .channel(`orders-vendor-${user.id}`)
+      .channel(`orders-vendor-${vendorId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders', filter: `vendor_id=eq.${user.id}` },
-        (payload) => {
-          console.log('VendorDashboard: Changement orders détecté', payload);
-          // fetch orders silently (avoid UI flicker)
-          try { fetchOrders({ silent: true }); } catch (e) { console.warn('[VendorDashboard] fetchOrders silent failed', e); }
-        }
+        { event: '*', schema: 'public', table: 'orders', filter: `vendor_id=eq.${vendorId}` },
+        ordersListener
       )
       .subscribe();
-
-    // Polling: orders every 1s, transactions every 5s (silent)
-    const ordersInterval = setInterval(() => {
-      if (!mounted) return;
-      if (pollingRef.current.orders) return;
-      pollingRef.current.orders = true;
-      Promise.resolve(fetchOrders({ silent: true }))
-        .catch(e => console.warn('[VendorDashboard] periodic fetchOrders failed', e))
-        .finally(() => { pollingRef.current.orders = false; });
-    }, 3000);
-
-    const txInterval = setInterval(() => {
-      if (!mounted) return;
-      if (pollingRef.current.transactions) return;
-      pollingRef.current.transactions = true;
-      Promise.resolve(fetchTransactions())
-        .catch(e => console.warn('[VendorDashboard] periodic fetchTransactions failed', e))
-        .finally(() => { pollingRef.current.transactions = false; });
-    }, 5000);
-
     return () => {
-      mounted = false;
-      clearInterval(ordersInterval);
-      clearInterval(txInterval);
-      supabase.removeChannel(channel);
+      isMounted = false;
+      try { supabase.removeChannel(channel); } catch (e) { /* ignore */ }
     };
-  }, [user?.id, fetchOrders, fetchTransactions]);
+  }, [(smsUser as any)?.id || user?.id, fetchOrders]);
   // Suppression de l'effet ensureWalletType
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
@@ -927,95 +1074,106 @@ const VendorDashboard = () => {
 
   const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price || !newProduct.description) {
-      toast({
-        title: 'Erreur',
-        description: 'Veuillez remplir tous les champs obligatoires',
-        variant: 'destructive'
-      });
+      toast({ title: 'Erreur', description: 'Veuillez remplir tous les champs obligatoires', variant: 'destructive' });
       return;
     }
+
     setAdding(true);
+
     try {
-      let insertOk = false;
-      let insertError: string | null = null;
-      const code = await generateProductCode();
-      if (!effectiveUser?.id) {
-        throw new Error('Utilisateur non identifié');
+      const vendorId = effectiveUser?.id;
+      if (!vendorId) throw new Error('Utilisateur non identifié');
+
+      // Toujours générer un code produit si vide ou invalide (PD + 4 chiffres aléatoires)
+      let productCode = newProduct.code && String(newProduct.code).trim();
+      if (!productCode) {
+        const randomNumber = Math.floor(1000 + Math.random() * 9000);
+        productCode = `PD${randomNumber}`;
       }
-      // Utilise le backend sécurisé avec le token JWT si session SMS
-      const token = smsUser?.access_token || '';
-      let productResp: { success?: boolean; error?: string } | null = null;
+
+      // DEV shortcut: persist locally for dev vendor sessions
+      const isDevVendor = Boolean(smsUser && String(vendorId).startsWith('dev-'));
+      if (isDevVendor) {
+        const devProd: Product = {
+          id: `dev-prod-${Date.now()}`,
+          vendor_id: vendorId,
+          name: newProduct.name,
+          description: newProduct.description,
+          price: Number.parseInt(newProduct.price || '0') || 0,
+          warranty: newProduct.warranty || undefined,
+          code: productCode,
+          is_available: true,
+          stock_quantity: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        } as Product;
+
+        // persist to dev_products and cached_products_<vendorId>
+        try { const raw = localStorage.getItem('dev_products'); const arr = raw ? JSON.parse(raw) : []; arr.unshift(devProd); localStorage.setItem('dev_products', JSON.stringify(arr)); } catch (e) { console.warn(e); }
+        try { const key = `cached_products_${vendorId}`; const raw = localStorage.getItem(key); const arr = raw ? JSON.parse(raw) : []; arr.unshift(devProd); localStorage.setItem(key, JSON.stringify(arr)); } catch (e) { console.warn(e); }
+
+        setProducts(prev => [devProd, ...(prev || [])]);
+        toast({ title: 'Succès', description: 'Produit ajouté (dev)' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
+        setAddModalOpen(false);
+        return;
+      }
+
+      // Non-dev flows: call backend (smsUser) or Supabase
       if (smsUser) {
+        const token = (smsUser as any).access_token || '';
+        // Préparer le payload sans champs vides/undefined
+        const rawPayload = {
+          vendor_id: vendorId,
+          name: newProduct.name,
+          price: Number(newProduct.price),
+          description: newProduct.description,
+          warranty: newProduct.warranty,
+          code: productCode,
+          category: newProduct.category,
+          is_available: true,
+          stock_quantity: 0
+        };
+        // Supprimer les champs optionnels vides ou undefined
+        const payload: Record<string, any> = {};
+        Object.entries(rawPayload).forEach(([k, v]) => {
+          if (
+            v !== undefined &&
+            v !== null &&
+            (typeof v !== 'string' || v.trim() !== '' || ['name','description','code'].includes(k))
+          ) {
+            payload[k] = v;
+          }
+        });
         // Log pour debug
-        console.log('Token envoyé:', token);
+        console.log('[handleAddProduct] payload envoyé:', payload);
         const resp = await fetch(apiUrl('/api/vendor/add-product'), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            vendor_id: effectiveUser.id,
-            name: newProduct.name,
-            price: parseInt(newProduct.price),
-            description: newProduct.description,
-            warranty: newProduct.warranty,
-            code,
-            is_available: true,
-            stock_quantity: 0
-          })
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(payload)
         });
-        productResp = await resp.json();
-        if (!resp.ok || !productResp || !productResp.success) {
-          insertError = productResp && typeof productResp.error === 'string' ? productResp.error : 'Erreur lors de l\'ajout du produit (backend)';
-        } else {
-          insertOk = true;
-        }
-      } else {
-        // Utilisateur Supabase classique
-        const { data: insertData, error } = await supabase
-          .from('products')
-          .insert({
-            vendor_id: effectiveUser.id,
-            name: newProduct.name,
-            price: parseInt(newProduct.price),
-            description: newProduct.description,
-            warranty: newProduct.warranty,
-            code,
-            is_available: true,
-            stock_quantity: 0
-          });
-        if (error) {
-          if ((error as any)?.status === 401 || (error as any)?.message?.toLowerCase?.().includes('unauthorized')) {
-            toast({ title: 'Session expirée', description: 'Vous devez vous reconnecter pour ajouter un produit', variant: 'destructive' });
-            await signOut();
-            navigate('/auth');
-            return;
-          }
-          insertError = error.message ? String(error.message) : 'Erreur lors de l\'ajout du produit';
-        } else {
-          insertOk = true;
-        }
-      }
-      if (insertOk) {
-        toast({
-          title: 'Succès',
-          description: 'Produit ajouté avec succès'
-        });
-        setNewProduct({ name: '', price: '', description: '', warranty: '' });
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) throw new Error((json && json.error) ? String(json.error) : 'Erreur backend');
+
+        toast({ title: 'Succès', description: 'Produit ajouté' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
         setAddModalOpen(false);
         fetchProducts();
-      } else {
-        throw new Error(insertError || 'Erreur lors de l\'ajout du produit');
+        return;
       }
-    } catch (error: unknown) {
-      console.error('handleAddProduct error:', error);
-      const msg = (error && typeof error === 'object' && 'message' in error) ? (error as any).message : String(error || 'Erreur inconnue');
-      toast({
-        title: 'Erreur',
-        description: msg || 'Impossible d\'ajouter le produit',
-        variant: 'destructive'
-      });
+
+      // Supabase session
+      const { data, error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty, code: productCode, is_available: true, stock_quantity: 0 });
+      if (error) throw error;
+
+      toast({ title: 'Succès', description: 'Produit ajouté' });
+      setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
+      setAddModalOpen(false);
+      fetchProducts();
+    } catch (err) {
+      console.error('handleAddProduct error:', err);
+      const message = (err && (err as any).message) ? (err as any).message : String(err || 'Erreur');
+      toast({ title: 'Erreur', description: message, variant: 'destructive' });
     } finally {
       setAdding(false);
     }
@@ -1471,6 +1629,12 @@ const VendorDashboard = () => {
                           {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                         </span>
                       </div>
+
+                      <div className="flex items-center text-sm text-gray-800 mb-1">
+                        <strong>Quantité :</strong>
+                        <span className="ml-2 font-medium text-gray-900">{order.quantity ?? 1}</span>
+                      </div>
+
                       <div className="flex items-center mb-1">
                         <span className="text-sm font-semibold text-gray-800">Code commande :</span>
                         <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px', marginLeft: 8}}>{order.order_code || order.id}</span>
@@ -1915,11 +2079,20 @@ const VendorDashboard = () => {
                                     <div className="flex items-center gap-2">
                                       <span role="img" aria-label="box" className="text-black text-lg">📦</span>
                                       <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
-                                    </div>
+                                    {typeof order.quantity === 'number' && (
+                                      <span className="ml-2 text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
+                                    )}
+                                  </div>
                                     <span className="font-bold" style={{ color: "#000000", fontSize: 16 }}>
                                       {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
                                     </span>
                                   </div>
+
+                                  <div className="flex items-center text-sm text-gray-800 mb-1">
+                                    <strong>Quantité :</strong>
+                                    <span className="ml-2 font-medium text-gray-900">{order.quantity ?? 1}</span>
+                                  </div>
+
                                   <div className="flex items-center mb-1">
                                     <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
                                     <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'16px', marginLeft: 8}}>{order.order_code || order.id}</span>
@@ -1988,7 +2161,7 @@ const VendorDashboard = () => {
                               </Card>
                             ))}
                           </div>
-                        </div>
+                      </div>
                       ))}
                     </div>
                   );
@@ -2314,6 +2487,30 @@ const VendorDashboard = () => {
                 placeholder="Ex: 12 mois"
               />
             </div>
+
+            {/* Dev-only: allow specifying a product code when adding in a dev session */}
+            {(() => {
+              try {
+                const smsRaw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+                const isDev = smsRaw ? (() => { try { return JSON.parse(smsRaw).profileId?.startsWith('dev-'); } catch { return false; } })() : false;
+                if (isDev) {
+                  return (
+                    <div>
+                      <label className="text-sm font-medium">Code produit (dev uniquement)</label>
+                      <Input
+                        value={newProduct.code}
+                        onChange={(e) => setNewProduct({...newProduct, code: e.target.value})}
+                        placeholder="Ex: PD-DEV-1"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Entrer un code personnalisé pour les tests (visible seulement en session dev).</p>
+                    </div>
+                  );
+                }
+                return null;
+              } catch (e) {
+                return null;
+              }
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddModalOpen(false)}>

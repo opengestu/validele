@@ -54,6 +54,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // Ajouté : pour bloquer l'envoi OTP si profil existe
   const [hasCheckedProfile, setHasCheckedProfile] = useState(false);
   const [isResetPin, setIsResetPin] = useState(false);
+  // State: which role simulator is currently activating (prevents double-clicks)
+  const [simulatingRole, setSimulatingRole] = useState<'buyer' | 'vendor' | 'delivery' | null>(null);
   // Mobile fallback: dialog for role selection (avoids native select overlay on some devices)
   const [roleSheetOpen, setRoleSheetOpen] = useState(false);
   const [existingProfile, setExistingProfile] = useState<{ id: string; full_name: string; role: string; pin_hash: string | null } | null>(null);
@@ -248,6 +250,46 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
    
     return cleaned;
+  };
+
+  // Dev-only test numbers (accept multiple test numbers; match on last 9 digits)
+  const DEV_TEST_LAST9S = ['777693020', '777603020'];
+  const DEFAULT_DEV_TEST_LAST9 = DEV_TEST_LAST9S[0];
+  const DEFAULT_DEV_TEST_PHONE = `+221${DEFAULT_DEV_TEST_LAST9}`;
+  const isDevTestNumber = (raw?: string | null) => DEV_TEST_LAST9S.includes(String(raw || '').replace(/\D/g, '').slice(-9));
+  const isDevEnv = (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') || (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV);
+  const normalizeToLast9 = (raw: string) => (raw || '').replace(/\D/g, '').slice(-9);
+
+  const simulateDevSession = async (role: 'buyer' | 'vendor' | 'delivery') => {
+    // Allow simulation when running in dev OR when the entered phone is a configured test number
+    if (!isDevEnv && !isDevTestNumber(formData.phone)) return;
+    // prevent double clicks
+    if (simulatingRole) return;
+    setSimulatingRole(role);
+    try {
+      const phoneNorm = formatPhoneNumber(formData.phone || DEFAULT_DEV_TEST_PHONE);
+      const profileId = `dev-${role}-${normalizeToLast9(phoneNorm)}`;
+      const session: any = {
+        phone: phoneNorm,
+        profileId,
+        role,
+        fullName: `${role.charAt(0).toUpperCase() + role.slice(1)} (test)`,
+        loginTime: new Date().toISOString(),
+        access_token: role === 'vendor' ? 'dev-token-vendor' : undefined
+      };
+      localStorage.setItem('sms_auth_session', JSON.stringify(session));
+      if (role === 'vendor') localStorage.setItem('auth_token', 'dev-token-vendor');
+
+      // small delay so UI shows spinner/disabled state, then navigate (use replace + fallback)
+      await new Promise((r) => setTimeout(r, 60));
+      const path = role === 'vendor' ? '/vendor' : role === 'delivery' ? '/delivery' : '/buyer';
+      try { window.location.replace(path); } catch (e) { window.location.href = path; }
+      // fallback in case initial navigation doesn't trigger in some environments
+      setTimeout(() => { try { if (window.location.pathname !== path) window.location.href = path; } catch (e) { /* ignore */ } }, 350);
+    } catch (err) {
+      console.error('simulateDevSession error', err);
+      setSimulatingRole(null);
+    }
   };
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -674,6 +716,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       
       const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
                            existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+     
+      // Utiliser window.location pour forcer le rechargement et détecter la session
       window.location.href = redirectPath;
       return;
     } catch (error: unknown) {
@@ -1170,7 +1214,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               title="Effacer"
               onPointerDown={provideHaptic}
               onClick={handleKeypadBackspace}
-              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all hover:bg-red-500 hover:text-white border-[3px] border-red-500 text-red-500"
+              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all border-[3px] border-red-500 text-red-500"
             >
               <span className="text-3xl">⌫</span>
             </button>
@@ -1331,6 +1375,26 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     />
                   </div>
                 </div>
+
+                {/* Quick simulator for the provided test number (dev or explicit test numbers) */}
+                {isDevTestNumber(formData.phone) && (
+                  <div className="mt-3 mb-2 p-3 rounded-lg border border-muted/20 bg-slate-50 text-sm">
+                    <div className="mb-2 text-xs text-primary font-semibold">Numéro de test détecté</div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => simulateDevSession('buyer')} disabled={!!simulatingRole} className={`flex-1 py-2 rounded-lg ${simulatingRole === 'buyer' ? 'bg-black/90' : 'bg-black'} text-white border-black hover:brightness-95 flex items-center justify-center gap-2`}>
+                        {simulatingRole === 'buyer' ? (<><Spinner size="sm" className="text-white" /> Ouverture...</>) : 'Simuler Client'}
+                      </button>
+                      <button type="button" onClick={() => simulateDevSession('vendor')} disabled={!!simulatingRole} className={`flex-1 py-2 rounded-lg ${simulatingRole === 'vendor' ? 'bg-emerald-700' : 'bg-emerald-600'} text-white hover:brightness-95 flex items-center justify-center gap-2`}>
+                        {simulatingRole === 'vendor' ? (<><Spinner size="sm" className="text-white" /> Ouverture...</>) : 'Simuler Vendeur'}
+                      </button>
+                      <button type="button" onClick={() => simulateDevSession('delivery')} disabled={!!simulatingRole} className={`flex-1 py-2 rounded-lg ${simulatingRole === 'delivery' ? 'bg-sky-700' : 'bg-sky-600'} text-white hover:brightness-95 flex items-center justify-center gap-2`}>
+                        {simulatingRole === 'delivery' ? (<><Spinner size="sm" className="text-white" /> Ouverture...</>) : 'Simuler Livreur'}
+                      </button>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">Disponible uniquement en mode test (local).</div>
+                  </div>
+                )}
+
                 <div className="mt-14 sm:mt-10 md:mt-12">{renderNumericKeypad()}</div>
               </div>
             </div>
@@ -1536,7 +1600,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white">
+                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
                     <SelectItem value="buyer" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
                       <User className="h-5 w-5 text-primary" />
                       <span className="text-primary">Client(e)</span>

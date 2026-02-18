@@ -313,6 +313,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               } as UserProfile;
             };
 
+            // Dev-mode: accept local dev sms sessions without calling backend
+            try {
+              const parsedId = (smsSession && smsSession.profileId) ? String(smsSession.profileId) : '';
+              if (parsedId.startsWith('dev-')) {
+                const fallbackProfile = buildProfileFromSmsSession(smsSession);
+                if (fallbackProfile && mounted) {
+                  authModeRef.current = 'sms';
+                  setUser({ id: fallbackProfile.id, app_metadata: {}, user_metadata: {}, aud: 'authenticated', created_at: new Date().toISOString() } as User);
+                  setUserProfile(fallbackProfile);
+                  writeCachedProfile(fallbackProfile);
+                  setLoading(false);
+                  return; // honor dev session immediately
+                }
+              }
+            } catch (e) {
+              // ignore dev detection errors and continue with normal flow
+            }
+
             // Session SMS - charger le profil via l'endpoint admin pour éviter les RLS
             try {
               const resp = await fetchWithTimeout(

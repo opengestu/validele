@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { postProfileUpdate, getProfileById, apiUrl } from '@/lib/api';
+import { isDevTestNumber } from '@/lib/devTestNumbers';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
 /* import useBackgroundPolling from '@/hooks/use-background-polling'; */
@@ -137,6 +138,21 @@ const DeliveryDashboard = () => {
   useEffect(() => {
     const fetchOrCreateProfile = async () => {
       if (!user?.id) return;
+
+      // Dev-mode: if user.id startsWith 'dev-' OR the sms/profile phone is a configured test number, use the sms_auth_session fallback immediately
+      try {
+        const smsRaw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+        const sms = smsRaw ? JSON.parse(smsRaw || '{}') : null;
+        const maybeProfilePhone = sms?.phone || authUserProfile?.phone || null;
+        if (String(user.id).startsWith('dev-') || isDevTestNumber(maybeProfilePhone)) {
+          setUserProfile({ full_name: sms?.fullName || 'Dev Livreur', phone: sms?.phone || '+221777693020' });
+          setEditProfile({ full_name: sms?.fullName || 'Dev Livreur', phone: sms?.phone || '+221777693020' });
+          return;
+        }
+      } catch (e) {
+        // fallthrough to normal flow
+      }
+
       try {
         // Try loading a cached profile first to improve mobile UX
         if (typeof window !== 'undefined') {
@@ -232,30 +248,14 @@ const DeliveryDashboard = () => {
       })
       .subscribe();
 
-    let mounted = true;
-    const ordersInterval = setInterval(() => {
-      if (!mounted) return;
-      if (pollingRef.current.orders) return;
-      pollingRef.current.orders = true;
-      Promise.resolve(fetchDeliveries({ silent: true }))
-        .catch(e => console.warn('[DeliveryDashboard] periodic fetchDeliveries failed', e))
-        .finally(() => { pollingRef.current.orders = false; });
-    }, 1000);
-
+    // Polling: transactions every 5s only
     const txInterval = setInterval(() => {
-      if (!mounted) return;
-      if (pollingRef.current.transactions) return;
-      pollingRef.current.transactions = true;
-      Promise.resolve(fetchTransactions())
-        .catch(e => console.warn('[DeliveryDashboard] periodic fetchTransactions failed', e))
-        .finally(() => { pollingRef.current.transactions = false; });
+      fetchTransactions();
     }, 5000);
 
     return () => {
-      mounted = false;
-      clearInterval(ordersInterval);
       clearInterval(txInterval);
-      try { supabase.removeChannel(channel); } catch (e) { console.warn('[DeliveryDashboard] removeChannel failed', e); }
+      try { supabase.removeChannel(channel); } catch (e) { /* ignore */ }
     };
   }, [user]);
 
@@ -604,8 +604,6 @@ const DeliveryDashboard = () => {
             if (parsed && parsed.transactions && (Date.now() - (parsed.ts || 0) < 5 * 60 * 1000)) {
               console.warn('[DeliveryDashboard] backend returned empty transactions — using cached transactions to avoid flicker');
               setTransactions(parsed.transactions);
-              // schedule a quick retry
-              setTimeout(() => { fetchTransactions(); }, 2000);
             } else {
               setTransactions([]);
             }
