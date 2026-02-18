@@ -5886,7 +5886,7 @@ app.get('/api/buyer/orders', async (req, res) => {
       const { data: order, error } = await sb
         .from('orders')
         .select(`
-          id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+          id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
           product:products(id, name, price, description),
           buyer:profiles!orders_buyer_id_fkey(id, address, full_name, phone),
           vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address, full_name),
@@ -5960,7 +5960,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabaseAdmin
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
@@ -5976,7 +5976,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabase
           .from('orders')
           .select(`
-            id, order_code, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
