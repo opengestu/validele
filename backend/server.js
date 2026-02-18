@@ -5712,9 +5712,9 @@ app.post('/api/orders', async (req, res) => {
     }
     const supabaseAdmin = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
     
-    const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address } = req.body;
+    const { buyer_id, product_id, vendor_id, quantity, total_amount, payment_method, buyer_phone, delivery_address } = req.body;
 
-    console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
+    console.log('[CREATE-ORDER-SIMPLE] Demande reçue:', { buyer_id, product_id, vendor_id, quantity, total_amount, payment_method });
 
     // Générer un order_code au format demandé: 'C' + 2 lettres + 4 chiffres (ex: CAB1234)
     const randLetter = () => String.fromCharCode(65 + Math.floor(Math.random()*26));
@@ -5731,6 +5731,7 @@ app.post('/api/orders', async (req, res) => {
         buyer_id,
         product_id,
         vendor_id,
+        quantity: Number(quantity) || 1,
         total_amount,
         status: 'pending',
         payment_method,
@@ -6141,9 +6142,9 @@ app.get('/api/buyer/refund-requests', async (req, res) => {
 app.post('/api/payments/create-order-and-invoice', async (req, res) => {
   try {
     const { supabase } = require('./supabase');
-    const { buyer_id, product_id, vendor_id, total_amount, payment_method, buyer_phone, delivery_address, description, storeName } = req.body;
+    const { buyer_id, product_id, vendor_id, quantity, total_amount, payment_method, buyer_phone, delivery_address, description, storeName } = req.body;
 
-    console.log('[CREATE-ORDER] Demande reçue:', { buyer_id, product_id, vendor_id, total_amount, payment_method });
+    console.log('[CREATE-ORDER] Demande reçue:', { buyer_id, product_id, vendor_id, quantity, total_amount, payment_method });
 
     // Générer un order_code au format demandé: 'C' + 2 lettres + 4 chiffres (ex: CAB1234)
     const randLetter = () => String.fromCharCode(65 + Math.floor(Math.random()*26));
@@ -6177,6 +6178,7 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
         buyer_id,
         product_id,
         vendor_id,
+        quantity: Number(quantity) || 1,
         total_amount,
         status: 'pending',
         payment_method,
