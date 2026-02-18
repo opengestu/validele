@@ -1859,6 +1859,9 @@ const BuyerDashboard = () => {
                                 <div className="flex flex-wrap items-center gap-3">
                                   <p className="font-bold text-gray-900 break-words text-lg sm:truncate">
                                     {order.products?.name || 'Commande'}
+                                    {typeof order.quantity === 'number' && (
+                                      <span className="ml-2 text-xs font-semibold text-black bg-gray-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
+                                    )}
                                   </p>
                                   <div className="flex items-center gap-3">
                                     <span className="text-lg font-bold text-black">
@@ -1871,6 +1874,10 @@ const BuyerDashboard = () => {
                                     <div className="flex items-center gap-4">
                                       <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
                                       <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Quantité:</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.quantity ?? 1}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">

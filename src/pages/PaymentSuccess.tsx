@@ -49,10 +49,10 @@ const PaymentSuccess = () => {
       if (orderError || !orderData) {
         // If this is a dev/test session or a test order id, try to show a local fake order instead
         if (isDevSession || isTestEnv || isTestOrderId) {
-          let local = null;
+          let local: any = null;
           try {
-            local = localStorage.getItem(`dev_order_${orderId}`);
-            if (local) local = JSON.parse(local);
+            const raw = localStorage.getItem(`dev_order_${orderId}`);
+            if (raw) local = JSON.parse(raw);
           } catch (e) { local = null; }
 
           if (!local) {
@@ -77,8 +77,7 @@ const PaymentSuccess = () => {
           }
           setOrder(local);
           setBuyer({ full_name: sessionId || 'Dev Buyer', email: `${sessionId || 'dev-buyer'}@sms.validele.app` });
-          setProduct({ name: local.products?.name || 'Produit démo', price: local.total_amount });
-          setLoading(false);
+          if (local) setProduct({ name: local.products?.name || 'Produit démo', price: local.total_amount });
           return;
         }
 
@@ -178,10 +177,11 @@ const PaymentSuccess = () => {
     doc.text(`Client: ${buyer?.full_name || ''}`, 20, 65);
     doc.text(`Email: ${buyer?.email || ''}`, 20, 75);
     doc.text(`Produit: ${product?.name || ''}`, 20, 85);
-    doc.text(`Montant: ${order.total_amount} FCFA`, 20, 95);
-    doc.text(`Statut: payée`, 20, 105); // Toujours 'payée' en français
-    doc.text(`Date: ${new Date(order.payment_confirmed_at || order.updated_at).toLocaleString()}`, 20, 115);
-    doc.text('Merci pour votre confiance !', 20, 135);
+    doc.text(`Quantité: ${order.quantity ?? 1}`, 20, 95);
+    doc.text(`Montant: ${order.total_amount} FCFA`, 20, 105);
+    doc.text(`Statut: payée`, 20, 115); // Toujours 'payée' en français
+    doc.text(`Date: ${new Date(order.payment_confirmed_at || order.updated_at).toLocaleString()}`, 20, 125);
+    doc.text('Merci pour votre confiance !', 20, 145);
     doc.save(`facture-commande-${order.order_code || order.id}.pdf`);
   };
 
@@ -334,6 +334,9 @@ const PaymentSuccess = () => {
                     </div>
                     <div style={{ fontWeight: 700, color: '#1e293b', fontSize: 16 }}>
                       {order.order_code}
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 13, color: '#475569' }}>
+                      Quantité: {order.quantity ?? 1}
                     </div>
                   </>
                 )}

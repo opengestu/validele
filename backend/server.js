@@ -3779,6 +3779,11 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
       return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
     });
 
+    // Calculs quantité / prix unitaire / total ligne
+    const qty = Number(order.quantity) || 1;
+    const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
+    const lineTotal = unitPrice * qty;
+
     const html = `<!doctype html>
       <html>
         <head>
@@ -3795,10 +3800,10 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
           <table>
             <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
             <tbody>
-              <tr><td>${product.name || '-'}</td><td>${(product.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${(order.total_amount || 0).toLocaleString()}</td></tr>
+              <tr><td>${product.name || '-'}</td><td>${unitPrice.toLocaleString()}</td><td>${qty}</td><td>${lineTotal.toLocaleString()}</td></tr>
             </tbody>
           </table>
-          <p><strong>Total payé:</strong> ${order.total_amount ? order.total_amount.toLocaleString() : 0} FCFA</p>
+          <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
           <p>Merci pour votre vente !</p>
         </body>
       </html>`;
@@ -3857,6 +3862,11 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
       return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
     });
 
+    // Calculs quantité / prix unitaire / total ligne
+    const qty = Number(order.quantity) || 1;
+    const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
+    const lineTotal = unitPrice * qty;
+
     const html = `<!doctype html>
       <html>
         <head>
@@ -3873,10 +3883,10 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
           <table>
             <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
             <tbody>
-              <tr><td>${product.name || '-'}</td><td>${(product.price || order.total_amount || 0).toLocaleString()}</td><td>1</td><td>${(order.total_amount || 0).toLocaleString()}</td></tr>
+              <tr><td>${product.name || '-'}</td><td>${unitPrice.toLocaleString()}</td><td>${qty}</td><td>${lineTotal.toLocaleString()}</td></tr>
             </tbody>
           </table>
-          <p><strong>Total payé:</strong> ${order.total_amount ? order.total_amount.toLocaleString() : 0} FCFA</p>
+          <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
           <p>Merci pour votre achat !</p>
         </body>
       </html>`;
