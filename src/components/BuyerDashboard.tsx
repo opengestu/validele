@@ -19,7 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { API_BASE, apiUrl, postProfileUpdate, getProfileById, safeJson } from '@/lib/api';
+import { API_BASE, apiUrl, postProfileUpdate, getProfileById, safeJson, resolveAuthToken } from '@/lib/api';
 import { isDevTestNumber } from '@/lib/devTestNumbers';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
@@ -100,15 +100,7 @@ const BuyerDashboard = () => {
     }
   }, [user, authUserProfile, loading, navigate]);
 
-  // Afficher un spinner pendant le chargement initial de l'authentification
-  if (loading) {
-    return (
-      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-black" />
-        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
-      </div>
-    );
-  }
+  // Le spinner de chargement est géré par ProtectedRoute (overlay transparent)
 
   // ...existing code...
   const [searchCode, setSearchCode] = useState('');
@@ -160,15 +152,7 @@ const BuyerDashboard = () => {
       setInvoiceViewerFilename(null);
 
       // Try SMS session token first
-      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
-      let token = smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.access_token || JSON.parse(smsSessionStr || '{}')?.token || '') : '';
-
-      if (requiresAuth && !token) {
-        try {
-          const s = await supabase.auth.getSession();
-          token = s?.data?.session?.access_token || '';
-        } catch (e) { token = ''; }
-      }
+      const token = await resolveAuthToken();
 
       const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
       if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
@@ -330,18 +314,7 @@ const BuyerDashboard = () => {
       } catch (e) { /* fallthrough to normal flow */ }
       let data: Array<Record<string, unknown>> = [];
       // Use server endpoint for both SMS and Supabase sessions to avoid RLS issues.
-      let token = sms?.access_token || sms?.token || sms?.jwt || '';
-      if (!token) {
-        // Try to get Supabase session access token
-        try {
-          const sessRes = await supabase.auth.getSession();
-          const sess = sessRes.data?.session ?? null;
-          token = sess?.access_token || '';
-        } catch (e) {
-          // ignore
-          token = '';
-        }
-      }
+      const token = await resolveAuthToken();
 
       // Call server endpoint; fallback to query param buyer_id if no token
       const url = apiUrl(`/api/buyer/orders?buyer_id=${buyerId}`);
@@ -475,16 +448,7 @@ const BuyerDashboard = () => {
       } catch (e) { /* fallthrough to normal flow */ }
 
       // Determine token (SMS session or Supabase session)
-      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
-      let token = sms?.access_token || sms?.token || sms?.jwt || '';
-      if (!token) {
-        try {
-          const sessRes = await supabase.auth.getSession();
-          token = sessRes?.data?.session?.access_token || '';
-        } catch (e) {
-          token = '';
-        }
-      }
+      const token = await resolveAuthToken();
 
       const url = apiUrl(`/api/buyer/transactions?buyer_id=${buyerId}`);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1541,17 +1505,7 @@ const BuyerDashboard = () => {
     try {
       console.log('[REFUND] Demande de remboursement pour commande:', refundOrder.id);
       
-      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
-      const sms = smsSessionStr ? JSON.parse(smsSessionStr || '{}') : null;
-      let token = sms?.access_token || sms?.token || sms?.jwt || '';
-      if (!token) {
-        try {
-          const sessRes = await supabase.auth.getSession();
-          token = sessRes?.data?.session?.access_token || '';
-        } catch (e) {
-          token = '';
-        }
-      }
+      const token = await resolveAuthToken();
 
       const response = await fetch(apiUrl('/api/payment/pixpay/refund'), {
         method: 'POST',
@@ -1658,11 +1612,8 @@ const BuyerDashboard = () => {
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
-        <div className="fixed inset-0 z-[100] bg-black bg-opacity-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 bg-white rounded-lg px-8 py-6 shadow-xl">
-            <Spinner size="xl" />
-            <span className="text-lg font-semibold text-gray-700">Paiement en cours...</span>
-          </div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+          <Spinner size="sm" className="text-gray-400" />
         </div>
       )}
 
@@ -1852,193 +1803,163 @@ const BuyerDashboard = () => {
                         };
                         
                         return (
-                        <div key={order.id} className="rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[calc(100vw-32px)] min-w-[240px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[520px]" style={{marginLeft: 0, marginRight: 0}}>
-                          <div className="flex flex-col gap-4">
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 w-full">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <p className="font-bold text-gray-900 break-words text-lg sm:truncate">
-                                    {order.products?.name || 'Commande'}
-                                    {typeof order.quantity === 'number' && (
-                                      <span className="ml-2 text-xs font-semibold text-black bg-gray-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
-                                    )}
-                                  </p>
-                                  <div className="flex items-center gap-3">
-                                    <span className="text-lg font-bold text-black">
-                                      {order.total_amount?.toLocaleString()} FCFA
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="mt-3 space-y-2 text-base text-gray-700">
-                                  <div className="flex flex-col gap-2 pb-2">
-                                    <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Quantité:</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.quantity ?? 1}</span>
-                                    </div>
-                                    {order.profiles?.phone && (
-                                      <div className="flex items-center gap-3 text-base">
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <a
-                                                href={`tel:${order.profiles.phone}`}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
-                                                aria-label="Appeler le vendeur(se)"
-                                              >
-                                                <PhoneIcon className="h-5 w-5" size={18} />
-                                                <span className="ml-1 text-base leading-tight">Appeler</span>
-                                              </a>
-                                            </TooltipTrigger>
-                                            <TooltipContent>Appeler le vendeur(se)</TooltipContent>
-                                        </Tooltip>
-                                        <a
-                                            href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/5 text-black text-sm font-semibold hover:bg-black/10 transition min-w-[40px]"
-                                            title="Contacter sur WhatsApp"
-                                          >
-                                            <WhatsAppIcon className="h-5 w-5" size={18} />
-                                            <span className="ml-1 text-base leading-tight">WhatsApp</span>
-                                        </a>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
-                                    <div className="flex flex-col gap-2 mt-4">
-                                      {order.delivery_person?.phone ? (
-                                        <div className="flex items-center gap-4 text-base">
-                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
-                                          <div className="flex items-center gap-3">
-                                            <Tooltip>
-                                              <TooltipTrigger asChild>
-                                                <a
-                                                  href={`tel:${order.delivery_person.phone}`}
-                                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
-                                                  aria-label="Appeler le livreur"
-                                                >
-                                                  <PhoneIcon className="h-5 w-5" size={18} />
-                                                  <span className="ml-1 text-base leading-tight">Appeler</span>
-                                                </a>
-                                              </TooltipTrigger>
-                                              <TooltipContent>Appeler le livreur</TooltipContent>
-                                            </Tooltip>
-                                          </div>
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  )}
-                                </div>
+                        <div key={order.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden w-full max-w-[calc(100vw-32px)] mx-auto sm:max-w-[520px] transition-all duration-200 active:scale-[0.99]" style={{marginLeft: 0, marginRight: 0}}>
+
+                          {/* En-tête : statut + produit + prix */}
+                          <div className="px-5 pt-4 pb-2">
+                            <div className="flex items-center justify-between mb-2">
+                              <span>{renderStatusBadge(order.status)}</span>
+                              <p className="text-[11px] font-medium text-gray-400">
+                                {typeof order.quantity === 'number' && `Qté : ${order.quantity}`}
+                              </p>
+                            </div>
+                            <div className="flex items-baseline justify-between gap-3">
+                              <h3 className="text-[17px] font-bold text-gray-900 leading-snug truncate min-w-0 flex-1">
+                                {order.products?.name || 'Commande'}
+                              </h3>
+                              <div className="text-right flex-shrink-0">
+                                <span className="text-[20px] font-extrabold text-gray-900">{order.total_amount?.toLocaleString()}</span>
+                                <span className="text-[11px] font-medium text-gray-400 ml-1">FCFA</span>
                               </div>
                             </div>
+                          </div>
 
+                          <div className="h-px bg-gray-100" />
 
-
-                            {/* Affichage du statut de paiement vendeur(se) après livraison */}
-                            {order.status === 'delivered' && payoutTransaction && (
-                              <div className="rounded-md bg-purple-50 p-2">
-                                <p className="text-xs font-medium text-purple-700">
-                                  Paiement vendeur(se):
-                                  <span
-                                    className={
-                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
-                                      (payoutTransaction.status === 'SUCCESSFUL'
-                                        ? 'bg-black/5 text-black'
-                                        : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
-                                          ? 'bg-yellow-100 text-yellow-700'
-                                          : 'bg-red-100 text-red-700')
-                                    }
-                                  >
-                                    {payoutTransaction.status === 'SUCCESSFUL'
-                                      ? '✓ Effectué'
-                                      : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
-                                        ? '⏳ En cours'
-                                        : '✗ Échoué'}
-                                  </span>
-                                </p>
+                          {/* Vendeur */}
+                          <div className="px-5 py-3">
+                            <div className="flex items-center gap-2.5 mb-2">
+                              <div className="w-9 h-9 rounded-full bg-orange-50 flex items-center justify-center flex-shrink-0 border border-orange-200">
+                                <span className="text-orange-600 text-sm font-bold">
+                                  {(order.profiles?.company_name || 'V').charAt(0).toUpperCase()}
+                                </span>
                               </div>
-                            )}
-
-                            {/* Affichage du remboursement si existant */}
-                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
-                              <div className="rounded-md bg-orange-50 p-2">
-                                <p className="text-xs font-medium text-orange-700">
-                                  💸 Remboursement:
-                                  <span
-                                    className={
-                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
-                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
-                                        ? 'bg-black/5 text-black'
-                                        : 'bg-yellow-100 text-yellow-700')
-                                    }
-                                  >
-                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
-                                      ? '✓ Effectué'
-                                      : '⏳ En cours'}
-                                  </span>
-                                </p>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] text-gray-400 font-medium leading-none">Vendeur(se)</p>
+                                <p className="text-[14px] font-semibold text-gray-900 truncate mt-0.5">{order.profiles?.company_name || 'N/A'}</p>
                               </div>
-                            )}
-
-
-
-                            {/* Boutons d'action */}
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {order.qr_code ? (
-                                <button
-                                  className="rounded-md border border-orange-400 px-3 py-2 text-sm font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 shadow-sm transition-all w-full sm:w-auto min-h-[44px]"
-                                  style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
-                                  onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
+                            </div>
+                            {order.profiles?.phone && (
+                              <div className="flex items-center gap-2 ml-[46px]">
+                                <a
+                                  href={`tel:${order.profiles.phone}`}
+                                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gray-50 text-gray-700 text-[12px] font-semibold hover:bg-gray-100 transition-colors border border-gray-200"
+                                  aria-label="Appeler le vendeur"
                                 >
-                                  Voir QR code
-                                </button>
-                              ) : (
-                                <span className="text-sm text-gray-400">QR code indisponible</span>
-                              )}
+                                  <PhoneIcon className="h-3.5 w-3.5" size={14} />
+                                  Appeler
+                                </a>
+                                <a
+                                  href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#f0faf0] text-[#128C7E] text-[12px] font-semibold hover:bg-[#e0f5e0] transition-colors border border-[#d4edd4]"
+                                  title="WhatsApp"
+                                >
+                                  <WhatsAppIcon className="h-3.5 w-3.5" size={14} />
+                                  WhatsApp
+                                </a>
+                              </div>
+                            )}
+                          </div>
 
+                          {/* Livreur */}
+                          {order.delivery_person?.phone && (
+                            <>
+                              <div className="h-px bg-gray-100" />
+                              <div className="px-5 py-3">
+                                <div className="flex items-center gap-2.5 mb-2">
+                                  <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 border border-blue-200">
+                                    <span className="text-blue-600 text-sm font-bold">L</span>
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[11px] text-gray-400 font-medium leading-none">Livreur</p>
+                                    <p className="text-[14px] font-semibold text-gray-900 mt-0.5">Livreur assigné</p>
+                                  </div>
+                                </div>
+                                <div className="ml-[46px]">
+                                  <a
+                                    href={`tel:${order.delivery_person.phone}`}
+                                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gray-50 text-gray-700 text-[12px] font-semibold hover:bg-gray-100 transition-colors border border-gray-200"
+                                    aria-label="Appeler le livreur"
+                                  >
+                                    <PhoneIcon className="h-3.5 w-3.5" size={14} />
+                                    Appeler
+                                  </a>
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Infos paiement si livré/annulé */}
+                          {order.status === 'delivered' && payoutTransaction && (
+                            <>
+                              <div className="h-px bg-gray-100" />
+                              <div className="px-5 py-2.5 flex items-center gap-2">
+                                <span className="text-[12px] text-gray-400">Paiement vendeur(se) :</span>
+                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                                  payoutTransaction.status === 'SUCCESSFUL' ? 'bg-black/5 text-black'
+                                  : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700'
+                                  : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {payoutTransaction.status === 'SUCCESSFUL' ? '✓ Effectué' : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? '⏳ En cours' : '✗ Échoué'}
+                                </span>
+                              </div>
+                            </>
+                          )}
+                          {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
+                            <>
+                              <div className="h-px bg-gray-100" />
+                              <div className="px-5 py-2.5 flex items-center gap-2">
+                                <span className="text-[12px] text-gray-400">💸 Remboursement :</span>
+                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                                  orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL' ? 'bg-black/5 text-black' : 'bg-yellow-100 text-yellow-700'
+                                }`}>
+                                  {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL' ? '✓ Effectué' : '⏳ En cours'}
+                                </span>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Boutons d'action */}
+                          <div className="h-px bg-gray-100" />
+                          <div className="px-5 pb-5 pt-3 flex flex-col gap-2.5">
+                            {order.qr_code ? (
                               <button
-                                className="rounded-md border border-black px-3 py-1.5 text-sm font-medium text-black bg-black/5 hover:bg-black/10 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
-                                style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
+                                className="w-full h-[46px] rounded-xl font-bold text-[15px] tracking-wide transition-all active:scale-[0.98]"
+                                style={{ background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }}
+                                onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
+                              >
+                                Voir QR code
+                              </button>
+                            ) : (
+                              <div className="w-full h-[46px] rounded-xl bg-gray-50 flex items-center justify-center border border-gray-100">
+                                <span className="text-[13px] text-gray-400">QR code indisponible</span>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                className="h-[40px] rounded-xl text-[13px] font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200"
                                 onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                               >
-                                Voir facture
+                                Facture
                               </button>
-
                               <button
-                                className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 shadow-sm transition-all min-h-[32px] flex-1 min-w-0"
-                                style={{ fontSize: 15, borderWidth: 1.5, borderRadius: 7 }}
+                                className="h-[40px] rounded-xl text-[13px] font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200"
                                 onClick={toggleDetails}
                               >
-                                {isExpanded ? 'Masquer les détails' : 'Détails'}
+                                {isExpanded ? 'Masquer' : 'Détails'}
                               </button>
                             </div>
-
-                            {isExpanded && (
-                              <div className="flex flex-wrap gap-2">
-                                {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
-                                {(order.status === 'paid' || order.status === 'in_delivery') && (
-                                  <button
-                                    className="flex items-center gap-1 rounded-md border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 min-w-[32px]"
-                                    onClick={() => openRefundModal(order)}
-                                  >
-                                    <XCircle size={14} />
-                                    Annuler / Remboursement
-                                  </button>
-                                )}
-                              </div>
+                            {isExpanded && (order.status === 'paid' || order.status === 'in_delivery') && (
+                              <button
+                                className="w-full h-[40px] rounded-xl text-[13px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors flex items-center justify-center gap-1.5 border border-red-200"
+                                onClick={() => openRefundModal(order)}
+                              >
+                                <XCircle size={14} />
+                                Annuler / Remboursement
+                              </button>
                             )}
-
-                            {/* Suppression du doublon prix/statut */}
-
-                            {/* Statut (déplacé en bas de la carte) */}
-                            <div className="mt-4">
-                              <div className="text-sm flex items-center gap-2">
-                                {renderStatusBadge(order.status)}
-                              </div>
-                            </div>
                           </div>
                         </div>
                         );
@@ -2088,7 +2009,7 @@ const BuyerDashboard = () => {
             <DialogTitle>{invoiceViewerTitle}</DialogTitle>
           </DialogHeader>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner /></div>}
+            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" className="text-gray-400" /></div>}
             {!invoiceViewerLoading && invoiceViewerHtml && (
               <div>
                 <div className="flex justify-end gap-2 mb-2">

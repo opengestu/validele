@@ -60,12 +60,16 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   }
 
   // Affichage de chargement - attendre que l'authentification soit prête
+  // On rend les children derrière + un overlay transparent par-dessus
+  // pour que l'utilisateur voie le contenu de l'app pendant le chargement
   if (loading) {
     return (
-      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-[#24BD5C]" />
-        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
-      </div>
+      <>
+        {children}
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+          <Spinner size="sm" className="text-gray-400" />
+        </div>
+      </>
     );
   }
 

@@ -51,7 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { apiUrl, postProfileUpdate, getProfileById } from '@/lib/api';
+import { apiUrl, postProfileUpdate, getProfileById, resolveAuthToken } from '@/lib/api';
 import { Product, Order } from '@/types/database';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -83,15 +83,7 @@ const VendorDashboard = () => {
     }
   }, [user, authUserProfile, loading, navigate]);
 
-  // Afficher un spinner pendant le chargement initial de l'authentification
-  if (loading) {
-    return (
-      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-black" />
-        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
-      </div>
-    );
-  }
+  // Le spinner de chargement est géré par ProtectedRoute (overlay transparent)
 
   // Correction : lire user depuis sms_auth_session si présent
   type SmsUser = {
@@ -222,22 +214,37 @@ const VendorDashboard = () => {
 
   // Open an invoice URL and render it inside an in-app modal (supports auth for vendor endpoints)
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
+    let triedRefresh = false;
+    async function fetchInvoiceWithToken(token: string | null) {
+      const headers: Record<string, string> = { 'Accept': 'text/html, */*' };
+      if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
+      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      return fetch(fullUrl, { method: 'GET', headers });
+    }
+    async function resolveToken() {
+      return resolveAuthToken();
+    }
     try {
       setInvoiceViewerLoading(true);
       setInvoiceViewerTitle(title);
       setInvoiceViewerHtml(null);
       setInvoiceViewerFilename(null);
 
-      let token = (smsUser as any)?.access_token || '';
-      if (requiresAuth && !token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
+      let token = await resolveToken();
+      let resp = await fetchInvoiceWithToken(token);
+
+      // If unauthorized, try to refresh session and retry ONCE
+      if (resp.status === 401 && !triedRefresh && requiresAuth) {
+        triedRefresh = true;
+        try {
+          // Try to refresh Supabase session
+          if (supabase && supabase.auth && supabase.auth.refreshSession) {
+            await supabase.auth.refreshSession();
+          }
+        } catch (e) { /* ignore */ }
+        token = await resolveToken();
+        resp = await fetchInvoiceWithToken(token);
       }
-
-      const headers: Record<string,string> = { 'Accept': 'text/html, */*' };
-      if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
-
-      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
-      const resp = await fetch(fullUrl, { method: 'GET', headers });
 
       if (!resp.ok) {
         if (resp.status === 401) { toast({ title: 'Non autorisé', description: 'Authentification requise pour la facture', variant: 'destructive' }); return; }
@@ -302,31 +309,16 @@ const VendorDashboard = () => {
 
       setBatchesLoading(true);
 
-      // Robust token resolution: try smsUser.access_token, explicit auth_token, parse sms_auth_session, then supabase session
-      let token = '';
-      if ((smsUser as any)?.access_token) token = (smsUser as any).access_token;
-      if (!token) token = (typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null) || '';
-      if (!token) {
-        const raw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            token = parsed?.access_token || parsed?.token || '';
-          } catch (e) { /* ignore parse error */ }
-        }
-      }
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { /* ignore */ }
-      }
+      const token = await resolveAuthToken();
 
       const headers: Record<string,string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
 
-      // If unauthorized, give a clear message and clear any stale sms session
+      // If unauthorized, warn but do NOT delete sms_auth_session (token may just need refresh)
       if (resp.status === 401) {
-        try { localStorage.removeItem('sms_auth_session'); } catch (e) { /* ignore */ }
+        console.warn('[VendorDashboard] payout-batches 401 — token may be expired');
         throw new Error('Vendor authentication required');
       }
 
@@ -477,11 +469,11 @@ const VendorDashboard = () => {
     }
     try {
       if (!backendAvailable) throw new Error('Backend not available for vendor orders (cached fallback)');
-      const token = smsUser?.access_token || localStorage.getItem('sms_auth_session') ? smsUser?.access_token : '';
+      const token = await resolveAuthToken();
       // Utilise toujours le backend, même pour les sessions classiques
       const resp = await fetch(apiUrl('/api/vendor/orders'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
         body: JSON.stringify({ vendor_id: caller.id })
       });
       const json = await resp.json().catch(() => null);
@@ -624,13 +616,7 @@ const VendorDashboard = () => {
 
     try {
       // Get token (SMS JWT or Supabase access token)
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try {
-          const sess = await supabase.auth.getSession();
-          token = sess?.data?.session?.access_token || '';
-        } catch (e) { token = ''; }
-      }
+      const token = await resolveAuthToken();
 
       const resp = await fetch(apiUrl('/api/vendor/products'), {
         method: 'POST',
@@ -710,10 +696,7 @@ const VendorDashboard = () => {
     console.log('[VendorDashboard] fetchTransactions start for vendor', caller.id);
 
     try {
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const sess = await supabase.auth.getSession(); token = sess?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
+      const token = await resolveAuthToken();
 
       const url = apiUrl(`/api/vendor/transactions?vendor_id=${caller.id}`);
       const headers: Record<string,string> = { 'Content-Type': 'application/json' };
@@ -771,10 +754,7 @@ const VendorDashboard = () => {
   // Download a vendor invoice (payout batch). Uses auth to fetch protected invoice endpoint and force download.
   async function handleDownloadInvoice(url: string) {
     try {
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
+      const token = await resolveAuthToken();
       const fullUrl = url.startsWith('http') ? url : apiUrl(url);
       const headers: Record<string, string> = { 'Accept': '*/*' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -807,10 +787,7 @@ const VendorDashboard = () => {
   // Download the latest vendor payout batch invoice and force download
   async function handleDownloadLatestBatchInvoice() {
     try {
-      let token = (smsUser as any)?.access_token || '';
-      if (!token) {
-        try { const s = await supabase.auth.getSession(); token = s?.data?.session?.access_token || ''; } catch (e) { token = ''; }
-      }
+      const token = await resolveAuthToken();
       const headers: Record<string,string> = { 'Accept': '*/*' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
@@ -2374,7 +2351,7 @@ const VendorDashboard = () => {
             </div>
 
             <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex-1 overflow-auto p-3' : 'py-2'}`}>
-              {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner /></div>}
+              {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" className="text-gray-400" /></div>}
               {!invoiceViewerLoading && invoiceViewerHtml && (
                 <div>
                   {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
@@ -2409,7 +2386,7 @@ const VendorDashboard = () => {
             <DialogTitle>Factures de paiement</DialogTitle>
           </DialogHeader>
           <div className="py-2">
-            {batchesLoading && <div className="flex justify-center py-6"><Spinner /></div>}
+            {batchesLoading && <div className="flex justify-center py-6"><Spinner size="sm" className="text-gray-400" /></div>}
             {!batchesLoading && vendorBatches && vendorBatches.length === 0 && (
               <div className="text-center py-6 text-gray-500">Aucune facture de batch disponible</div>
             )}

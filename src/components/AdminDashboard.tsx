@@ -975,15 +975,7 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Show fullscreen spinner while auth is loading to prevent flash of auth page
-  if (authLoading) {
-    return (
-      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-[#24BD5C]" />
-        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
-      </div>
-    );
-  }
+  // Le spinner de chargement est géré par ProtectedRoute (overlay transparent)
 
   if (!isAdminUser) {
     return (
@@ -1785,7 +1777,7 @@ const AdminDashboard: React.FC = () => {
           <div className="flex-1 overflow-auto p-4">
             {invoiceViewerLoading && (
               <div className="flex items-center justify-center py-8">
-                <Spinner size="lg" />
+                <Spinner size="sm" className="text-gray-400" />
               </div>
             )}
             {!invoiceViewerLoading && invoiceViewerHtml && (

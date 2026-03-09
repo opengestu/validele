@@ -7,10 +7,10 @@ interface SpinnerProps {
 }
 
 const sizeClasses = {
-  sm: 'h-5 w-5',
-  md: 'h-8 w-8',
-  lg: 'h-12 w-12',
-  xl: 'h-16 w-16',
+  sm: 'h-16 w-16',
+  md: 'h-20 w-20',
+  lg: 'h-28 w-28',
+  xl: 'h-36 w-36',
 };
 
 export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: SpinnerProps) {
@@ -22,43 +22,48 @@ export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: Spinn
   // Add a helper class so global CSS can hide local spinners when an overlay is active
   const helperClass = hideWhenGlobal ? 'local-spinner' : 'global-spinner-exempt';
 
-  // Spinner fluide noir et blanc, style "eau"
+  // Spinner arc style — similar to the Loading ring animation
   return (
     <div className={cn("relative flex items-center justify-center", sizeClasses[size], helperClass, className)}>
-      <style>
-        {`
-          @keyframes water-spin {
-            100% { transform: rotate(360deg); }
-          }
-        `}
-      </style>
       <svg
-        style={{
-          animation: 'water-spin 0.9s cubic-bezier(0.4,0.2,0.2,1) infinite',
-          transformOrigin: '50% 50%'
-        }}
-        viewBox="0 0 50 50"
+        className="animate-[arc-spin_1.1s_ease-in-out_infinite]"
+        viewBox="0 0 66 66"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <defs>
-          <linearGradient id="waterSpinnerGradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#111" />
-            <stop offset="100%" stopColor="#fff" />
-          </linearGradient>
-        </defs>
         <circle
-          cx="25"
-          cy="25"
-          r="20"
-          stroke="url(#waterSpinnerGradient)"
-          strokeWidth="6"
+          cx="33"
+          cy="33"
+          r="28"
+          stroke="currentColor"
+          strokeOpacity="0.18"
+          strokeWidth="7"
+          fill="none"
+        />
+        <circle
+          cx="33"
+          cy="33"
+          r="28"
+          stroke="currentColor"
+          strokeWidth="7"
           strokeLinecap="round"
           fill="none"
-          strokeDasharray="80 120"
+          strokeDasharray="120 200"
           strokeDashoffset="0"
+          className="animate-[arc-dash_1.4s_ease-in-out_infinite]"
         />
       </svg>
+      <style>{`
+        @keyframes arc-spin {
+          0%   { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes arc-dash {
+          0%   { stroke-dasharray: 1 200; stroke-dashoffset: 0; }
+          50%  { stroke-dasharray: 100 200; stroke-dashoffset: -30; }
+          100% { stroke-dasharray: 100 200; stroke-dashoffset: -124; }
+        }
+      `}</style>
     </div>
   );
 }

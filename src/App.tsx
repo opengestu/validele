@@ -3,12 +3,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
 import AppResumeRefresher from "@/components/AppResumeRefresher";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
+import SessionTimeoutManager from "@/components/SessionTimeoutManager";
+import PinReauth from "@/components/PinReauth";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
 import { Spinner } from "@/components/ui/spinner";
@@ -25,9 +27,8 @@ const AuthRoute: React.FC = () => {
 
     if (loading) {
     return (
-      <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-        <Spinner size="xl" className="text-black" />
-        <p className="text-lg font-medium text-gray-700 mt-4">Chargement...</p>
+      <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+        <Spinner size="sm" className="text-gray-400" />
       </div>
     );
   }
@@ -55,6 +56,16 @@ import ColorDemo from "./components/ColorDemo";
 const queryClient = new QueryClient();
 const paydunyaMode = import.meta.env.VITE_PAYDUNYA_MODE || 'prod';
 
+// Wrapper interne qui déclenche l'animation CSS à chaque changement de route
+const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+  return (
+    <div key={location.pathname} className="animate-page-in contents">
+      {children}
+    </div>
+  );
+};
+
 const App = () => (
   <>
     {paydunyaMode === 'sandbox' && (
@@ -76,9 +87,12 @@ const App = () => (
             <AppResumeRefresher />
             <ExitConfirmHandler />
             <PushNotificationSetup />
+            <SessionTimeoutManager />
+            <AnimatedRoutes>
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/auth" element={<AuthRoute />} />
+              <Route path="/pin-reauth" element={<PinReauth />} />
               <Route path="/colors" element={<ColorDemo />} />
               <Route path="/payment-success" element={<PaymentSuccess />} />
               {/* Protected Routes for Vendors */}
@@ -156,6 +170,7 @@ const App = () => (
               />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </AnimatedRoutes>
           </BrowserRouter>
         </AuthProvider>
       </TooltipProvider>

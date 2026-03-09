@@ -561,8 +561,7 @@ function QRScanSection({
       {loadingScanner && !cameraError && !scanValid && !hasScanned && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <Loader2 className="animate-spin" style={{ width: 64, height: 64, color: '#2196f3' }} />
-            <span style={{ color: '#fff', marginTop: 16, fontSize: 18 }}>Chargement du scanner…</span>
+            <Loader2 className="animate-spin" style={{ width: 32, height: 32, color: '#9ca3af' }} />
           </div>
         </div>
       )}

@@ -1333,9 +1333,10 @@ app.post('/api/otp/send', async (req, res) => {
       // On continue si la vérification plante (par prudence) — on ne veut pas bloquer tous les envois par erreur serveur.
     }
 
-    await sendOTP(formattedPhone);
+    const otpResult = await sendOTP(formattedPhone);
+    const channel = otpResult.channel || 'sms';
 
-    res.json({ success: true, message: 'Code envoyé', phone: formattedPhone });
+    res.json({ success: true, message: channel === 'whatsapp' ? 'Code envoyé par WhatsApp' : 'Code envoyé par SMS', phone: formattedPhone, channel });
   } catch (error) {
     console.error('[OTP] Erreur envoi:', error);
     const message = (error && error.message) ? String(error.message) : 'Erreur lors de l\'envoi du code';

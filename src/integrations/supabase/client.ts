@@ -39,7 +39,7 @@ export const supabase: SupabaseClient<Database> = _win && _win.__SUPABASE_CLIENT
       auth: {
         storage: typeof window !== 'undefined' ? localStorage : undefined,
         persistSession: true,
-        autoRefreshToken: false,  // Disable direct refresh - use backend proxy instead
+        autoRefreshToken: true,   // Keep JWT fresh so realtime WebSocket stays connected
         detectSessionInUrl: true,
         flowType: 'implicit',
       }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 type Props = {
   onDigit: (d: string) => void;
@@ -7,176 +7,210 @@ type Props = {
   showSubmit?: boolean;
 };
 
-// Hook pour détecter la taille d'écran
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
   return isMobile;
 }
 
-// Fonction pour obtenir les styles dynamiques
-function getButtonBaseStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    width: isMobile ? 90 : 70,
-    height: isMobile ? 90 : 70,
-    borderRadius: '50%',
-    border: '3px solid hsl(var(--primary))',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: isMobile ? 36 : 28,
-    fontWeight: '600',
-    cursor: 'pointer',
-    userSelect: 'none',
-    background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
-    color: 'hsl(var(--primary))',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
-    transition: 'all 0.2s ease',
-    WebkitTapHighlightColor: 'transparent', // Supprime la surbrillance tactile sur mobile
-  };
+/* ── Inject keyframe animation once ── */
+const STYLE_ID = 'nkp-styles';
+if (!document.getElementById(STYLE_ID)) {
+  const s = document.createElement('style');
+  s.id = STYLE_ID;
+  s.textContent = `
+    @keyframes nkp-pop {
+      0%   { transform: scale(1);    }
+      40%  { transform: scale(0.88); }
+      70%  { transform: scale(1.06); }
+      100% { transform: scale(1);    }
+    }
+    .nkp-btn { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+    .nkp-btn:active { animation: nkp-pop 0.22s ease forwards; }
+  `;
+  document.head.appendChild(s);
 }
 
-const buttonHoverStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary)) 100%)',
-  color: 'hsl(var(--primary-foreground))',
-  transform: 'scale(1.05)',
-  boxShadow: '0 6px 16px rgba(0, 0, 0, 0.12)',
-};
+/* ── Digit key ── */
+function DigitButton({ digit, onClick, size }: { digit: string; onClick: () => void; size: number }) {
+  const [pressed, setPressed] = useState(false);
 
-const buttonActiveStyle: React.CSSProperties = {
-  transform: 'scale(0.95)',
-  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
-};
-
-function getDeleteButtonBaseStyle(isMobile: boolean): React.CSSProperties {
-  return {
-    ...getButtonBaseStyle(isMobile),
-    border: '3px solid #ef4444',
-    color: '#ef4444',
-  };
-}
-
-const deleteButtonHoverStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-  color: '#ffffff',
-  transform: 'scale(1.05)',
-  boxShadow: '0 6px 16px rgba(239, 68, 68, 0.3)',
-};
-
-function DigitButton({ digit, onClick }: { digit: string; onClick: () => void }) {
-  const [hover, setHover] = useState(false);
-  const [active, setActive] = useState(false);
-  const isMobile = useIsMobile();
-  const buttonBaseStyle = getButtonBaseStyle(isMobile);
-
-  const handleTouchStart = () => setActive(true);
-  const handleTouchEnd = () => {
-    setActive(false);
-    onClick();
-  };
+  const handleTouchStart = useCallback(() => setPressed(true), []);
+  const handleTouchEnd = useCallback(() => { setPressed(false); onClick(); }, [onClick]);
+  const handleMouseDown = useCallback(() => setPressed(true), []);
+  const handleMouseUp = useCallback(() => { setPressed(false); onClick(); }, [onClick]);
 
   return (
-    <div
+    <button
+      className="nkp-btn"
       tabIndex={-1}
-      onFocus={(e) => (e.currentTarget as HTMLDivElement).blur()}
-      style={{
-        ...buttonBaseStyle,
-        ...(hover ? buttonHoverStyle : {}),
-        ...(active ? buttonActiveStyle : {}),
-      }}
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onMouseDown={() => setActive(true)}
-      onMouseUp={() => setActive(false)}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 20,
+        border: 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: size * 0.38,
+        fontWeight: '600',
+        letterSpacing: '-0.5px',
+        cursor: 'pointer',
+        userSelect: 'none',
+        background: pressed
+          ? 'linear-gradient(160deg, #e5e7eb 0%, #d1d5db 100%)'
+          : 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+        color: 'hsl(var(--primary))',
+        boxShadow: pressed
+          ? '0 1px 4px rgba(34,197,94,0.18), inset 0 2px 6px rgba(34,197,94,0.12)'
+          : 'none',
+        transform: pressed ? 'scale(0.93)' : 'scale(1)',
+        transition: 'transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease',
+        outline: 'none',
+        WebkitAppearance: 'none',
+      }}
     >
       {digit}
-    </div>
+    </button>
   );
 }
 
-function DeleteButton({ onClick }: { onClick?: () => void }) {
-  const [hover, setHover] = useState(false);
-  const [active, setActive] = useState(false);
-  const isMobile = useIsMobile();
-  const deleteButtonBaseStyle = getDeleteButtonBaseStyle(isMobile);
+/* ── Backspace key ── */
+function DeleteButton({ onClick, size }: { onClick?: () => void; size: number }) {
+  const [pressed, setPressed] = useState(false);
 
-  const handleTouchStart = () => setActive(true);
-  const handleTouchEnd = () => {
-    setActive(false);
-    if (onClick) onClick();
-  };
+  const handleTouchStart = useCallback(() => setPressed(true), []);
+  const handleTouchEnd = useCallback(() => { setPressed(false); onClick?.(); }, [onClick]);
+  const handleMouseDown = useCallback(() => setPressed(true), []);
+  const handleMouseUp = useCallback(() => { setPressed(false); onClick?.(); }, [onClick]);
+
+  return (
+    <button
+      className="nkp-btn"
+      tabIndex={-1}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 20,
+        border: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        userSelect: 'none',
+        background: pressed
+          ? 'linear-gradient(160deg, #fee2e2 0%, #fecaca 100%)'
+          : 'linear-gradient(160deg, #fff1f2 0%, #ffe4e6 100%)',
+        color: pressed ? '#b91c1c' : '#ef4444',
+        boxShadow: pressed
+          ? '0 1px 4px rgba(239,68,68,0.15), inset 0 2px 6px rgba(239,68,68,0.1)'
+          : 'none',
+        transform: pressed ? 'scale(0.93)' : 'scale(1)',
+        transition: 'transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease',
+        outline: 'none',
+        WebkitAppearance: 'none',
+      }}
+    >
+      {/* Backspace SVG icon */}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size * 0.42}
+        height={size * 0.42}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
+        <line x1="18" y1="9" x2="12" y2="15" />
+        <line x1="12" y1="9" x2="18" y2="15" />
+      </svg>
+    </button>
+  );
+}
+
+/* ── Main keypad ── */
+export default function NumericKeypad({ onDigit, onBack, onSubmit, showSubmit }: Props) {
+  const isMobile = useIsMobile();
+  const size  = isMobile ? 88 : 72;
+  const gap   = isMobile ? 18 : 14;
+  const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
   return (
     <div
-      tabIndex={-1}
-      onFocus={(e) => (e.currentTarget as HTMLDivElement).blur()}
       style={{
-        ...deleteButtonBaseStyle,
-        ...(hover ? deleteButtonHoverStyle : {}),
-        ...(active ? buttonActiveStyle : {}),
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: isMobile ? 28 : 22,
+        padding: isMobile ? '24px 20px 28px' : '18px 16px 22px',
+        background: 'transparent',
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
+        borderRadius: 28,
+        boxShadow: 'none',
+        border: 'none',
       }}
-      onClick={() => onClick && onClick()}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onMouseDown={() => setActive(true)}
-      onMouseUp={() => setActive(false)}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
     >
-      ⌫
-    </div>
-  );
-}
-
-export default function NumericKeypad({ onDigit, onBack, onSubmit, showSubmit }: Props) {
-  const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-  const isMobile = window.innerWidth < 768;
-  const buttonSize = isMobile ? 90 : 70;
-  const gapSize = isMobile ? 24 : 20;
-  
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(3, 1fr)', 
-        gap: gapSize,
-        maxWidth: isMobile ? 340 : 280 
-      }}>
+      {/* Grid 3×4 */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(3, ${size}px)`,
+          gap,
+        }}
+      >
         {digits.map(d => (
-          <DigitButton key={d} digit={d} onClick={() => onDigit(d)} />
+          <DigitButton key={d} digit={d} size={size} onClick={() => onDigit(d)} />
         ))}
-        <div style={{ width: buttonSize, height: buttonSize }} />
-        <DigitButton digit="0" onClick={() => onDigit('0')} />
-        <DeleteButton onClick={onBack} />
+        {/* Empty slot bottom-left */}
+        <div style={{ width: size, height: size }} />
+        <DigitButton digit="0" size={size} onClick={() => onDigit('0')} />
+        <DeleteButton size={size} onClick={onBack} />
       </div>
+
+      {/* Submit button */}
       {showSubmit && (
-        <div style={{ marginTop: isMobile ? 30 : 20 }}>
-          <button 
-            onClick={() => onSubmit && onSubmit()} 
-            style={{ 
-              padding: isMobile ? '14px 50px' : '10px 40px', 
-              borderRadius: 28, 
-              background: 'hsl(var(--primary))', 
-              border: 'none', 
-              fontSize: isMobile ? 20 : 18, 
-              color: 'hsl(var(--primary-foreground))', 
-              fontWeight: '600',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-              cursor: 'pointer'
-            }}
-          >
-            Suivant
-          </button>
-        </div>
+        <button
+          onClick={() => onSubmit?.()}
+          style={{
+            width: `${size * 3 + gap * 2}px`,
+            padding: isMobile ? '16px 0' : '13px 0',
+            borderRadius: 18,
+            border: 'none',
+            background: 'hsl(var(--primary))',
+            color: 'hsl(var(--primary-foreground))',
+            fontSize: isMobile ? 20 : 17,
+            fontWeight: '700',
+            letterSpacing: '0.3px',
+            cursor: 'pointer',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)',
+            transition: 'transform 0.12s ease, box-shadow 0.12s ease',
+            outline: 'none',
+            WebkitAppearance: 'none',
+          }}
+          onMouseDown={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'; }}
+          onMouseUp={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+          onTouchStart={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'; }}
+          onTouchEnd={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; onSubmit?.(); }}
+        >
+          Suivant →
+        </button>
       )}
     </div>
   );

@@ -10,6 +10,39 @@ export const apiUrl = (path: string) => {
   return `${API_BASE}${path}`;
 };
 
+/**
+ * Resolve the best available bearer token for API calls.
+ * Priority: sms_auth_session.access_token → auth_token → supabase session.
+ * Safe to call from any component — never throws.
+ */
+export async function resolveAuthToken(): Promise<string> {
+  // 1. SMS auth session (primary for mobile users)
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const t = parsed?.access_token || parsed?.token || '';
+      if (t) return t;
+    }
+  } catch { /* ignore */ }
+
+  // 2. Explicit auth_token (set after PIN re-auth etc.)
+  try {
+    const t = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (t) return t;
+  } catch { /* ignore */ }
+
+  // 3. Supabase session (email/password users)
+  try {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const s = await supabase.auth.getSession();
+    const t = s?.data?.session?.access_token || '';
+    if (t) return t;
+  } catch { /* ignore */ }
+
+  return '';
+}
+
 type SafeJsonParseError = { __parseError: true; __raw: string };
 export const safeJson = async (response: Response): Promise<unknown | SafeJsonParseError | null> => {
   const text = await response.text().catch(() => '');

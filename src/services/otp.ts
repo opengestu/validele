@@ -6,6 +6,7 @@ export interface OTPSendResponse {
   message?: string;
   phone?: string;
   error?: string;
+  channel?: 'sms' | 'whatsapp';
 }
 
 export interface OTPVerifyResponse {

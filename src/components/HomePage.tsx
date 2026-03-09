@@ -13,29 +13,29 @@ import {
 } from "@/components/ui/carousel";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-const validelLogo = '/icons/validel-logo.svg';
+import validelLogo from "@/assets/validel-logo.png";
 
 const ONBOARDING_STORAGE_KEY = "validele:onboarding_seen_v1";
 
 const SLIDES = [
   {
-    icon: ShieldCheck,
-    title: "Bienvenue sur Validèl",
-    description:
-      "Sécurisez vos transactions avec validation QR Code et paiement sous séquestre.",
-  },
-  {
-    icon: QrCode,
-    title: "Validez en un scan",
-    description:
-      "Scannez le QR Code pour confirmer la commande et suivre la livraison en temps réel.",
-  },
-  {
-    icon: CreditCard,
-    title: "Payez en toute confiance",
-    description:
-      "Wave ou Orange Money : le paiement est simple et protégé jusqu'à la validation.",
-  },
+  icon: ShieldCheck,
+  title: "Paiement sécurisé par séquestre",
+  description:
+    "Le client paie via Wave ou Orange Money et l'argent est sécurisé sur Validèl jusqu'à la confirmation de livraison."
+},
+{
+  icon: QrCode,
+  title: "Commandez avec un simple code",
+  description:
+    "Le vendeur génère un code produit. Le client l'entre dans l'application pour voir le produit, commander et payer en toute confiance."
+},
+{
+  icon: CreditCard,
+  title: "Livraison validée par QR Code",
+  description:
+    "Le livreur récupère la commande avec un code ou QR Code, puis la valide chez le client par scan pour libérer le paiement au vendeur."
+},
 ] as const;
 
 export default function HomePage() {
@@ -119,7 +119,7 @@ export default function HomePage() {
                         src={validelLogo} 
                         alt="Validèl" 
                         className={cn(
-                          "mx-auto mb-6 h-24 w-24 object-contain drop-shadow-lg",
+                          "mx-auto mb-4 h-10 w-auto object-contain",
                           "transition-transform duration-500",
                           isActive ? "scale-100" : "scale-90"
                         )}

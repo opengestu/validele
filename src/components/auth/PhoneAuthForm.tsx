@@ -490,10 +490,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Nouvel utilisateur - envoyer OTP pour inscription
       try {
         const resp = await sendOTP(formattedPhone);
+        const otpChannel = (resp as any)?.channel;
         // Notify the user in the usual way
         toast({
-          title: "Code envoyé ! 📱",
-          description: "Vérifiez vos SMS pour valider votre numéro",
+          title: otpChannel === 'whatsapp' ? "Code envoyé sur WhatsApp ! 💬" : "Code envoyé ! 📱",
+          description: otpChannel === 'whatsapp'
+            ? "Vérifiez vos messages WhatsApp pour le code"
+            : "Vérifiez vos SMS pour valider votre numéro",
         });
 
         // If the backend returned the OTP (useful in development/test or debug endpoints), auto-fill it
@@ -950,10 +953,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Envoyer un OTP via Direct7 pour vérifier l'identité
       // allowExisting=true permet d'envoyer l'OTP même si le profil existe (cas reset PIN)
       const resp = await sendOTP(formatted, { allowExisting: true });
+      const resetChannel = (resp as any)?.channel;
       setIsResetPin(true);
       toast({
-        title: "Code envoyé ! 📱",
-        description: "Entrez le code SMS pour réinitialiser votre PIN",
+        title: resetChannel === 'whatsapp' ? "Code envoyé sur WhatsApp ! 💬" : "Code envoyé ! 📱",
+        description: resetChannel === 'whatsapp'
+          ? "Vérifiez WhatsApp pour le code de réinitialisation"
+          : "Entrez le code SMS pour réinitialiser votre PIN",
       });
 
       // If the backend returned the code, auto-fill and move to 'pin' step (reset flows verify server-side later)
@@ -1182,11 +1188,23 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       return false;
     })();
 
+    const btnSize = 'w-[82px] h-[82px] sm:w-[76px] sm:h-[76px]';
+
     return (
-      <>
-        {/* Desktop / tablet keypad (hidden on small screens) */}
-        <div className="hidden sm:block mt-8 pb-3 sm:pb-0">
-<div className="grid grid-cols-3 gap-5 max-w-[300px] mx-auto">
+      <div className="flex flex-col items-center mt-6">
+        {/* Keypad container */}
+        <div
+          className="flex flex-col items-center gap-4 px-5 pt-5 pb-6 rounded-[28px]"
+          style={{
+            background: 'transparent',
+            backdropFilter: 'none',
+            WebkitBackdropFilter: 'none',
+            boxShadow: 'none',
+            border: 'none',
+          }}
+        >
+          {/* Key grid */}
+          <div className="grid grid-cols-3 gap-[14px]">
             {[1,2,3,4,5,6,7,8,9].map(n => (
               <button
                 key={n}
@@ -1195,122 +1213,107 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 onPointerDown={provideHaptic}
                 onClick={() => handleKeypadDigit(String(n))}
                 onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all border-[3px] border-primary text-primary hover:bg-primary hover:text-primary-foreground focus:outline-none"
+                className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
+                style={{
+                  background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+                  color: 'hsl(var(--primary))',
+                  boxShadow: 'none',
+                  border: 'none',
+                  letterSpacing: '-0.5px',
+                }}
               >{n}</button>
             ))}
-            {/* Left cell intentionally left empty to keep 0 and X on the right */}
-            <div className="w-[80px] h-[80px]" />
-            <button 
-              type="button" 
-              aria-label="Num 0" 
-              onPointerDown={provideHaptic} 
-              onClick={() => handleKeypadDigit('0')} 
+            {/* Empty bottom-left cell */}
+            <div className={btnSize} />
+            {/* 0 */}
+            <button
+              type="button"
+              aria-label="Num 0"
+              onPointerDown={provideHaptic}
+              onClick={() => handleKeypadDigit('0')}
               onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center transition-all active:scale-95 border-[3px] border-primary text-primary hover:bg-primary hover:text-primary-foreground focus:outline-none"
+              className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
+              style={{
+                background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+                color: 'hsl(var(--primary))',
+                boxShadow: 'none',
+                border: 'none',
+              }}
             >0</button>
+            {/* Backspace */}
             <button
               type="button"
               aria-label="Effacer"
               title="Effacer"
               onPointerDown={provideHaptic}
               onClick={handleKeypadBackspace}
-              className="w-[80px] h-[80px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all border-[3px] border-red-500 text-red-500"
+              onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
+              className={`${btnSize} rounded-[18px] flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
+              style={{
+                background: 'linear-gradient(160deg, #fff1f2 0%, #ffe4e6 100%)',
+                color: '#ef4444',
+                boxShadow: 'none',
+                border: 'none',
+              }}
             >
-              <span className="text-3xl">⌫</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
+                <line x1="18" y1="9" x2="12" y2="15" />
+                <line x1="12" y1="9" x2="18" y2="15" />
+              </svg>
             </button>
           </div>
 
+          {/* Continuer button */}
           {showContinue && step === 'phone' && (
-            <div className="mt-4">
+            <button
+              type="button"
+              onPointerDown={provideHaptic}
+              onClick={() => { if (step === 'phone') handleSendOTP(); }}
+              disabled={!canContinue || loading}
+              className="w-full h-12 rounded-[16px] flex items-center justify-center font-bold text-[17px] tracking-wide transition-all duration-100 active:scale-[0.97] disabled:opacity-40"
+              style={{
+                background: 'hsl(var(--primary))',
+                color: 'hsl(var(--primary-foreground))',
+                boxShadow: canContinue ? '0 6px 20px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)' : 'none',
+                border: 'none',
+                letterSpacing: '0.3px',
+              }}
+            >
+              Continuer →
+            </button>
+          )}
+
+          {/* PIN oublié + Changer de compte — côte à côte */}
+          {step === 'login-pin' && (
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', alignItems: 'center' }}>
               <button
                 type="button"
-                onPointerDown={provideHaptic}
-                onClick={() => {
-                  if (step === 'phone') handleSendOTP();
-                }}
-                disabled={!canContinue || loading}
-                className="w-full h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+                onClick={() => handleForgotPin()}
+                disabled={!formData.phone || loading}
+                className="text-sm font-medium hover:underline px-3 py-2 rounded-xl transition-opacity disabled:opacity-40"
+                style={{ color: 'hsl(var(--primary))', background: 'rgba(0,0,0,0.04)' }}
               >
-                {loading ? <Spinner size="sm" className="text-white local-spinner" /> : 'Continuer'}
+                PIN oublié ?
+              </button>
+              <span style={{ color: '#d1d5db', fontSize: 14 }}>|</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('phone');
+                  setFormData(prev => ({ ...prev, phone: '', otp: '', pin: '', confirmPin: '' }));
+                  setExistingProfile(null);
+                }}
+                disabled={loading}
+                className="text-sm font-medium hover:underline px-3 py-2 rounded-xl transition-opacity disabled:opacity-40"
+                style={{ color: 'hsl(var(--primary))', background: 'rgba(0,0,0,0.04)' }}
+              >
+                Changer de compte
               </button>
             </div>
           )}
         </div>
-
-        {/* Mobile keypad (dans le flux normal, pas fixed) */}
-        <div className="sm:hidden mt-8">
-          <div className="flex justify-center">
-            <div
-              className="bg-white/95 p-3 rounded-2xl w-full max-w-[320px]"
-            >
-              <div className="grid grid-cols-3 gap-5 max-w-[280px] mx-auto">
-                {[1,2,3,4,5,6,7,8,9].map(n => (
-                  <button
-                    key={`m-${n}`}
-                    type="button"
-                    aria-label={`Num ${n}`}
-                    onPointerDown={provideHaptic}
-                    onClick={() => handleKeypadDigit(String(n))}
-                    onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                    className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center touch-manipulation active:scale-95 transition-all border-[3px] border-primary text-primary hover:bg-primary hover:text-primary-foreground focus:outline-none"
-                  >{n}</button>
-                ))}
-                <div className="w-[75px] h-[75px]" />
-                <button 
-                  type="button" 
-                  aria-label="Num 0" 
-                  onPointerDown={provideHaptic} 
-                  onClick={() => handleKeypadDigit('0')} 
-                  onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center transition-all active:scale-95 border-[3px] border-primary text-primary hover:bg-primary hover:text-primary-foreground focus:outline-none"
-                >0</button>
-                <button
-                  type="button"
-                  aria-label="Effacer"
-                  title="Effacer"
-                  onPointerDown={provideHaptic}
-                  onClick={handleKeypadBackspace}
-                  onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className="w-[75px] h-[75px] rounded-full bg-white text-2xl font-semibold flex items-center justify-center active:scale-95 transition-all border-[3px] border-red-500 text-red-500 hover:bg-red-500 hover:text-white focus:outline-none"
-                >
-                  <span className="text-3xl">⌫</span>
-                </button>
-              </div>
-
-              {showContinue && step === 'phone' && (
-                <div className="mt-3 mb-1">
-                  <button
-                    type="button"
-                    onPointerDown={provideHaptic}
-                    onClick={() => {
-                      if (step === 'phone') handleSendOTP();
-                    }}
-                    disabled={!canContinue || loading}
-                    className="w-full h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center font-semibold disabled:opacity-60 active:scale-95 transition-transform"
-                    style={{ position: 'relative', zIndex: 2 }}
-                  >
-                    {'Continuer'}
-                  </button>
-                </div>
-              )}
-              {/* Bouton PIN oublié visible tout en bas à l'étape login-pin */}
-              {step === 'login-pin' && (
-                <div className="mt-3 mb-1 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => handleForgotPin()}
-                    disabled={!formData.phone || loading}
-                    className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
-                    style={{ minWidth: 120 }}
-                  >
-                    PIN oublié ?
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </>
+      </div>
     );
   };
 
@@ -1318,18 +1321,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     <>
       {/* Spinner overlay plein écran pendant la redirection */}
       {redirecting && (
-        <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white">
-          <div className="flex flex-col items-center gap-4">
-            <Spinner size="xl" className="text-[#24BD5C]" />
-            <p className="text-lg font-medium text-gray-700">Connexion en cours...</p>
-          </div>
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+          <Spinner size="sm" className="text-gray-400" />
         </div>
       )}
       
       {/* Spinner overlay pendant le chargement (loading) - moins prioritaire que redirecting */}
       {loading && !redirecting && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/60">
-          <Spinner size="xl" hideWhenGlobal={false} />
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+          <Spinner size="sm" className="text-gray-400" />
         </div>
       )}
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
@@ -1343,10 +1343,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           <div className="space-y-2">
             <div className="w-full flex justify-center">
               <div className="w-full max-w-[320px]">
-                <div className={`flex items-center gap-0 px-2 py-0 rounded-xl border bg-background/50 mb-2 ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-muted/30'} focus-within:ring-2 focus-within:ring-primary/20`}>
-                  <div className="flex items-center gap-2 px-2 py-1 shrink-0 border-r border-muted/20">
-                    <span className="text-lg md:text-xl">🇸🇳</span>
-                    <span className="text-lg md:text-xl text-muted-foreground font-semibold">+221</span>
+                <div className={`flex items-center rounded-xl border bg-white overflow-hidden mb-2 transition-colors ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-gray-300'} focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30`}>
+                  <div className="flex items-center gap-1.5 px-3 py-3 shrink-0 border-r border-gray-200 bg-white select-none">
+                    <span className="text-xl leading-none">🇸🇳</span>
+                    <span className="text-sm font-semibold text-gray-700">+221</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 mt-0.5"><polyline points="6 9 12 15 18 9"/></svg>
                   </div>
                   <div className="flex items-center flex-1">
                     <Input
@@ -1357,7 +1358,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                         const rawDigits = e.target.value.replace(/\D/g, '');
                         handleInputChange('phone', rawDigits);
                       }}
-                      placeholder="7X XXX XX XX"
+                      placeholder="Numéro de téléphone"
                       inputMode="none"
                       readOnly
                       onFocus={(e) => e.target.blur()}
@@ -1370,7 +1371,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                         }
                         e.preventDefault();
                       }}
-                      className="flex-1 h-14 text-xl md:h-16 md:text-2xl px-3 border-0 bg-transparent placeholder:text-xl md:placeholder:text-2xl placeholder:text-muted-foreground focus:outline-none cursor-default"
+                      className="flex-1 h-12 text-base px-3 border-0 bg-transparent placeholder:text-gray-400 placeholder:text-base focus:outline-none cursor-default shadow-none focus-visible:ring-0"
                       maxLength={12}
                     />
                   </div>
@@ -1448,7 +1449,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             {renderNumericKeypad()}
             {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
             {/* Desktop: bouton normal */}
-            <div className="hidden sm:block text-center mt-6">
+            <div className="hidden sm:flex justify-center gap-3 mt-6">
               <button
                 type="button"
                 onClick={() => handleForgotPin()}
@@ -1456,6 +1457,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
               >
                 PIN oublié ?
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('phone');
+                  setFormData(prev => ({ ...prev, phone: '', otp: '', pin: '', confirmPin: '' }));
+                  setExistingProfile(null);
+                }}
+                disabled={loading}
+                className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
+              >
+                Changer de compte
               </button>
             </div>
           </>

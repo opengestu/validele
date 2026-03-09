@@ -6,7 +6,9 @@ const PENDING_KEY = "validele:resume_pending_since";
 const DONE_KEY = "validele:resume_reload_done_at";
 
 // If the app was backgrounded at least this long, reload on resume.
-const MIN_BACKGROUND_MS = 3000;
+// Must be longer than SessionTimeoutManager's BACKGROUND_THRESHOLD_MS (2 min)
+// so the PIN check runs first, not a full page reload.
+const MIN_BACKGROUND_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function AppResumeRefresher() {
   React.useEffect(() => {
