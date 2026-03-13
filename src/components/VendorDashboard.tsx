@@ -4,7 +4,7 @@
 const STATUS_LABELS_FR: Record<string, string> = {
   paid: 'Payée',
   assigned: 'Assignée',
-  in_delivery: 'En livraison',
+  in_delivery: 'En cours de livraison',
   delivered: 'Livrée',
   pending: 'En attente',
   cancelled: 'Annulée',
@@ -1594,83 +1594,94 @@ const VendorDashboard = () => {
                   return (
                     <div
                       key={order.id}
-                      className="rounded-xl border border-orange-100 bg-[#FFF9F3] p-4 flex flex-col gap-2 shadow-sm"
-                      style={{ maxWidth: 350 }}
+                      className="relative rounded-xl border border-orange-100 bg-white flex flex-col gap-0 shadow-sm overflow-hidden"
                     >
-                      <div className="flex items-center justify-between mb-1">
+                      {/* Statut en coin haut-droit */}
+                      <div className="absolute top-0 right-0">
+                        {(() => {
+                          const s = order.status || '';
+                          let bg = 'linear-gradient(135deg,#6b7280,#4b5563)', shadow = 'rgba(107,114,128,0.45)';
+                          const label = STATUS_LABELS_FR[s as keyof typeof STATUS_LABELS_FR] || s;
+                          if (s === 'in_delivery') { bg = 'linear-gradient(135deg,#f59e0b,#d97706)'; shadow = 'rgba(245,158,11,0.45)'; }
+                          else if (s === 'paid') { bg = 'linear-gradient(135deg,#3b82f6,#2563eb)'; shadow = 'rgba(59,130,246,0.45)'; }
+                          else if (s === 'assigned') { bg = 'linear-gradient(135deg,#a855f7,#7c3aed)'; shadow = 'rgba(168,85,247,0.45)'; }
+                          else if (s === 'delivered') { bg = 'linear-gradient(135deg,#22c55e,#16a34a)'; shadow = 'rgba(34,197,94,0.45)'; }
+                          else if (s === 'pending') { bg = 'linear-gradient(135deg,#f59e0b,#d97706)'; shadow = 'rgba(245,158,11,0.45)'; }
+                          else if (s === 'cancelled' || s === 'failed') { bg = 'linear-gradient(135deg,#ef4444,#dc2626)'; shadow = 'rgba(239,68,68,0.45)'; }
+                          return (
+                            <span style={{ background: bg, boxShadow: `0 3px 12px ${shadow}`, borderTopRightRadius: 11, borderBottomLeftRadius: 11, color: '#fff', fontWeight: 700, fontSize: 11, letterSpacing: '0.3px', padding: '4px 10px', display: 'inline-block' }}>
+                              {label}
+                            </span>
+                          );
+                        })()}
+                      </div>
+
+                      {/* En-tête : produit + prix */}
+                      <div className="px-4 pt-3.5 pb-2 pr-28">
                         <div className="flex items-center gap-2">
-                          <span role="img" aria-label="box" className="text-black text-lg">📦</span>
-                          <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
+                          <span role="img" aria-label="box" className="text-base">📦</span>
+                          <span className="font-bold text-[16px] text-gray-900 truncate flex-1">{order.products?.name}</span>
+                          {typeof order.quantity === 'number' && (
+                            <span className="text-[11px] font-medium text-gray-400 flex-shrink-0">×{order.quantity}</span>
+                          )}
                         </div>
-                        <span className="font-bold" style={{ color: "#000000", fontSize: 16 }}>
-                          {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
-                        </span>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="font-mono font-bold text-orange-500 text-[15px] tracking-wide">{order.order_code || order.id}</span>
+                          <span className="font-bold text-[16px] text-gray-900">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
+                        </div>
                       </div>
 
-                      <div className="flex items-center text-sm text-gray-800 mb-1">
-                        <strong>Quantité :</strong>
-                        <span className="ml-2 font-medium text-gray-900">{order.quantity ?? 1}</span>
-                      </div>
+                      <div className="h-px bg-gray-100 mx-4" />
 
-                      <div className="flex items-center mb-1">
-                        <span className="text-sm font-semibold text-gray-800">Code commande :</span>
-                        <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'18px', marginLeft: 8}}>{order.order_code || order.id}</span>
-                      </div>
-                      {/* ...statut déplacé en bas... */}
-                      {getOrderBuyerName(order) && (
-                        <div className="flex items-center text-sm text-gray-800 mb-1">
-                          <strong>Client :</strong>
-                          <span className="ml-2 font-medium text-gray-900">{getOrderBuyerName(order)}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center text-sm text-gray-800 mb-1">
-                        <strong>Contact :</strong>
-                        <div className="ml-2">
+                      {/* Infos client */}
+                      <div className="px-4 py-2 flex flex-col gap-1.5">
+                        {order.created_at && (
+                          <div className="flex items-center gap-1.5 text-[12px] text-gray-400">
+                            <span>🕐</span>
+                            <span>{new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        )}
+                        {getOrderBuyerName(order) && (
+                          <div className="flex items-center gap-2 text-[13px]">
+                            <span className="font-semibold text-gray-500">Client :</span>
+                            <span className="font-semibold text-gray-900">{getOrderBuyerName(order)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-gray-500 text-[13px]">Contact :</span>
                           <button
                             type="button"
                             onClick={() => handleCallClient(order)}
-                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
+                            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-blue-50 text-blue-600 text-[12px] font-semibold hover:bg-blue-100 transition-colors"
                             aria-label="Appeler ce client"
                           >
-                            <PhoneIcon className="h-4 w-4" />
-                            <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
+                            <PhoneIcon size={12} />
+                            Appeler ce client
                           </button>
+                        </div>
+                        <div className="flex items-start gap-2 text-[13px]">
+                          <span className="font-semibold text-gray-500 whitespace-nowrap">Adresse :</span>
+                          <span className="text-gray-700">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
                         </div>
                       </div>
 
-                      <div className="flex items-center text-sm text-gray-800 mb-1">
-                        <strong>Adresse :</strong>
-                        <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
-                      </div>
-
-                      <div className="flex items-center mb-1 mt-2">
-                        <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                        <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
-                          {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
-                        </span>
-                      </div>
-
-                      {/* Boutons Facture et QR Code */}
-                      <div className="flex items-center mt-3 gap-2">
-                        {/* Bouton Voir facture */}
-                        <Button
-                          size="sm"
+                      {/* Boutons */}
+                      <div className="px-4 pb-4 pt-1 flex gap-2">
+                        <button
                           onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                          className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
+                          className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[13px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
                         >
                           Voir facture
-                        </Button>
-                        
-                        {/* Bouton QR Code Commande */}
+                        </button>
                         {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
-                          <Button
-                            size="sm"
+                          <button
                             onClick={() => handleShowVendorQR(order)}
-                            className="flex-1 bg-gradient-to-r from-black to-neutral-800 hover:from-black/90 hover:to-neutral-700 text-white"
+                            className="flex-1 h-[40px] rounded-2xl text-[13px] font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+                            style={{ background: 'linear-gradient(135deg,#1a1a1a,#404040)', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}
                           >
-                            <QrCode className="h-4 w-4 mr-2" />
-                            QR Code Commande
-                          </Button>
+                            <QrCode className="h-4 w-4" />
+                            QR Code
+                          </button>
                         )}
                       </div>
                     </div>
@@ -2049,93 +2060,99 @@ const VendorDashboard = () => {
                           {/* Orders for this date */}
                           <div className="grid gap-4">
                             {groups[dateKey].map((order) => (
-                              <Card key={order.id} className="border border-orange-100 bg-[#FFF9F3] rounded-xl shadow-sm">
-                                <CardContent className="p-4">
-                                  {/* Ligne 1 : Icône + nom produit + prix à droite */}
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-2">
-                                      <span role="img" aria-label="box" className="text-black text-lg">📦</span>
-                                      <span className="font-bold text-lg text-gray-900">{order.products?.name}</span>
-                                    {typeof order.quantity === 'number' && (
-                                      <span className="ml-2 text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
-                                    )}
-                                  </div>
-                                    <span className="font-bold" style={{ color: "#000000", fontSize: 16 }}>
-                                      {order.total_amount ? order.total_amount.toLocaleString() + " FCFA" : "Ex : 50 000"}
-                                    </span>
-                                  </div>
+                              <div
+                                key={order.id}
+                                className="relative rounded-xl border border-orange-100 bg-white flex flex-col gap-0 shadow-sm overflow-hidden"
+                              >
+                                {/* Statut en coin haut-droit */}
+                                <div className="absolute top-0 right-0">
+                                  {(() => {
+                                    const s = order.status || '';
+                                    let bg = 'linear-gradient(135deg,#6b7280,#4b5563)', shadow = 'rgba(107,114,128,0.45)';
+                                    const label = STATUS_LABELS_FR[s as keyof typeof STATUS_LABELS_FR] || s;
+                                    if (s === 'in_delivery') { bg = 'linear-gradient(135deg,#f59e0b,#d97706)'; shadow = 'rgba(245,158,11,0.45)'; }
+                                    else if (s === 'paid') { bg = 'linear-gradient(135deg,#3b82f6,#2563eb)'; shadow = 'rgba(59,130,246,0.45)'; }
+                                    else if (s === 'assigned') { bg = 'linear-gradient(135deg,#a855f7,#7c3aed)'; shadow = 'rgba(168,85,247,0.45)'; }
+                                    else if (s === 'delivered') { bg = 'linear-gradient(135deg,#22c55e,#16a34a)'; shadow = 'rgba(34,197,94,0.45)'; }
+                                    else if (s === 'pending') { bg = 'linear-gradient(135deg,#f59e0b,#d97706)'; shadow = 'rgba(245,158,11,0.45)'; }
+                                    else if (s === 'cancelled' || s === 'failed') { bg = 'linear-gradient(135deg,#ef4444,#dc2626)'; shadow = 'rgba(239,68,68,0.45)'; }
+                                    return (
+                                      <span style={{ background: bg, boxShadow: `0 3px 12px ${shadow}`, borderTopRightRadius: 11, borderBottomLeftRadius: 11, color: '#fff', fontWeight: 700, fontSize: 11, letterSpacing: '0.3px', padding: '4px 10px', display: 'inline-block' }}>
+                                        {label}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
 
-                                  <div className="flex items-center text-sm text-gray-800 mb-1">
-                                    <strong>Quantité :</strong>
-                                    <span className="ml-2 font-medium text-gray-900">{order.quantity ?? 1}</span>
+                                {/* En-tête : produit */}
+                                <div className="px-4 pt-3.5 pb-2 pr-28">
+                                  <div className="flex items-center gap-2">
+                                    <span role="img" aria-label="box" className="text-base">📦</span>
+                                    <span className="font-bold text-[16px] text-gray-900 truncate flex-1">{order.products?.name}</span>
                                   </div>
+                                </div>
 
-                                  <div className="flex items-center mb-1">
-                                    <span className="text-xs font-semibold text-gray-700" style={{background:'#fff',borderRadius:4,padding:'2px 8px',border:'1px solid #e0e0e0',marginRight:8}}>Code commande :</span>
-                                    <span className="text-base font-mono font-bold text-orange-600" style={{letterSpacing:'1px',fontSize:'16px', marginLeft: 8}}>{order.order_code || order.id}</span>
+                                <div className="h-px bg-gray-100 mx-4" />
+
+                                {/* Infos client */}
+                                <div className="px-4 py-2 flex flex-col gap-1.5">
+                                  {/* Code commande */}
+                                  <div className="flex items-center gap-2 text-[13px]">
+                                    <span className="font-semibold text-gray-500">Code commande :</span>
+                                    <span className="font-mono font-extrabold text-orange-500 text-[16px]" style={{ letterSpacing: '1.5px' }}>{order.order_code || order.id}</span>
                                   </div>
-                                  {/* Heure de la commande */}
-                                  <div className="flex items-center text-xs text-gray-500 mb-1">
-                                    <span>🕐 {new Date(order.created_at || Date.now()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                                  {/* Quantité + Montant sur même ligne */}
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-[13px]">
+                                      <span className="font-semibold text-gray-500">Quantité :</span>
+                                      <span className="font-bold text-gray-900">{order.quantity ?? 1}</span>
+                                    </div>
+                                    <span className="font-bold text-[15px] text-gray-900">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
                                   </div>
                                   {getOrderBuyerName(order) && (
-                                    <div className="flex items-center text-sm text-gray-800 mb-1">
-                                      <strong>Client :</strong>
-                                      <span className="ml-2 font-medium text-gray-900">
-                                        {getOrderBuyerName(order)}
-                                      </span>
+                                    <div className="flex items-center gap-2 text-[13px]">
+                                      <span className="font-semibold text-gray-500">Client :</span>
+                                      <span className="font-semibold text-gray-900">{getOrderBuyerName(order)}</span>
                                     </div>
                                   )}
-                                  <div className="flex items-center text-sm text-gray-800 mb-1">
-                                    <strong>Contact :</strong>
-                                    <div className="ml-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCallClient(order)}
-                                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[11px] font-medium hover:bg-blue-100 transition min-w-[56px]"
-                                        aria-label="Appeler ce client"
-                                      >
-                                        <PhoneIcon className="h-4 w-4" />
-                                        <span className="ml-1 text-[11px] leading-tight">Appeler ce client</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center text-sm text-gray-800 mb-1">
-                                    <strong>Adresse :</strong>
-                                    <span className="text-gray-700" style={{ marginLeft: 8 }}>{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'Adresse à définir'}</span>
-                                  </div>
-                                  {/* Statut tout en bas */}
-                                  <div className="flex items-center mb-1 mt-2">
-                                    <span className="text-sm font-semibold text-gray-800">Statut commande :</span>
-                                    <span className="text-xs font-bold text-white" style={{background: getStatusBadgeColor(order.status || ''),borderRadius:12,padding:'2px 5px',fontSize:'11px',letterSpacing:'1px',textTransform:'capitalize',boxShadow:`0 1px 4px ${getStatusBadgeColor(order.status || '')}22`, marginLeft: 8}}>
-                                      {order.status && STATUS_LABELS_FR[order.status as keyof typeof STATUS_LABELS_FR] || order.status}
-                                    </span>
-                                  </div>
-                                  {/* Invoice buttons: order invoice (buyer-facing) and payout batch invoices (vendor-facing) */}
-                                  <div className="flex items-center mt-2 gap-2">
-                                    {/* Order invoice (public endpoint) - open in modal */}
-                                    <Button
-                                      size="sm"
-                                      onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                                      className="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200"
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-gray-500 text-[13px]">Contact :</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCallClient(order)}
+                                      className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-blue-50 text-blue-600 text-[12px] font-semibold hover:bg-blue-100 transition-colors"
+                                      aria-label="Appeler ce client"
                                     >
-                                      Voir facture
-                                    </Button>
-                                    
-                                    {/* Bouton QR Code Commande */}
-                                    {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
-                                      <Button
-                                        size="sm"
-                                        onClick={() => handleShowVendorQR(order)}
-                                        className="flex-1 bg-gradient-to-r from-black to-neutral-800 hover:from-black/90 hover:to-neutral-700 text-white"
-                                      >
-                                        <QrCode className="h-4 w-4 mr-2" />
-                                        QR Code Commande
-                                      </Button>
-                                    )}
+                                      <PhoneIcon size={12} />
+                                      Appeler ce client
+                                    </button>
                                   </div>
-                                </CardContent>
-                              </Card>
+                                  <div className="flex items-start gap-2 text-[13px]">
+                                    <span className="font-semibold text-gray-500 whitespace-nowrap">Adresse :</span>
+                                    <span className="text-gray-700">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
+                                  </div>
+                                </div>
+
+                                {/* Boutons */}
+                                <div className="px-4 pb-4 pt-1 flex gap-2">
+                                  <button
+                                    onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
+                                    className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[13px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
+                                  >
+                                    Voir facture
+                                  </button>
+                                  {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
+                                    <button
+                                      onClick={() => handleShowVendorQR(order)}
+                                      className="flex-1 h-[40px] rounded-2xl text-[13px] font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+                                      style={{ background: 'linear-gradient(135deg,#1a1a1a,#404040)', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}
+                                    >
+                                      <QrCode className="h-4 w-4" />
+                                      QR Code
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             ))}
                           </div>
                       </div>

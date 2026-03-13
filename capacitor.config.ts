@@ -5,14 +5,14 @@ const config: CapacitorConfig = {
   appName: 'Validèl',
   webDir: 'dist',
   android: {
-    backgroundColor: '#22c55e',
+    backgroundColor: '#f7fafa',
     allowMixedContent: true
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 0,
       launchAutoHide: true,
-      backgroundColor: '#22c55e',
+      backgroundColor: '#f7fafa',
       showSpinner: false,
       androidScaleType: 'CENTER_CROP',
       splashFullScreen: false,

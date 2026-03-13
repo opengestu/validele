@@ -1803,163 +1803,207 @@ const BuyerDashboard = () => {
                         };
                         
                         return (
-                        <div key={order.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden w-full max-w-[calc(100vw-32px)] mx-auto sm:max-w-[520px] transition-all duration-200 active:scale-[0.99]" style={{marginLeft: 0, marginRight: 0}}>
-
-                          {/* En-tête : statut + produit + prix */}
-                          <div className="px-5 pt-4 pb-2">
-                            <div className="flex items-center justify-between mb-2">
-                              <span>{renderStatusBadge(order.status)}</span>
-                              <p className="text-[11px] font-medium text-gray-400">
-                                {typeof order.quantity === 'number' && `Qté : ${order.quantity}`}
-                              </p>
-                            </div>
-                            <div className="flex items-baseline justify-between gap-3">
-                              <h3 className="text-[17px] font-bold text-gray-900 leading-snug truncate min-w-0 flex-1">
-                                {order.products?.name || 'Commande'}
-                              </h3>
-                              <div className="text-right flex-shrink-0">
-                                <span className="text-[20px] font-extrabold text-gray-900">{order.total_amount?.toLocaleString()}</span>
-                                <span className="text-[11px] font-medium text-gray-400 ml-1">FCFA</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="h-px bg-gray-100" />
-
-                          {/* Vendeur */}
-                          <div className="px-5 py-3">
-                            <div className="flex items-center gap-2.5 mb-2">
-                              <div className="w-9 h-9 rounded-full bg-orange-50 flex items-center justify-center flex-shrink-0 border border-orange-200">
-                                <span className="text-orange-600 text-sm font-bold">
-                                  {(order.profiles?.company_name || 'V').charAt(0).toUpperCase()}
+                        <div key={order.id} className="relative rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[calc(100vw-32px)] min-w-[240px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[520px]" style={{marginLeft: 0, marginRight: 0}}>
+                          {/* Statut en coin haut-droit */}
+                          <div className="absolute top-0 right-0">
+                            {(() => {
+                              const s = order.status;
+                              let bg = 'linear-gradient(135deg,#6b7280,#4b5563)', shadow = 'rgba(107,114,128,0.45)';
+                              let text = 'Inconnu';
+                              if (s === 'in_delivery') { bg = 'linear-gradient(135deg,#3b82f6,#2563eb)'; shadow = 'rgba(59,130,246,0.45)'; text = 'En cours de livraison'; }
+                              else if (s === 'paid') { bg = 'linear-gradient(135deg,#a855f7,#7c3aed)'; shadow = 'rgba(168,85,247,0.45)'; text = 'Payée'; }
+                              else if (s === 'delivered') { bg = 'linear-gradient(135deg,#22c55e,#16a34a)'; shadow = 'rgba(34,197,94,0.45)'; text = 'Livrée'; }
+                              else if (s === 'pending') { bg = 'linear-gradient(135deg,#f59e0b,#d97706)'; shadow = 'rgba(245,158,11,0.45)'; text = 'En attente'; }
+                              else if (s === 'cancelled') { bg = 'linear-gradient(135deg,#ef4444,#dc2626)'; shadow = 'rgba(239,68,68,0.45)'; text = 'Annulée'; }
+                              else if (s === 'refunded') { bg = 'linear-gradient(135deg,#f97316,#ea580c)'; shadow = 'rgba(249,115,22,0.45)'; text = 'Remboursée'; }
+                              return (
+                                <span style={{ background: bg, boxShadow: `0 3px 12px ${shadow}`, borderTopRightRadius: 12, borderBottomLeftRadius: 12, color: '#fff', fontWeight: 700, fontSize: 11, letterSpacing: '0.3px', padding: '4px 10px', display: 'inline-block' }}>
+                                  {text}
                                 </span>
-                              </div>
+                              );
+                            })()}
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 w-full">
                               <div className="min-w-0 flex-1">
-                                <p className="text-[11px] text-gray-400 font-medium leading-none">Vendeur(se)</p>
-                                <p className="text-[14px] font-semibold text-gray-900 truncate mt-0.5">{order.profiles?.company_name || 'N/A'}</p>
-                              </div>
-                            </div>
-                            {order.profiles?.phone && (
-                              <div className="flex items-center gap-2 ml-[46px]">
-                                <a
-                                  href={`tel:${order.profiles.phone}`}
-                                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gray-50 text-gray-700 text-[12px] font-semibold hover:bg-gray-100 transition-colors border border-gray-200"
-                                  aria-label="Appeler le vendeur"
-                                >
-                                  <PhoneIcon className="h-3.5 w-3.5" size={14} />
-                                  Appeler
-                                </a>
-                                <a
-                                  href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#f0faf0] text-[#128C7E] text-[12px] font-semibold hover:bg-[#e0f5e0] transition-colors border border-[#d4edd4]"
-                                  title="WhatsApp"
-                                >
-                                  <WhatsAppIcon className="h-3.5 w-3.5" size={14} />
-                                  WhatsApp
-                                </a>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Livreur */}
-                          {order.delivery_person?.phone && (
-                            <>
-                              <div className="h-px bg-gray-100" />
-                              <div className="px-5 py-3">
-                                <div className="flex items-center gap-2.5 mb-2">
-                                  <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 border border-blue-200">
-                                    <span className="text-blue-600 text-sm font-bold">L</span>
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-[11px] text-gray-400 font-medium leading-none">Livreur</p>
-                                    <p className="text-[14px] font-semibold text-gray-900 mt-0.5">Livreur assigné</p>
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <p className="font-bold text-gray-900 break-words text-lg sm:truncate">
+                                    {order.products?.name || 'Commande'}
+                                    {typeof order.quantity === 'number' && (
+                                      <span className="ml-2 text-xs font-semibold text-black bg-gray-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
+                                    )}
+                                  </p>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-lg font-bold text-black">
+                                      {order.total_amount?.toLocaleString()} FCFA
+                                    </span>
                                   </div>
                                 </div>
-                                <div className="ml-[46px]">
-                                  <a
-                                    href={`tel:${order.delivery_person.phone}`}
-                                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gray-50 text-gray-700 text-[12px] font-semibold hover:bg-gray-100 transition-colors border border-gray-200"
-                                    aria-label="Appeler le livreur"
+                                <div className="mt-3 space-y-2 text-base text-gray-700">
+                                  <div className="flex flex-col gap-2 pb-2">
+                                    <div className="flex items-center gap-4">
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Quantité:</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.quantity ?? 1}</span>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
+                                    </div>
+                                    {order.profiles?.phone && (
+                                      <div className="flex items-center gap-3 text-base">
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <a
+                                                href={`tel:${order.profiles.phone}`}
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
+                                                aria-label="Appeler le vendeur(se)"
+                                              >
+                                                <PhoneIcon className="h-5 w-5" size={18} />
+                                                <span className="ml-1 text-base leading-tight">Appeler</span>
+                                              </a>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Appeler le vendeur(se)</TooltipContent>
+                                        </Tooltip>
+                                        <a
+                                            href={`https://wa.me/${order.profiles.phone.replace(/^\+/, '')}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/5 text-black text-sm font-semibold hover:bg-black/10 transition min-w-[40px]"
+                                            title="Contacter sur WhatsApp"
+                                          >
+                                            <WhatsAppIcon className="h-5 w-5" size={18} />
+                                            <span className="ml-1 text-base leading-tight">WhatsApp</span>
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {(order.delivery_person || order.status === 'in_delivery' || order.status === 'delivered') && (
+                                    <div className="flex flex-col gap-2 mt-4">
+                                      {order.delivery_person?.phone ? (
+                                        <div className="flex items-center gap-4 text-base">
+                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
+                                          <div className="flex items-center gap-3">
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <a
+                                                  href={`tel:${order.delivery_person.phone}`}
+                                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition min-w-[40px]"
+                                                  aria-label="Appeler le livreur"
+                                                >
+                                                  <PhoneIcon className="h-5 w-5" size={18} />
+                                                  <span className="ml-1 text-base leading-tight">Appeler</span>
+                                                </a>
+                                              </TooltipTrigger>
+                                              <TooltipContent>Appeler le livreur</TooltipContent>
+                                            </Tooltip>
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+
+
+                            {/* Affichage du statut de paiement vendeur(se) après livraison */}
+                            {order.status === 'delivered' && payoutTransaction && (
+                              <div className="rounded-md bg-purple-50 p-2">
+                                <p className="text-xs font-medium text-purple-700">
+                                  Paiement vendeur(se):
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (payoutTransaction.status === 'SUCCESSFUL'
+                                        ? 'bg-black/5 text-black'
+                                        : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-red-100 text-red-700')
+                                    }
                                   >
-                                    <PhoneIcon className="h-3.5 w-3.5" size={14} />
-                                    Appeler
-                                  </a>
+                                    {payoutTransaction.status === 'SUCCESSFUL'
+                                      ? '✓ Effectué'
+                                      : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING'
+                                        ? '⏳ En cours'
+                                        : '✗ Échoué'}
+                                  </span>
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Affichage du remboursement si existant */}
+                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
+                              <div className="rounded-md bg-orange-50 p-2">
+                                <p className="text-xs font-medium text-orange-700">
+                                  💸 Remboursement:
+                                  <span
+                                    className={
+                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
+                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                        ? 'bg-black/5 text-black'
+                                        : 'bg-yellow-100 text-yellow-700')
+                                    }
+                                  >
+                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
+                                      ? '✓ Effectué'
+                                      : '⏳ En cours'}
+                                  </span>
+                                </p>
+                              </div>
+                            )}
+
+
+
+                            {/* Boutons d'action */}
+                            <div className="flex flex-col gap-2 mt-2">
+                              {order.qr_code ? (
+                                <button
+                                  className="w-full h-[44px] rounded-2xl font-bold text-[15px] tracking-wide transition-all active:scale-[0.98] border-none"
+                                  style={{ background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: '#fff', boxShadow: '0 2px 10px rgba(249,115,22,0.35)' }}
+                                  onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
+                                >
+                                  Voir QR code
+                                </button>
+                              ) : (
+                                <div className="w-full h-[44px] rounded-2xl bg-gray-50 flex items-center justify-center border border-gray-100">
+                                  <span className="text-[13px] text-gray-400">QR code indisponible</span>
                                 </div>
-                              </div>
-                            </>
-                          )}
+                              )}
 
-                          {/* Infos paiement si livré/annulé */}
-                          {order.status === 'delivered' && payoutTransaction && (
-                            <>
-                              <div className="h-px bg-gray-100" />
-                              <div className="px-5 py-2.5 flex items-center gap-2">
-                                <span className="text-[12px] text-gray-400">Paiement vendeur(se) :</span>
-                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                                  payoutTransaction.status === 'SUCCESSFUL' ? 'bg-black/5 text-black'
-                                  : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700'
-                                  : 'bg-red-100 text-red-700'
-                                }`}>
-                                  {payoutTransaction.status === 'SUCCESSFUL' ? '✓ Effectué' : payoutTransaction.status === 'PENDING1' || payoutTransaction.status === 'PENDING' ? '⏳ En cours' : '✗ Échoué'}
-                                </span>
-                              </div>
-                            </>
-                          )}
-                          {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
-                            <>
-                              <div className="h-px bg-gray-100" />
-                              <div className="px-5 py-2.5 flex items-center gap-2">
-                                <span className="text-[12px] text-gray-400">💸 Remboursement :</span>
-                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                                  orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL' ? 'bg-black/5 text-black' : 'bg-yellow-100 text-yellow-700'
-                                }`}>
-                                  {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL' ? '✓ Effectué' : '⏳ En cours'}
-                                </span>
-                              </div>
-                            </>
-                          )}
+                              <div className="flex gap-2">
+                                <button
+                                  className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[14px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
+                                  onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
+                                >
+                                  Voir facture
+                                </button>
 
-                          {/* Boutons d'action */}
-                          <div className="h-px bg-gray-100" />
-                          <div className="px-5 pb-5 pt-3 flex flex-col gap-2.5">
-                            {order.qr_code ? (
-                              <button
-                                className="w-full h-[46px] rounded-xl font-bold text-[15px] tracking-wide transition-all active:scale-[0.98]"
-                                style={{ background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }}
-                                onClick={() => { setQrModalValue(order.qr_code ?? ''); setQrModalOpen(true); }}
-                              >
-                                Voir QR code
-                              </button>
-                            ) : (
-                              <div className="w-full h-[46px] rounded-xl bg-gray-50 flex items-center justify-center border border-gray-100">
-                                <span className="text-[13px] text-gray-400">QR code indisponible</span>
+                                <button
+                                  className="flex-1 h-[40px] rounded-2xl border border-blue-200 text-[14px] font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 transition-all"
+                                  onClick={toggleDetails}
+                                >
+                                  {isExpanded ? 'Masquer' : 'Détails'}
+                                </button>
                               </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                className="h-[40px] rounded-xl text-[13px] font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200"
-                                onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
-                              >
-                                Facture
-                              </button>
-                              <button
-                                className="h-[40px] rounded-xl text-[13px] font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200"
-                                onClick={toggleDetails}
-                              >
-                                {isExpanded ? 'Masquer' : 'Détails'}
-                              </button>
                             </div>
-                            {isExpanded && (order.status === 'paid' || order.status === 'in_delivery') && (
-                              <button
-                                className="w-full h-[40px] rounded-xl text-[13px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors flex items-center justify-center gap-1.5 border border-red-200"
-                                onClick={() => openRefundModal(order)}
-                              >
-                                <XCircle size={14} />
-                                Annuler / Remboursement
-                              </button>
+
+                            {isExpanded && (
+                              <div className="flex flex-wrap gap-2">
+                                {/* Bouton d'annulation/remboursement - visible uniquement après Détails */}
+                                {(order.status === 'paid' || order.status === 'in_delivery') && (
+                                  <button
+                                    className="flex items-center gap-1 rounded-2xl border border-red-400 px-3 py-2 text-[13px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-all w-full justify-center"
+                                    onClick={() => openRefundModal(order)}
+                                  >
+                                    <XCircle size={14} />
+                                    Annuler / Remboursement
+                                  </button>
+                                )}
+                              </div>
                             )}
+
+
                           </div>
                         </div>
                         );
@@ -1981,23 +2025,20 @@ const BuyerDashboard = () => {
       {/* Modal QR Code */}
       {qrModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', borderRadius: 12, padding: 24, boxShadow: '0 4px 24px #0002', minWidth: 240, maxWidth: '90vw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 12 }}>
-            <h3 style={{ marginBottom: 8 }}>QR Code de la commande</h3>
+          <div style={{ background: 'white', borderRadius: 20, padding: 28, boxShadow: '0 8px 32px rgba(0,0,0,0.15)', width: 340, maxWidth: '92vw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 24 }}>
+            <h3 style={{ marginBottom: 4, fontSize: 17, fontWeight: 700 }}>QR Code de la commande</h3>
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrModalValue)}`}
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(qrModalValue)}`}
               alt="QR Code"
-              style={{ width: 180, height: 180, objectFit: 'contain', display: 'block', margin: '0 auto', borderRadius: 8 }}
+              style={{ width: 260, height: 260, objectFit: 'contain', display: 'block', margin: '0 auto', borderRadius: 10 }}
             />
 
-            {/* Boutons: Partager et Fermer (tailles réduites) */}
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
-              <button
-                onClick={() => setQrModalOpen(false)}
-                style={{ padding: '8px 12px', borderRadius: 6, background: '#ff9800', color: 'white', border: 'none', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
-              >
-                Fermer
-              </button>
-            </div>
+            <button
+              onClick={() => setQrModalOpen(false)}
+              style={{ width: '100%', padding: '12px 0', borderRadius: 14, background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: 'white', border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer', boxShadow: '0 2px 10px rgba(249,115,22,0.35)' }}
+            >
+              Fermer
+            </button>
           </div>
         </div>
       )}

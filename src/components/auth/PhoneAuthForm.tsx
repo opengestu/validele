@@ -37,6 +37,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const [loading, setLoading] = useState(false);
   const [redirecting, setRedirecting] = useState(false); // Nouvel état pour le spinner de redirection
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [otpChannel, setOtpChannel] = useState<'sms' | 'whatsapp'>('sms');
   const [formData, setFormData] = useState({
     phone: '',
     otp: '',
@@ -135,6 +136,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startResetPin, initialPhone]);
+  // Clear stale existingProfile if somehow we're on the phone step with a leftover profile
+  // (e.g. localStorage restored existingProfile without restoring step to login-pin)
+  useEffect(() => {
+    if (step === 'phone' && existingProfile) {
+      setExistingProfile(null);
+    }
+  }, [step, existingProfile]);
+
   // length du numéro (9 chiffres attendus, sans espaces)
   const phoneLen = formData.phone.replace(/\D/g, '').length;
   // Auto-focus sur le premier champ OTP quand on arrive à l'étape OTP
@@ -490,11 +499,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Nouvel utilisateur - envoyer OTP pour inscription
       try {
         const resp = await sendOTP(formattedPhone);
-        const otpChannel = (resp as any)?.channel;
+        const respChannel = (resp as any)?.channel || 'sms';
+        setOtpChannel(respChannel);
         // Notify the user in the usual way
         toast({
-          title: otpChannel === 'whatsapp' ? "Code envoyé sur WhatsApp ! 💬" : "Code envoyé ! 📱",
-          description: otpChannel === 'whatsapp'
+          title: respChannel === 'whatsapp' ? "Code envoyé sur WhatsApp ! 💬" : "Code envoyé ! 📱",
+          description: respChannel === 'whatsapp'
             ? "Vérifiez vos messages WhatsApp pour le code"
             : "Vérifiez vos SMS pour valider votre numéro",
         });
@@ -953,7 +963,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Envoyer un OTP via Direct7 pour vérifier l'identité
       // allowExisting=true permet d'envoyer l'OTP même si le profil existe (cas reset PIN)
       const resp = await sendOTP(formatted, { allowExisting: true });
-      const resetChannel = (resp as any)?.channel;
+      const resetChannel = (resp as any)?.channel || 'sms';
+      setOtpChannel(resetChannel);
       setIsResetPin(true);
       toast({
         title: resetChannel === 'whatsapp' ? "Code envoyé sur WhatsApp ! 💬" : "Code envoyé ! 📱",
@@ -1139,6 +1150,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       const only = (formData.phone || '').toString().replace(/\D/g, '');
       if (only.length >= 9) return;
       const newDigits = only + digit;
+      // Clear stale existingProfile when the user is typing a new number
+      if (existingProfile) setExistingProfile(null);
       setFormData(prev => ({ ...prev, phone: newDigits }));
       return;
     }
@@ -1406,8 +1419,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'otp' && (
           <>
             <div className="text-center mb-3">
-              <p className="text-base font-medium">Entrez le code reçu par SMS</p>
-              <p className="text-sm text-muted-foreground mt-2">Saisissez le code à 4 chiffres envoyé sur votre téléphone</p>
+              <p className="text-base font-medium">
+                {otpChannel === 'whatsapp' ? 'Entrez le code reçu par WhatsApp' : 'Entrez le code reçu par SMS'}
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                {otpChannel === 'whatsapp'
+                  ? 'Saisissez le code à 4 chiffres envoyé sur WhatsApp'
+                  : 'Saisissez le code à 4 chiffres envoyé sur votre téléphone'}
+              </p>
             </div>
             {/* Hidden input to receive SMS autofill (autocomplete="one-time-code") */}
             <input

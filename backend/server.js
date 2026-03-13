@@ -7013,7 +7013,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     // First fetch the order
     const { data: order, error } = await sb
       .from('orders')
-      .select('id, order_code, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
+      .select('id, order_code, quantity, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -7048,7 +7048,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
 
     // Try to fetch product info if product_id exists
     if (order.product_id) {
-      const { data: productData } = await sb.from('products').select('name, code').eq('id', order.product_id).maybeSingle();
+      const { data: productData } = await sb.from('products').select('name, code, price').eq('id', order.product_id).maybeSingle();
       product = productData;
     }
 
@@ -7060,8 +7060,10 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     const buyerName = buyer?.full_name || 'Acheteur inconnu';
     const productName = product?.name || 'Produit';
 
-    const rows = [{ product_name: productName, gross: Number(order.total_amount || 0) }];
-    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const quantity = Math.max(1, Number(order.quantity) || 1);
+    const totalGross = Number(order.total_amount || 0);
+    const unitPrice = Number(product?.price) || (quantity ? Math.round(totalGross / quantity) : totalGross);
+    const rows = [{ product_name: productName, unit_price: unitPrice, quantity, gross: unitPrice * quantity }];
 
     const html = `<!doctype html>
 <html>
@@ -7077,12 +7079,12 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
     <h3>Détails</h3>
     <table>
-      <thead><tr><th>Produit</th><th>Montant (FCFA)</th></tr></thead>
+      <thead><tr><th>Produit</th><th>Prix unitaire (FCFA)</th><th>Quantité</th><th>Total (FCFA)</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${r.product_name}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
+        ${rows.map(r => `<tr><td>${r.product_name}</td><td>${r.unit_price.toLocaleString()}</td><td>${r.quantity}</td><td>${r.gross.toLocaleString()}</td></tr>`).join('')}
       </tbody>
       <tfoot>
-        <tr><th>Total</th><th>${totalGross.toLocaleString()}</th></tr>
+        <tr><th colspan="3">Total</th><th>${totalGross.toLocaleString()}</th></tr>
       </tfoot>
     </table>
     <p><strong>Adresse livraison:</strong> ${finalAddress}</p>
