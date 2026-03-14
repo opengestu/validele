@@ -1933,25 +1933,25 @@ const BuyerDashboard = () => {
                             )}
 
                             {/* Affichage du remboursement si existant */}
-                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (
-                              <div className="rounded-md bg-orange-50 p-2">
-                                <p className="text-xs font-medium text-orange-700">
-                                  💸 Remboursement:
-                                  <span
-                                    className={
-                                      `ml-2 inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ` +
-                                      (orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
-                                        ? 'bg-black/5 text-black'
-                                        : 'bg-yellow-100 text-yellow-700')
-                                    }
-                                  >
-                                    {orderTransactions.find(t => t.transaction_type === 'refund')?.status === 'SUCCESSFUL'
-                                      ? '✓ Effectué'
-                                      : '⏳ En cours'}
-                                  </span>
-                                </p>
+                            {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (() => {
+                              const isWaveRefund = order.payment_method === 'wave';
+                              const refundMethodLabel = isWaveRefund ? 'Wave' : 'Orange Money';
+                              const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
+                              const isSuccess = refundTx?.status === 'SUCCESSFUL';
+                              return (
+                              <div className={`rounded-xl p-2.5 flex items-center gap-2.5 ${isWaveRefund ? 'bg-blue-50' : 'bg-orange-50'}`}>
+                                <img src={isWaveRefund ? waveLogo : orangeMoneyLogo} alt={refundMethodLabel} className="w-6 h-6 rounded object-contain flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-medium ${isWaveRefund ? 'text-blue-800' : 'text-orange-800'}`}>
+                                    Remboursement {refundMethodLabel}
+                                  </p>
+                                </div>
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${isSuccess ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                  {isSuccess ? '✓ Effectué' : '⏳ En cours'}
+                                </span>
                               </div>
-                            )}
+                              );
+                            })()}
 
 
 
@@ -2321,39 +2321,59 @@ const BuyerDashboard = () => {
       )}
 
       {/* Modal de remboursement/annulation */}
-      {showRefundModal && refundOrder && (
+      {showRefundModal && refundOrder && (() => {
+        const isWave = refundOrder.payment_method === 'wave';
+        const paymentLabel = isWave ? 'Wave' : 'Orange Money';
+        const paymentLogo = isWave ? waveLogo : orangeMoneyLogo;
+        return (
         <Dialog open={showRefundModal} onOpenChange={setShowRefundModal}>
-          <DialogContent className="w-full max-w-lg mx-4 sm:mx-auto max-h-[90vh] overflow-auto p-4 sm:p-6">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5" />
-                Annuler et demander un remboursement
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
+          <DialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto max-h-[90vh] overflow-auto rounded-2xl p-0 sm:p-0">
+            {/* Header coloré */}
+            <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-t-2xl px-5 py-4">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2.5 text-white text-base font-bold">
+                  <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+                  Annuler et demander un remboursement
+                </DialogTitle>
+              </DialogHeader>
+            </div>
+
+            <div className="px-5 pb-5 pt-4 space-y-4">
               {/* Résumé de la commande */}
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="font-semibold">{refundOrder.products?.name}</p>
-                <p className="text-sm text-gray-600">Montant: {refundOrder.total_amount?.toLocaleString()} FCFA</p>
-                <p className="text-sm text-gray-600">Statut: {getStatusTextFr(refundOrder.status ?? '')}</p>
+              <div className="bg-gray-50 border border-gray-100 p-3.5 rounded-xl">
+                <p className="font-semibold text-sm text-gray-900 leading-tight">{refundOrder.products?.name}</p>
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-xs text-gray-500">Montant</span>
+                  <span className="text-sm font-bold text-gray-900">{refundOrder.total_amount?.toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-xs text-gray-500">Statut</span>
+                  <span className="text-xs font-medium text-gray-600">{getStatusTextFr(refundOrder.status ?? '')}</span>
+                </div>
               </div>
 
-              {/* Avertissement */}
-              <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <strong>ℹ️ Information:</strong> Votre demande de remboursement sera examinée par un administrateur. 
-                  Une fois approuvée, le montant sera remboursé sur votre compte 
-                  {refundOrder.payment_method === 'wave' ? ' Wave' : ' Orange Money'}.
-                </p>
+              {/* Info remboursement avec méthode de paiement cohérente */}
+              <div className={`border rounded-xl p-3.5 ${isWave ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+                <div className="flex items-start gap-3">
+                  <img src={paymentLogo} alt={paymentLabel} className="w-8 h-8 rounded-lg object-contain flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-semibold ${isWave ? 'text-blue-900' : 'text-orange-900'}`}>
+                      Remboursement via {paymentLabel}
+                    </p>
+                    <p className={`text-xs mt-1 leading-relaxed ${isWave ? 'text-blue-700' : 'text-orange-700'}`}>
+                      Votre demande sera examinée par un administrateur. Une fois approuvée, le montant sera remboursé sur votre compte {paymentLabel}.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Raison du remboursement */}
               <div>
-                <label htmlFor="refund-reason" className="block text-sm font-medium mb-2">Raison de l'annulation (optionnel)</label>
-                <select 
+                <label htmlFor="refund-reason" className="block text-xs font-semibold text-gray-700 mb-1.5">Raison de l'annulation</label>
+                <select
                   id="refund-reason"
                   title="Raison de l'annulation"
-                  className="w-full border rounded-lg p-2"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none transition-all appearance-none"
                   value={refundReason}
                   onChange={(e) => setRefundReason(e.target.value)}
                 >
@@ -2367,10 +2387,10 @@ const BuyerDashboard = () => {
               </div>
 
               {/* Boutons */}
-              <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                <Button 
-                  variant="outline" 
-                  className="w-full sm:flex-1"
+              <div className="flex gap-3 pt-1">
+                <Button
+                  variant="outline"
+                  className="flex-1 rounded-xl h-11 text-sm font-medium border-gray-200"
                   onClick={() => {
                     setShowRefundModal(false);
                     setRefundOrder(null);
@@ -2378,10 +2398,10 @@ const BuyerDashboard = () => {
                   }}
                   disabled={refundLoading}
                 >
-                  Annuler
+                  Retour
                 </Button>
-                <Button 
-                  className="w-full sm:flex-1 bg-red-600 hover:bg-red-700"
+                <Button
+                  className="flex-1 rounded-xl h-11 text-sm font-semibold bg-red-600 hover:bg-red-700 shadow-sm"
                   onClick={handleRequestRefund}
                   disabled={refundLoading}
                 >
@@ -2391,17 +2411,15 @@ const BuyerDashboard = () => {
                       Traitement...
                     </>
                   ) : (
-                    <>
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Soumettre la demande
-                    </>
+                    'Confirmer l\'annulation'
                   )}
                 </Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
-      )}
+        );
+      })()}
 
       {/* WebView pour le paiement intégré (mobile uniquement) */}
       <PaymentWebView

@@ -4658,7 +4658,7 @@ app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
       .from('refund_requests')
       .select(`
         *,
-        order:orders(id, order_code, products(name)),
+        order:orders(id, order_code, payment_method, products(name)),
         buyer:profiles!refund_requests_buyer_id_fkey(id, full_name, phone)
       `)
       .order('requested_at', { ascending: false });
@@ -4721,16 +4721,23 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     }
 
     // 2) Récupérer le téléphone et wallet_type de l'acheteur
+    // IMPORTANT: Le remboursement DOIT être envoyé sur le même canal que le paiement original
+    // On utilise payment_method de la commande en priorité, pas le wallet_type du profil
     const buyerPhone = refundRequest.buyer?.phone;
-    let walletType = refundRequest.buyer?.wallet_type;
-    
-    if (!walletType && refundRequest.order?.payment_method) {
-      // Mapper payment_method vers wallet_type
+    let walletType = null;
+
+    if (refundRequest.order?.payment_method) {
+      // Mapper payment_method de la commande vers wallet_type
       if (refundRequest.order.payment_method === 'wave') {
         walletType = 'wave-senegal';
       } else if (refundRequest.order.payment_method === 'orange_money') {
         walletType = 'orange-senegal';
       }
+    }
+
+    // Fallback sur le wallet_type du profil seulement si la commande n'a pas de payment_method
+    if (!walletType && refundRequest.buyer?.wallet_type) {
+      walletType = refundRequest.buyer.wallet_type;
     }
 
     if (!buyerPhone) {
@@ -4747,7 +4754,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       });
     }
 
-    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, amount: refundRequest.amount });
+    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, paymentMethod: refundRequest.order?.payment_method, amount: refundRequest.amount });
 
     // 3) Effectuer le remboursement via PixPay
     const result = await pixpaySendMoney({

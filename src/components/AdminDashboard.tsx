@@ -155,7 +155,7 @@ type RefundRequest = {
   processed_at?: string | null;
   transaction_id?: string | null;
   rejection_reason?: string | null;
-  order?: { id: string; order_code?: string; products?: { name?: string } } | null;
+  order?: { id: string; order_code?: string; payment_method?: string; products?: { name?: string } } | null;
   buyer?: ProfileRef | null;
 };
 
@@ -1625,6 +1625,7 @@ const AdminDashboard: React.FC = () => {
                     <TableHead>Produit</TableHead>
                     <TableHead>Acheteur</TableHead>
                     <TableHead>Montant</TableHead>
+                    <TableHead>Canal</TableHead>
                     <TableHead>Raison</TableHead>
                     <TableHead>Date demande</TableHead>
                     <TableHead>Actions</TableHead>
@@ -1640,6 +1641,11 @@ const AdminDashboard: React.FC = () => {
                         <TableCell>{r.order?.products?.name || r.order?.order_code || '-'}</TableCell>
                         <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
                         <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                        <TableCell>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${r.order?.payment_method === 'wave' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {r.order?.payment_method === 'wave' ? '🌊 Wave' : '🟠 Orange Money'}
+                          </span>
+                        </TableCell>
                         <TableCell>{r.reason || '-'}</TableCell>
                         <TableCell>{r.requested_at ? new Date(r.requested_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
                         <TableCell>
@@ -1649,7 +1655,7 @@ const AdminDashboard: React.FC = () => {
                               variant="default"
                               className="bg-primary text-primary-foreground"
                               onClick={() => {
-                                if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name}?`)) {
+                                if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name} via ${r.order?.payment_method === 'wave' ? 'Wave' : 'Orange Money'}?`)) {
                                   handleApproveRefund(r.id);
                                 }
                               }}
@@ -1676,7 +1682,7 @@ const AdminDashboard: React.FC = () => {
                     ))}
                   {filterRefunds(refunds).filter(isRefundPending).length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-gray-500">Aucune demande en attente</TableCell>
+                      <TableCell colSpan={9} className="text-center text-gray-500">Aucune demande en attente</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -1691,6 +1697,7 @@ const AdminDashboard: React.FC = () => {
                     <TableHead>Commande</TableHead>
                     <TableHead>Acheteur</TableHead>
                     <TableHead>Montant</TableHead>
+                    <TableHead>Canal</TableHead>
                     <TableHead>Raison</TableHead>
                     <TableHead>Statut</TableHead>
                     <TableHead>Date traitement</TableHead>
@@ -1711,6 +1718,11 @@ const AdminDashboard: React.FC = () => {
                         <TableCell>{r.order?.order_code || r.order_id}</TableCell>
                         <TableCell>{r.buyer?.full_name || '-'}</TableCell>
                         <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                        <TableCell>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${r.order?.payment_method === 'wave' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {r.order?.payment_method === 'wave' ? '🌊 Wave' : '🟠 Orange Money'}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-sm">{r.reason || '-'}</TableCell>
                         <TableCell>
                           <span className={`px-2 py-1 rounded text-sm ${
@@ -1732,7 +1744,7 @@ const AdminDashboard: React.FC = () => {
                     ))}
                   {filterRefunds(refunds).filter(r => !isRefundPending(r)).length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>
+                      <TableCell colSpan={9} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
