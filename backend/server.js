@@ -3440,7 +3440,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     // Try to fetch the batch and vendor-specific items using the chosen client
     let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     // Include product info from the order (if available) so we can show product names in the invoice
-    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId);
     let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     // Fallback: if batch not found, try to find latest batch that contains vendor items
@@ -3453,7 +3453,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
         console.log('[ADMIN] fallback found batchId for vendor:', batchId);
         const q = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
         batch = q.data;
-        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId);
         items = it.data || [];
       }
     }
@@ -3478,10 +3478,14 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     // Map rows and extract product name + real quantity
     const rows = (items || []).map(i => {
       const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
+      const orderQty = Number(i.order?.quantity);
+      const productPrice = Number(i.order?.products?.price || (Array.isArray(i.order?.products) ? (i.order.products[0] && i.order.products[0].price) : 0));
+      const fallbackQty = productPrice > 0 ? Math.round((Number(i.order?.total_amount) || 0) / productPrice) : 0;
+      const resolvedQty = orderQty > 0 ? orderQty : (fallbackQty > 0 ? fallbackQty : 1);
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
-        quantity: Number(i.order?.quantity) || 1,
+        quantity: resolvedQty,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
@@ -3507,8 +3511,8 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
 
-    // Avatar initiales vendeur
-    const initials = (vendor.full_name || 'V').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    // Toujours afficher le logo Validel sur la facture batch
+    const validelLogoText = 'VALIDEL';
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
@@ -3527,7 +3531,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
             .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
-            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; flex-shrink:0; text-align:center; line-height:64px;}
+            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; letter-spacing:0.7px; flex-shrink:0; text-align:center; line-height:1.1; padding:6px; box-sizing:border-box;}
             .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
             .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
             table{width:100%; border-collapse:collapse; margin-top:12px;}
@@ -3540,7 +3544,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
         </head>
         <body>
           <div class="header">
-            <div class="avatar">${initials}</div>
+            <div class="avatar" aria-label="Logo Validel">${validelLogoText}</div>
             <div class="vendor-info">
               <h2>${vendor.full_name || ''}</h2>
               <p>${vendor.phone || ''}</p>
@@ -3674,7 +3678,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
 
     const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     // Include product info and quantity from order
-    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
+    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
     const { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     console.log('[VENDOR] Invoice - batch:', batch?.id, 'vendor:', vendor?.full_name, 'items:', items?.length || 0);
@@ -3685,10 +3689,14 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
 
     const rows = (items || []).map(i => {
       const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
+      const orderQty = Number(i.order?.quantity);
+      const productPrice = Number(i.order?.products?.price || (Array.isArray(i.order?.products) ? (i.order.products[0] && i.order.products[0].price) : 0));
+      const fallbackQty = productPrice > 0 ? Math.round((Number(i.order?.total_amount) || 0) / productPrice) : 0;
+      const resolvedQty = orderQty > 0 ? orderQty : (fallbackQty > 0 ? fallbackQty : 1);
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
-        quantity: Number(i.order?.quantity) || 1,
+        quantity: resolvedQty,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
@@ -3714,8 +3722,8 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
 
-    // Avatar initiales vendeur
-    const initials = (vendor.full_name || 'V').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    // Toujours afficher le logo Validel sur la facture batch
+    const validelLogoText = 'VALIDEL';
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
@@ -3732,7 +3740,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
             .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
-            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; flex-shrink:0; text-align:center; line-height:64px;}
+            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; letter-spacing:0.7px; flex-shrink:0; text-align:center; line-height:1.1; padding:6px; box-sizing:border-box;}
             .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
             .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
             table{width:100%; border-collapse:collapse; margin-top:12px;}
@@ -3745,7 +3753,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
         </head>
         <body>
           <div class="header">
-            <div class="avatar">${initials}</div>
+            <div class="avatar" aria-label="Logo Validel">${validelLogoText}</div>
             <div class="vendor-info">
               <h2>${vendor.full_name || ''}</h2>
               <p>${vendor.phone || ''}</p>
@@ -3808,13 +3816,16 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
     }
 
     // Récupérer la commande et vérifier qu'elle appartient au vendeur
-    const { data: order } = await db.from('orders').select('*, products(name, price), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address)').eq('id', orderId).maybeSingle();
+    const { data: order } = await db.from('orders').select('*, products(name, price), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone)').eq('id', orderId).maybeSingle();
     if (!order) return res.status(404).send('order_not_found');
     if (String(order.vendor_id) !== String(vendorId)) return res.status(403).send('forbidden: not your order');
 
     // Générer la facture HTML
     const product = order.products || {};
     const buyer = order.buyer || {};
+    const vendor = order.vendor || {};
+    const shopName = vendor.company_name || vendor.full_name || 'Boutique';
+    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
     const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
     const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
@@ -3822,7 +3833,9 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
     });
 
     // Calculs quantité / prix unitaire / total ligne
-    const qty = Number(order.quantity) || 1;
+    const rawQty = Number(order.quantity);
+    const fallbackQty = Number(product.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
+    const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
 
@@ -3831,10 +3844,23 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
         <head>
           <meta charset="utf-8" />
           <title>Facture commande du ${capitalizedDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+          <style>
+            body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
+            .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+            .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
+            table{width:100%; border-collapse:collapse}
+            th,td{border:1px solid #ddd;padding:8px;text-align:left}
+            th{background:#f5f5f5}
+          </style>
         </head>
         <body>
-          <h2>Facture de commande du ${capitalizedDate}</h2>
+          <div class="header">
+            <div class="avatar">${shopInitials}</div>
+            <div>
+              <h2 style="margin:0">Facture de commande du ${capitalizedDate}</h2>
+              <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
+            </div>
+          </div>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
           <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
           <p><strong>Client:</strong> ${buyer.full_name || ''} (${buyer.phone || ''})</p>
@@ -3891,13 +3917,15 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
     }
 
     // Récupérer la commande et vérifier qu'elle appartient à l'acheteur
-    const { data: order } = await db.from('orders').select('*, products(name, price), vendor:profiles!orders_vendor_id_fkey(full_name, phone, address)').eq('id', orderId).maybeSingle();
+    const { data: order } = await db.from('orders').select('*, products(name, price), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone, address)').eq('id', orderId).maybeSingle();
     if (!order) return res.status(404).send('order_not_found');
     if (String(order.buyer_id) !== String(buyerId)) return res.status(403).send('forbidden: not your order');
 
     // Générer la facture HTML
     const product = order.products || {};
     const vendor = order.vendor || {};
+    const shopName = vendor.company_name || vendor.full_name || 'Boutique';
+    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
     const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
     const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
@@ -3905,7 +3933,9 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
     });
 
     // Calculs quantité / prix unitaire / total ligne
-    const qty = Number(order.quantity) || 1;
+    const rawQty = Number(order.quantity);
+    const fallbackQty = Number(product.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
+    const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
 
@@ -3914,10 +3944,23 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
         <head>
           <meta charset="utf-8" />
           <title>Facture commande du ${capitalizedDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+          <style>
+            body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
+            .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+            .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
+            table{width:100%; border-collapse:collapse}
+            th,td{border:1px solid #ddd;padding:8px;text-align:left}
+            th{background:#f5f5f5}
+          </style>
         </head>
         <body>
-          <h2>Facture de commande du ${capitalizedDate}</h2>
+          <div class="header">
+            <div class="avatar">${shopInitials}</div>
+            <div>
+              <h2 style="margin:0">Facture de commande du ${capitalizedDate}</h2>
+              <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
+            </div>
+          </div>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
           <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
