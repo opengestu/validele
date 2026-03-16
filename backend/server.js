@@ -3571,7 +3571,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
             </tfoot>
           </table>
           <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
-          <p class="total-line">Moyen de paiement de réception vendeur (admin): <strong>${vendorPayoutMethod}</strong></p>
+          <p class="total-line">Paiement perçu via: <strong>${vendorPayoutMethod}</strong></p>
           <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
@@ -3790,7 +3790,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
             </tfoot>
           </table>
           <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
-          <p class="total-line">Moyen de paiement de réception vendeur (admin): <strong>${vendorPayoutMethod}</strong></p>
+          <p class="total-line">Paiement perçu via: <strong>${vendorPayoutMethod}</strong></p>
           <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
@@ -3901,7 +3901,7 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
-          <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
+          <p><strong>Paiement via:</strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre vente !</p>
         </body>
       </html>`;
@@ -4011,7 +4011,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
-          <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
+          <p><strong>Payée avec: </strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre achat !</p>
         </body>
       </html>`;
