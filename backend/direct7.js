@@ -8,7 +8,7 @@ const DIRECT7_API_KEY = process.env.DIRECT7_API_KEY;
 const DIRECT7_API_URL = 'https://api.d7networks.com/messages/v1/send';
 
 // Préfixes sénégalais dont le SMS est fiable via D7 (après +221)
-const SMS_SUPPORTED_PREFIXES = ['70', '76', '77', '78'];
+const SMS_SUPPORTED_PREFIXES = ['70', '71', '75', '76', '77', '78'];
 
 // Générer un code OTP à 4 chiffres
 function generateOTP() {

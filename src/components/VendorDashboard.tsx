@@ -28,6 +28,7 @@ const getStatusBadgeColor = (status: string): string => {
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@/components/ui/spinner';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Package,
   Plus,
@@ -1466,7 +1467,7 @@ const VendorDashboard = () => {
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
-                className="bg-black hover:bg-black/90 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Ajouter
@@ -1552,14 +1553,28 @@ const VendorDashboard = () => {
               </Card>
             ))}
           </div>
-          {products.length === 0 && (
+          {pageLoading && products.length === 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+              {[1, 2, 3].map(i => (
+                <Card key={i}>
+                  <CardHeader><Skeleton className="h-5 w-3/4" /></CardHeader>
+                  <CardContent className="space-y-3">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-8 w-full mt-2" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+          {!pageLoading && products.length === 0 && (
             <div className="text-center py-8 text-gray-500">
               <Package className="h-10 w-10 mx-auto mb-2 text-gray-400" />
               <p className="text-sm">Aucun produit pour le moment.</p>
               <div className="mt-3">
                 <Button
                   onClick={() => setAddModalOpen(true)}
-                  className="bg-black hover:bg-black/90 text-white text-sm px-3 py-1"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 text-white text-sm px-3 py-1"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Ajouter un produit
@@ -1688,7 +1703,21 @@ const VendorDashboard = () => {
                   );
                 })}
               </div>
-              {orders.length === 0 && (
+              {pageLoading && orders.length === 0 && (
+                <div className="space-y-3">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="flex items-center gap-3 p-3 border rounded-lg">
+                      <Skeleton className="h-10 w-10 rounded-full flex-shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-1/3" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                      <Skeleton className="h-6 w-16" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!pageLoading && orders.length === 0 && (
                 <div className="text-center py-8">
                   <ShoppingCart className="h-8 w-8 text-gray-400 mx-auto mb-2" />
                   <p className="text-gray-500">Aucune commande pour le moment</p>
@@ -1790,7 +1819,7 @@ const VendorDashboard = () => {
                     </div>
                     <Button
                       onClick={() => setIsEditingProfile(true)}
-                      className="bg-black text-white hover:bg-black/90"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90"
                     >
                       Modifier le profil
                     </Button>
@@ -1882,7 +1911,7 @@ const VendorDashboard = () => {
                       <Button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
-                        className="bg-black text-white hover:bg-black/90"
+                        className="bg-primary text-primary-foreground hover:bg-primary/90"
                       >
                         {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                       </Button>
@@ -1941,7 +1970,7 @@ const VendorDashboard = () => {
                   {products.length > 0 && (
                     <Button
                       onClick={() => setAddModalOpen(true)}
-                      className="bg-black hover:bg-black/90 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       Ajouter
@@ -2001,7 +2030,7 @@ const VendorDashboard = () => {
                         </div>
                         {/* Boutons en bas côte-à-côte sur mobile */}
                         <div className="mt-4 flex gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-black text-white hover:bg-black/90 text-sm">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-sm">
                             Modifier
                           </Button>
                           <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-sm">
@@ -2012,12 +2041,26 @@ const VendorDashboard = () => {
                     </Card>
                   ))}
                 </div>
-                {products.length === 0 && (
+                {pageLoading && products.length === 0 && (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map(i => (
+                      <Card key={i}>
+                        <CardHeader><Skeleton className="h-5 w-3/4" /></CardHeader>
+                        <CardContent className="space-y-2">
+                          <Skeleton className="h-4 w-full" />
+                          <Skeleton className="h-4 w-2/3" />
+                          <Skeleton className="h-8 w-full mt-1" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+                {!pageLoading && products.length === 0 && (
                   <div className="text-center py-8 text-gray-500">
                     <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                     <p className="text-sm">Commencez par ajouter un produit.</p>
                     <div className="mt-3">
-                      <Button onClick={() => setAddModalOpen(true)} className="bg-black hover:bg-black/90 text-white text-sm px-3 py-1">
+                      <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground hover:bg-primary/90 text-white text-sm px-3 py-1">
                         <Plus className="h-4 w-4 mr-2" />
                         Ajouter un produit
                       </Button>
@@ -2161,7 +2204,21 @@ const VendorDashboard = () => {
                   );
                 })()}
                 
-                {orders.length === 0 && (
+                {pageLoading && orders.length === 0 && (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="flex items-center gap-3 p-3 border rounded-lg">
+                        <Skeleton className="h-10 w-10 rounded-full flex-shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-1/3" />
+                          <Skeleton className="h-3 w-1/2" />
+                        </div>
+                        <Skeleton className="h-6 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!pageLoading && orders.length === 0 && (
                   <div className="text-center py-8 text-gray-500">
                     <ShoppingCart className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                     <p className="text-sm">Vos commandes seront affichées ici.</p>
@@ -2206,7 +2263,7 @@ const VendorDashboard = () => {
                         </div>
                         <Button
                           onClick={() => setIsEditingProfile(true)}
-                          className="w-full bg-black text-white hover:bg-black/90"
+                          className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Modifier le profil
@@ -2292,7 +2349,7 @@ const VendorDashboard = () => {
                           <Button
                             onClick={handleSaveProfile}
                             disabled={savingProfile}
-                            className="flex-1 bg-black text-white hover:bg-black/90"
+                            className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
                           >
                             {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
                           </Button>
@@ -2361,20 +2418,20 @@ const VendorDashboard = () => {
               </DialogHeader>
               {typeof window !== 'undefined' && window.innerWidth <= 640 && (
                 <div className="flex gap-2 ml-2">
-                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
+                  <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
               )}
             </div>
 
             <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex-1 overflow-auto p-3' : 'py-2'}`}>
-              {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" className="text-gray-400" /></div>}
+              {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" /></div>}
               {!invoiceViewerLoading && invoiceViewerHtml && (
                 <div>
                   {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
                   {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
                     <div className="flex justify-end gap-2 mb-2">
-                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
+                      <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                       <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                     </div>
                   )}
@@ -2403,7 +2460,7 @@ const VendorDashboard = () => {
             <DialogTitle>Factures de paiement</DialogTitle>
           </DialogHeader>
           <div className="py-2">
-            {batchesLoading && <div className="flex justify-center py-6"><Spinner size="sm" className="text-gray-400" /></div>}
+            {batchesLoading && <div className="flex justify-center py-6"><Spinner size="sm" /></div>}
             {!batchesLoading && vendorBatches && vendorBatches.length === 0 && (
               <div className="text-center py-6 text-gray-500">Aucune facture de batch disponible</div>
             )}
@@ -2418,7 +2475,7 @@ const VendorDashboard = () => {
                     </div>
                     <div className="flex gap-2">
                       <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
-                      <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-black text-white">Télécharger</Button>
+                      <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-primary text-primary-foreground">Télécharger</Button>
                     </div>
                   </div>
                 ))}
@@ -2513,7 +2570,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleAddProduct}
               disabled={adding}
-              className="bg-black text-white hover:bg-black/90"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {adding ? 'Ajout...' : 'Ajouter'}
             </Button>
@@ -2571,7 +2628,7 @@ const VendorDashboard = () => {
             <Button
               onClick={handleEditProduct}
               disabled={editing}
-              className="bg-black text-white hover:bg-black/90"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {editing ? 'Modification...' : 'Modifier'}
             </Button>
@@ -2614,7 +2671,7 @@ const VendorDashboard = () => {
             <Button variant="outline" onClick={() => setCallModalOpen(false)}>
               Annuler
             </Button>
-            <Button className="bg-black text-white" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
+            <Button className="bg-primary text-primary-foreground" onClick={() => { if (callTarget) { window.location.href = `tel:${callTarget.phone}`; setCallModalOpen(false); } }}>
               Appeler
             </Button>
           </DialogFooter>

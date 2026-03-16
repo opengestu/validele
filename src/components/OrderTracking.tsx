@@ -151,7 +151,7 @@ const OrderTracking = () => {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Spinner size="sm" className="text-gray-400" />
+        <Spinner size="sm" />
       </div>
     );
   }

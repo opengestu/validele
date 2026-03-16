@@ -2,7 +2,6 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 
@@ -63,14 +62,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // On rend les children derrière + un overlay transparent par-dessus
   // pour que l'utilisateur voie le contenu de l'app pendant le chargement
   if (loading) {
-    return (
-      <>
-        {children}
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" className="text-gray-400" />
-        </div>
-      </>
-    );
+    return <>{children}</>;
   }
 
   // Hors connexion

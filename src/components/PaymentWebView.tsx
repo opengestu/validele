@@ -87,7 +87,7 @@ export const PaymentWebView: React.FC<PaymentWebViewProps> = ({
           {/* Spinner de chargement */}
           {loading && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-              <Spinner size="sm" className="text-gray-400" />
+              <Spinner size="sm" />
             </div>
           )}
 

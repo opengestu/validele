@@ -1335,14 +1335,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       {/* Spinner overlay plein écran pendant la redirection */}
       {redirecting && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" className="text-gray-400" />
+          <Spinner size="sm" />
         </div>
       )}
       
       {/* Spinner overlay pendant le chargement (loading) - moins prioritaire que redirecting */}
       {loading && !redirecting && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" className="text-gray-400" />
+          <Spinner size="sm" />
         </div>
       )}
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}

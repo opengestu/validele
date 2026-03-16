@@ -1789,7 +1789,7 @@ const AdminDashboard: React.FC = () => {
           <div className="flex-1 overflow-auto p-4">
             {invoiceViewerLoading && (
               <div className="flex items-center justify-center py-8">
-                <Spinner size="sm" className="text-gray-400" />
+                <Spinner size="sm" />
               </div>
             )}
             {!invoiceViewerLoading && invoiceViewerHtml && (

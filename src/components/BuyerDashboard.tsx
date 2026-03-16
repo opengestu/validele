@@ -1613,7 +1613,7 @@ const BuyerDashboard = () => {
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" className="text-gray-400" />
+          <Spinner size="sm" />
         </div>
       )}
 
@@ -1690,28 +1690,31 @@ const BuyerDashboard = () => {
                 placeholder="Votre numéro de téléphone"
               />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button
+            <div className="flex flex-col gap-3 mt-2">
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1 border-2 border-gray-400"
                   onClick={handleSaveProfile}
                   disabled={savingProfile}
-                  style={{ flex: 1, background: '#111827', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer', opacity: savingProfile ? 0.7 : 1 }}
                 >
                   {savingProfile ? 'Enregistrement...' : 'Enregistrer'}
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-2 border-gray-300 text-gray-600"
                   onClick={() => setDrawerOpen(false)}
-                  style={{ flex: 1, background: '#eee', color: '#333', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: 'pointer' }}
                 >
                   Annuler
-                </button>
+                </Button>
               </div>
-              <button
+              <Button
+                variant="destructive"
+                className="w-full border-2 border-red-600"
                 onClick={handleSignOut}
-                style={{ width: '100%', background: '#111827', color: 'white', border: 'none', borderRadius: 6, padding: '10px 0', fontWeight: 600, fontSize: 16, marginTop: 8, cursor: 'pointer' }}
               >
                 Se déconnecter
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2050,7 +2053,7 @@ const BuyerDashboard = () => {
             <DialogTitle>{invoiceViewerTitle}</DialogTitle>
           </DialogHeader>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" className="text-gray-400" /></div>}
+            {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" /></div>}
             {!invoiceViewerLoading && invoiceViewerHtml && (
               <div>
                 <div className="flex justify-end gap-2 mb-2">

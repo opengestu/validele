@@ -3440,7 +3440,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     // Try to fetch the batch and vendor-specific items using the chosen client
     let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     // Include product info from the order (if available) so we can show product names in the invoice
-    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
     let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     // Fallback: if batch not found, try to find latest batch that contains vendor items
@@ -3453,7 +3453,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
         console.log('[ADMIN] fallback found batchId for vendor:', batchId);
         const q = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
         batch = q.data;
-        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
+        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity)').eq('batch_id', batchId).eq('vendor_id', vendorId);
         items = it.data || [];
       }
     }
@@ -3475,26 +3475,27 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       return res.status(404).send('No payout items found for this vendor in the specified batch');
     }
 
-    // Map rows and extract product name (if present on order.products.name)
+    // Map rows and extract product name + real quantity
     const rows = (items || []).map(i => {
       const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
+        quantity: Number(i.order?.quantity) || 1,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
       };
     });
 
-    // Group products by name and aggregate totals
+    // Group products by name and aggregate totals using real quantity
     const productGroups = {};
     for (const r of rows) {
       const key = r.product_name || '-';
       if (!productGroups[key]) {
         productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
       }
-      productGroups[key].count += 1;
+      productGroups[key].count += r.quantity;
       productGroups[key].gross += r.gross;
       productGroups[key].commission += r.commission;
       productGroups[key].net += r.net;
@@ -3504,7 +3505,10 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = rows.length;
+    const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
+
+    // Avatar initiales vendeur
+    const initials = (vendor.full_name || 'V').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
@@ -3514,30 +3518,47 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
     });
 
-    // Simple HTML invoice (grouped by product with sales count)
+    // Simple HTML invoice (grouped by product with real quantity)
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
           <title>Facture de paiement du ${capitalizedDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+          <style>
+            body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
+            .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
+            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; flex-shrink:0; text-align:center; line-height:64px;}
+            .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
+            .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
+            table{width:100%; border-collapse:collapse; margin-top:12px;}
+            th,td{border:1px solid #ddd; padding:8px 10px; text-align:left;}
+            th{background:#f5f5f5; font-weight:600;}
+            tfoot tr{background:#f0f4ff; font-weight:700;}
+            .total-line{margin-top:16px; font-size:16px;}
+            .signature{margin-top:32px; color:#555;}
+          </style>
         </head>
         <body>
-          <h2>Facture de paiement du ${capitalizedDate}</h2>
-          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
-          <h3>Détails</h3>
+          <div class="header">
+            <div class="avatar">${initials}</div>
+            <div class="vendor-info">
+              <h2>${vendor.full_name || ''}</h2>
+              <p>${vendor.phone || ''}</p>
+              <p>Facture de paiement — ${capitalizedDate}</p>
+            </div>
+          </div>
+          <h3>Détails des ventes</h3>
           <table>
-            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th style="text-align:center">Quantité</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString('fr-FR')}</td><td>${r.commission.toLocaleString('fr-FR')}</td><td>${r.net.toLocaleString('fr-FR')}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+              <tr><td>Total</td><td style="text-align:center">${totalQty}</td><td>${totalGross.toLocaleString('fr-FR')}</td><td>${totalCommission.toLocaleString('fr-FR')}</td><td>${totalNet.toLocaleString('fr-FR')}</td></tr>
             </tfoot>
           </table>
-          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
-          <p>Signature: _________________________</p>
+          <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
+          <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
 
@@ -3652,8 +3673,8 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     }
 
     const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    // Include product info from order.products to show product names
-    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
+    // Include product info and quantity from order
+    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
     const { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     console.log('[VENDOR] Invoice - batch:', batch?.id, 'vendor:', vendor?.full_name, 'items:', items?.length || 0);
@@ -3667,20 +3688,21 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
+        quantity: Number(i.order?.quantity) || 1,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
       };
     });
 
-    // Group products by name and aggregate totals
+    // Group products by name and aggregate totals using real quantity
     const productGroups = {};
     for (const r of rows) {
       const key = r.product_name || '-';
       if (!productGroups[key]) {
         productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
       }
-      productGroups[key].count += 1;
+      productGroups[key].count += r.quantity;
       productGroups[key].gross += r.gross;
       productGroups[key].commission += r.commission;
       productGroups[key].net += r.net;
@@ -3690,12 +3712,14 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = rows.length;
+    const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
+
+    // Avatar initiales vendeur
+    const initials = (vendor.full_name || 'V').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
     const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
     const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
       return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
     });
@@ -3705,24 +3729,41 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
         <head>
           <meta charset="utf-8" />
           <title>Facture de paiement du ${capitalizedDate}</title>
-          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+          <style>
+            body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
+            .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
+            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; flex-shrink:0; text-align:center; line-height:64px;}
+            .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
+            .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
+            table{width:100%; border-collapse:collapse; margin-top:12px;}
+            th,td{border:1px solid #ddd; padding:8px 10px; text-align:left;}
+            th{background:#f5f5f5; font-weight:600;}
+            tfoot tr{background:#f0f4ff; font-weight:700;}
+            .total-line{margin-top:16px; font-size:16px;}
+            .signature{margin-top:32px; color:#555;}
+          </style>
         </head>
         <body>
-          <h2>Facture de paiement du ${capitalizedDate}</h2>
-          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
-          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
-          <h3>Détails</h3>
+          <div class="header">
+            <div class="avatar">${initials}</div>
+            <div class="vendor-info">
+              <h2>${vendor.full_name || ''}</h2>
+              <p>${vendor.phone || ''}</p>
+              <p>Facture de paiement — ${capitalizedDate}</p>
+            </div>
+          </div>
+          <h3>Détails des ventes</h3>
           <table>
-            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th style="text-align:center">Quantité</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString('fr-FR')}</td><td>${r.commission.toLocaleString('fr-FR')}</td><td>${r.net.toLocaleString('fr-FR')}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
+              <tr><td>Total</td><td style="text-align:center">${totalQty}</td><td>${totalGross.toLocaleString('fr-FR')}</td><td>${totalCommission.toLocaleString('fr-FR')}</td><td>${totalNet.toLocaleString('fr-FR')}</td></tr>
             </tfoot>
           </table>
-          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
-          <p>Signature: _________________________</p>
+          <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
+          <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
 

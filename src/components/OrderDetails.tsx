@@ -85,7 +85,7 @@ const OrderDetails = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Spinner size="sm" className="text-gray-400" />
+        <Spinner size="sm" />
       </div>
     );
   }

@@ -137,7 +137,7 @@ const PinReauth: React.FC = () => {
   if (!phone) {
     return (
       <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-        <Spinner size="sm" className="text-gray-400" />
+        <Spinner size="sm" />
       </div>
     );
   }
@@ -178,7 +178,7 @@ const PinReauth: React.FC = () => {
       {/* PIN Input */}
       {loading ? (
         <div className="flex flex-col items-center gap-3 py-8">
-          <Spinner size="sm" className="text-gray-400" />
+          <Spinner size="sm" />
           <p className="text-sm text-gray-500">Vérification...</p>
         </div>
       ) : (

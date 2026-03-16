@@ -13,7 +13,6 @@ import SessionTimeoutManager from "@/components/SessionTimeoutManager";
 import PinReauth from "@/components/PinReauth";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
-import { Spinner } from "@/components/ui/spinner";
 
 // Small helper to redirect /admin to /admin/:userId
 const AdminRedirect: React.FC = () => {
@@ -26,11 +25,7 @@ const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
 
     if (loading) {
-    return (
-      <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-        <Spinner size="sm" className="text-gray-400" />
-      </div>
-    );
+    return null;
   }
 
   if (user && userProfile?.full_name && userProfile.full_name.trim() !== '') {

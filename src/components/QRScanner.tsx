@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info, Loader2 } from 'lucide-react';
+import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 const valideLogo = '/icons/validel-logo.svg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -561,7 +562,7 @@ function QRScanSection({
       {loadingScanner && !cameraError && !scanValid && !hasScanned && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <Loader2 className="animate-spin" style={{ width: 32, height: 32, color: '#9ca3af' }} />
+            <Spinner size="sm" />
           </div>
         </div>
       )}
@@ -614,31 +615,32 @@ function QRScanSection({
               </div>
             )}
       </div>
-      {/* Bloc de validation avec effet fondu */}
-      <div className={`transition-opacity duration-300 ${scanValid ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 p-0 m-0'} flex items-center justify-center min-h-[220px]`}
-        style={{ minHeight: scanValid ? 220 : 0 }}>
-        {validationResult && validationResult.status === 'valid' && (
-          <div className="flex flex-col items-center justify-center gap-5 w-full bg-primary/10 rounded-2xl p-6 ring-1 ring-primary/20">
-            <div className="flex items-center gap-2 text-primary text-center">
-              <CheckCircle className="h-6 w-6 text-primary" />
-              <span className="font-semibold text-lg">QR code valide et correspond à la commande</span>
+      {/* Bloc de validation avec effet fondu — centré verticalement sur l'écran */}
+      {validationResult && validationResult.status === 'valid' && (
+        <div className={`transition-opacity duration-300 ${scanValid ? 'opacity-100' : 'opacity-0 pointer-events-none'} fixed inset-0 z-[1500] flex items-center justify-center px-6`}>
+          <div className="flex flex-col items-center justify-center gap-5 w-full max-w-sm bg-white rounded-2xl p-8 shadow-2xl ring-1 ring-primary/20">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="flex items-center justify-center w-14 h-14 rounded-full bg-primary/10">
+                <CheckCircle className="h-8 w-8 text-primary" />
+              </div>
+              <span className="font-semibold text-lg text-gray-900">QR code valide et correspond à la commande</span>
             </div>
             <Button
-              className="bg-primary text-primary-foreground mt-2 w-full max-w-xs rounded-xl"
+              className="bg-primary text-primary-foreground w-full max-w-xs rounded-xl h-12 text-base font-semibold mt-2"
               disabled={isConfirmingDelivery}
               onClick={async () => {
                 await handleConfirmDelivery();
               }}
             >
               {isConfirmingDelivery ? (
-                <span className="inline-flex items-center"><Loader2 className="mr-2 h-4 w-4 animate-spin local-spinner" /> Confirmation…</span>
+                <span className="inline-flex items-center"><Spinner size="sm" className="mr-2 local-spinner" /> Confirmation…</span>
               ) : (
                 'Confirmer la commande'
               )}
             </Button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {/* Bloc d'erreur reste inchangé */}
       {validationResult && validationResult.status === 'invalid' && (
         <div className="flex items-center gap-2 text-red-700 mt-6 bg-red-50 rounded-xl p-3 ring-1 ring-red-100">
