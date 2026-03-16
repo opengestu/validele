@@ -3510,6 +3510,15 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
+    const vendorPayoutMethodRaw = String(vendor.wallet_type || '').trim().toLowerCase();
+    const vendorPayoutMethod = ({
+      wave: 'Wave',
+      orange_money: 'Orange Money',
+      orange: 'Orange Money',
+      free_money: 'Free Money',
+      free: 'Free Money',
+      bank: 'Virement bancaire'
+    })[vendorPayoutMethodRaw] || (vendor.wallet_type || 'Non renseigné');
 
     // Toujours afficher le logo Validel sur la facture batch
     const validelLogoText = 'VALIDEL';
@@ -3562,6 +3571,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
             </tfoot>
           </table>
           <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
+          <p class="total-line">Moyen de paiement de réception vendeur (admin): <strong>${vendorPayoutMethod}</strong></p>
           <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
@@ -3721,6 +3731,15 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
     const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
+    const vendorPayoutMethodRaw = String(vendor.wallet_type || '').trim().toLowerCase();
+    const vendorPayoutMethod = ({
+      wave: 'Wave',
+      orange_money: 'Orange Money',
+      orange: 'Orange Money',
+      free_money: 'Free Money',
+      free: 'Free Money',
+      bank: 'Virement bancaire'
+    })[vendorPayoutMethodRaw] || (vendor.wallet_type || 'Non renseigné');
 
     // Toujours afficher le logo Validel sur la facture batch
     const validelLogoText = 'VALIDEL';
@@ -3771,6 +3790,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
             </tfoot>
           </table>
           <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
+          <p class="total-line">Moyen de paiement de réception vendeur (admin): <strong>${vendorPayoutMethod}</strong></p>
           <p class="signature">Signature: _________________________</p>
         </body>
       </html>`;
@@ -3838,6 +3858,15 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
     const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
+    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
+    const buyerPaymentMethod = ({
+      wave: 'Wave',
+      orange_money: 'Orange Money',
+      orange: 'Orange Money',
+      card: 'Carte bancaire',
+      cash: 'Paiement cash',
+      wallet: 'Portefeuille'
+    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
 
     const html = `<!doctype html>
       <html>
@@ -3872,6 +3901,7 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
+          <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre vente !</p>
         </body>
       </html>`;
@@ -3938,6 +3968,15 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
     const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
+    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
+    const buyerPaymentMethod = ({
+      wave: 'Wave',
+      orange_money: 'Orange Money',
+      orange: 'Orange Money',
+      card: 'Carte bancaire',
+      cash: 'Paiement cash',
+      wallet: 'Portefeuille'
+    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
 
     const html = `<!doctype html>
       <html>
@@ -3972,6 +4011,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
+          <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre achat !</p>
         </body>
       </html>`;
@@ -7104,7 +7144,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     // First fetch the order
     const { data: order, error } = await sb
       .from('orders')
-      .select('id, order_code, quantity, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
+      .select('id, order_code, quantity, total_amount, payment_method, created_at, buyer_id, vendor_id, product_id, delivery_address')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -7158,6 +7198,15 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     const quantity = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const totalGross = Number(order.total_amount || 0);
     const unitPrice = Number(product?.price) || (quantity ? Math.round(totalGross / quantity) : totalGross);
+    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
+    const buyerPaymentMethod = ({
+      wave: 'Wave',
+      orange_money: 'Orange Money',
+      orange: 'Orange Money',
+      card: 'Carte bancaire',
+      cash: 'Paiement cash',
+      wallet: 'Portefeuille'
+    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
     const rows = [{ product_name: productName, unit_price: unitPrice, quantity, gross: unitPrice * quantity }];
 
     const html = `<!doctype html>
@@ -7196,6 +7245,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
       </tfoot>
     </table>
     <p><strong>Adresse livraison:</strong> ${finalAddress}</p>
+    <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
     <p>Merci pour votre commande.</p>
   </body>
 </html>`;
