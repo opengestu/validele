@@ -7148,10 +7148,14 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     // Normalize delivery_address to buyer profile address when available
     const finalAddress = (buyer && buyer.address) ? buyer.address : (order.delivery_address || 'Adresse à définir');
     const vendorName = vendor?.company_name || vendor?.full_name || 'Vendeur inconnu';
+    const shopName = vendor?.company_name || vendor?.full_name || 'Boutique';
+    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const buyerName = buyer?.full_name || 'Acheteur inconnu';
     const productName = product?.name || 'Produit';
 
-    const quantity = Math.max(1, Number(order.quantity) || 1);
+    const rawQty = Number(order.quantity);
+    const fallbackQty = Number(product?.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
+    const quantity = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
     const totalGross = Number(order.total_amount || 0);
     const unitPrice = Number(product?.price) || (quantity ? Math.round(totalGross / quantity) : totalGross);
     const rows = [{ product_name: productName, unit_price: unitPrice, quantity, gross: unitPrice * quantity }];
@@ -7161,10 +7165,23 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
   <head>
     <meta charset="utf-8" />
     <title>Facture de la commande</title>
-    <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
+    <style>
+      body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
+      .header{display:flex; align-items:center; gap:12px; margin-bottom:10px;}
+      .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
+      table{width:100%; border-collapse:collapse}
+      th,td{border:1px solid #ddd;padding:8px;text-align:left}
+      th{background:#f5f5f5}
+    </style>
   </head>
   <body>
-    <h2>Facture de la commande</h2>
+    <div class="header">
+      <div class="avatar">${shopInitials}</div>
+      <div>
+        <h2 style="margin:0">Facture de la commande</h2>
+        <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
+      </div>
+    </div>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
     <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
