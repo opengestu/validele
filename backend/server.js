@@ -7179,7 +7179,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
       <div class="avatar">${shopInitials}</div>
       <div>
         <h2 style="margin:0">Facture de la commande</h2>
-        <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
+        <p style="margin:2px 0 0 0"><strong>Boutique/Entreprise:</strong> ${shopName}</p>
       </div>
     </div>
     <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
