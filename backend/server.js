@@ -4674,6 +4674,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
           .from('orders')
           .update({
             status: 'cancelled',
+            previous_status: order.status,
             cancelled_at: new Date().toISOString(),
             cancellation_reason: reason || 'Demande de remboursement par le client'
           })
@@ -4703,6 +4704,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
         .from('orders')
         .update({
           status: 'cancelled',
+          previous_status: order.status,
           cancelled_at: new Date().toISOString(),
           cancellation_reason: reason || 'Demande de remboursement par le client'
         })
@@ -5034,7 +5036,7 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
     // 1) Récupérer la demande
     const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
-      .select('id, status')
+      .select('id, status, order_id')
       .eq('id', refundId)
       .single();
 
@@ -5069,6 +5071,43 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
         success: false,
         error: 'Erreur lors du rejet de la demande'
       });
+    }
+
+    // 3) Restaurer le statut de commande précédent (avant annulation), si possible.
+    if (refundRequest.order_id) {
+      const { data: orderRow, error: orderFetchError } = await supabaseAdmin
+        .from('orders')
+        .select('id, status, previous_status')
+        .eq('id', refundRequest.order_id)
+        .single();
+
+      if (orderFetchError) {
+        console.error('[REFUND] Erreur récupération commande pour restauration:', orderFetchError);
+      } else if (orderRow && orderRow.status === 'cancelled') {
+        const targetStatus = orderRow.previous_status || 'paid';
+        const { error: restoreOrderError } = await supabaseAdmin
+          .from('orders')
+          .update({
+            status: targetStatus,
+            previous_status: null,
+            cancelled_at: null,
+            cancellation_reason: null
+          })
+          .eq('id', refundRequest.order_id);
+
+        if (restoreOrderError) {
+          console.error('[REFUND] Erreur restauration statut commande:', restoreOrderError);
+          return res.status(500).json({
+            success: false,
+            error: 'Demande rejetée, mais impossible de restaurer le statut de la commande'
+          });
+        }
+
+        console.log('[REFUND] Statut commande restauré après rejet:', {
+          order_id: refundRequest.order_id,
+          restored_to: targetStatus
+        });
+      }
     }
 
     console.log('[REFUND] Demande rejetée:', refundId);
