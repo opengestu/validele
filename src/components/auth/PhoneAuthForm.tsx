@@ -1299,13 +1299,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
           {/* PIN oublié + Changer de compte — côte à côte */}
           {step === 'login-pin' && (
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 14, justifyContent: 'center', alignItems: 'center', marginTop: 6, marginBottom: 8 }}>
               <button
                 type="button"
                 onClick={() => handleForgotPin()}
                 disabled={!formData.phone || loading}
-                className="text-sm font-medium hover:underline px-3 py-2 rounded-xl transition-opacity disabled:opacity-40"
-                style={{ color: 'hsl(var(--primary))', background: 'rgba(0,0,0,0.04)' }}
+                className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
+                style={{ color: '#111827', background: 'transparent' }}
               >
                 PIN oublié ?
               </button>
@@ -1318,8 +1318,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   setExistingProfile(null);
                 }}
                 disabled={loading}
-                className="text-sm font-medium hover:underline px-3 py-2 rounded-xl transition-opacity disabled:opacity-40"
-                style={{ color: 'hsl(var(--primary))', background: 'rgba(0,0,0,0.04)' }}
+                className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
+                style={{ color: '#111827', background: 'transparent' }}
               >
                 Changer de compte
               </button>

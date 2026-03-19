@@ -8,7 +8,10 @@ import { PhoneAuthForm } from './auth/PhoneAuthForm';
 
 const AuthPage = () => {
   const navigate = useNavigate();
+  const searchParams = new URLSearchParams(window.location.search);
   const { user, userProfile, loading: authLoading } = useAuth();
+  const initialPhone = searchParams.get('phone') || undefined;
+  const startResetPin = searchParams.get('resetPin') === '1';
 
   const [authStep, setAuthStep] = React.useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
 
@@ -57,7 +60,12 @@ const AuthPage = () => {
       )}
 
       <div className="w-full flex items-center justify-center mt-0 mb-2">
-        <PhoneAuthForm onStepChange={setAuthStep} showContinue />
+        <PhoneAuthForm
+          onStepChange={setAuthStep}
+          showContinue
+          initialPhone={initialPhone}
+          startResetPin={startResetPin}
+        />
       </div>
     </div>
   );

@@ -3525,18 +3525,14 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
+    const batchDateFr = batchDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
     // Simple HTML invoice (grouped by product with real quantity)
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture de paiement du ${capitalizedDate}</title>
+          <title>Facture de paiement du ${batchDateFr}</title>
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
             .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
@@ -3557,7 +3553,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
             <div class="vendor-info">
               <h2>${vendor.full_name || ''}</h2>
               <p>${vendor.phone || ''}</p>
-              <p>Facture de paiement — ${capitalizedDate}</p>
+              <p>Facture de paiement — ${batchDateFr}</p>
             </div>
           </div>
           <h3>Détails des ventes</h3>
@@ -3746,16 +3742,13 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
+    const batchDateFr = batchDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture de paiement du ${capitalizedDate}</title>
+          <title>Facture de paiement du ${batchDateFr}</title>
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
             .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
@@ -3776,7 +3769,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
             <div class="vendor-info">
               <h2>${vendor.full_name || ''}</h2>
               <p>${vendor.phone || ''}</p>
-              <p>Facture de paiement — ${capitalizedDate}</p>
+              <p>Facture de paiement — ${batchDateFr}</p>
             </div>
           </div>
           <h3>Détails des ventes</h3>
@@ -3795,7 +3788,7 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
         </body>
       </html>`;
 
-    const filename = `facture-paiement-${capitalizedDate.replace(/\s/g, '-')}.html`;
+    const filename = `facture-paiement-${batchDateFr.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -3847,10 +3840,7 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
     const shopName = vendor.company_name || vendor.full_name || 'Boutique';
     const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
-    const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
+    const orderDateFr = orderDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
     // Calculs quantité / prix unitaire / total ligne
     const rawQty = Number(order.quantity);
@@ -3872,7 +3862,7 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture commande du ${capitalizedDate}</title>
+          <title>Facture commande du ${orderDateFr}</title>
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
             .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
@@ -3886,12 +3876,12 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
           <div class="header">
             <div class="avatar">${shopInitials}</div>
             <div>
-              <h2 style="margin:0">Facture de commande du ${capitalizedDate}</h2>
+              <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de commande</h3>
               <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
             </div>
           </div>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
+          <p><strong>Date:</strong> ${orderDateFr}</p>
           <p><strong>Client:</strong> ${buyer.full_name || ''} (${buyer.phone || ''})</p>
           <h3>Détails du produit</h3>
           <table>
@@ -3906,7 +3896,7 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
         </body>
       </html>`;
 
-    const filename = `facture-commande-${capitalizedDate.replace(/\s/g, '-')}.html`;
+    const filename = `facture-commande-${orderDateFr.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -3957,10 +3947,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
     const shopName = vendor.company_name || vendor.full_name || 'Boutique';
     const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
-    const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
-      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
-    });
+    const orderDateFr = orderDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
     // Calculs quantité / prix unitaire / total ligne
     const rawQty = Number(order.quantity);
@@ -3982,7 +3969,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture commande du ${capitalizedDate}</title>
+          <title>Facture commande du ${orderDateFr}</title>
           <style>
             body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
             .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
@@ -3996,12 +3983,12 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
           <div class="header">
             <div class="avatar">${shopInitials}</div>
             <div>
-              <h2 style="margin:0">Facture de commande du ${capitalizedDate}</h2>
+              <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de commande</h3>
               <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
             </div>
           </div>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
+          <p><strong>Date:</strong> ${orderDateFr}</p>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
           <h3>Détails du produit</h3>
           <table>
@@ -4016,7 +4003,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
         </body>
       </html>`;
 
-    const filename = `facture-commande-${capitalizedDate.replace(/\s/g, '-')}.html`;
+    const filename = `facture-commande-${orderDateFr.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -5037,7 +5024,7 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
     const refundId = req.params.id;
     const { reason } = req.body;
 
-    if (!reason) {
+    if (!reason || !String(reason).trim()) {
       return res.status(400).json({
         success: false,
         error: 'Raison du rejet requise'
@@ -5071,8 +5058,8 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
       .update({
         status: 'rejected',
         reviewed_at: new Date().toISOString(),
-        reviewed_by: req.user?.id || 'admin',
-        rejection_reason: reason
+        reviewed_by: req.adminUser?.id || req.user?.id || 'admin',
+        rejection_reason: String(reason).trim()
       })
       .eq('id', refundId);
 
@@ -7209,6 +7196,8 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
     const rows = [{ product_name: productName, unit_price: unitPrice, quantity, gross: unitPrice * quantity }];
 
+    const orderDateFr = new Date(order.created_at || Date.now()).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+
     const html = `<!doctype html>
 <html>
   <head>
@@ -7227,11 +7216,11 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     <div class="header">
       <div class="avatar">${shopInitials}</div>
       <div>
-        <h2 style="margin:0">Facture de la commande</h2>
+        <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de la commande</h3>
         <p style="margin:2px 0 0 0"><strong>Boutique/Entreprise:</strong> ${shopName}</p>
       </div>
     </div>
-    <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
+    <p><strong>Date:</strong> ${orderDateFr}</p>
     <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
     <h3>Détails</h3>

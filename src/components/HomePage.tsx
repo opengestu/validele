@@ -1,5 +1,4 @@
 import React from "react";
-import { Spinner } from "@/components/ui/spinner";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, CreditCard, QrCode, ShieldCheck } from "lucide-react";
 
@@ -44,7 +43,14 @@ export default function HomePage() {
   const [api, setApi] = React.useState<CarouselApi>();
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const lastIndex = SLIDES.length - 1;
-  const [continueLoading, setContinueLoading] = React.useState(false);
+
+  const onboardingSeen = React.useMemo(() => {
+    try {
+      return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }, []);
 
   React.useEffect(() => {
     // Si connecté, ne jamais renvoyer vers /auth depuis la home
@@ -55,11 +61,15 @@ export default function HomePage() {
       return;
     }
 
-    const seen = localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    if (seen === "1") {
+    if (onboardingSeen) {
       navigate("/auth", { replace: true });
     }
-  }, [authLoading, navigate, user, userProfile?.role]);
+  }, [authLoading, navigate, onboardingSeen, user, userProfile?.role]);
+
+  // Le splash HTML global couvre le chargement initial, on évite un 2e loader React.
+  if (user || onboardingSeen) {
+    return null;
+  }
 
   React.useEffect(() => {
     if (!api) return;
@@ -76,12 +86,8 @@ export default function HomePage() {
   }, [api]);
 
   const handleContinue = () => {
-    setContinueLoading(true);
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
-    // Small delay to ensure spinner is visible before navigation
-    setTimeout(() => {
-      navigate("/auth", { replace: true });
-    }, 100);
+    navigate("/auth", { replace: true });
   };
 
   return (
@@ -166,9 +172,7 @@ export default function HomePage() {
                       <Button
                         onClick={handleContinue}
                         className="gap-2 transition-transform motion-reduce:transition-none hover:translate-y-[-1px] active:translate-y-0"
-                        disabled={continueLoading}
                       >
-                        {continueLoading ? <Spinner size="sm" className="mr-2" hideWhenGlobal={false} /> : null}
                         Continuer
                         <ArrowRight className="h-4 w-4" />
                       </Button>

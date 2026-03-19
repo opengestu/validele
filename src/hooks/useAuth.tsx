@@ -598,7 +598,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       localStorage.removeItem('sms_auth_session');
       localStorage.removeItem(SUPABASE_SESSION_KEY);
       localStorage.removeItem(PROFILE_CACHE_KEY);
-      
+      // Nettoyer les clés de pin-reauth pour éviter une boucle après reconnexion
+      localStorage.removeItem('reauth_required');
+      localStorage.removeItem('reauth_return_path');
+      localStorage.removeItem('app_backgrounded_at');
+
       // Déconnecter aussi de Supabase Auth (pour les utilisateurs email)
       await supabase.auth.signOut();
       setUserProfile(null);

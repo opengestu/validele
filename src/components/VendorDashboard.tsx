@@ -365,6 +365,7 @@ const VendorDashboard = () => {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [togglingProductId, setTogglingProductId] = useState<string | null>(null);
   // Profile states
   const [userProfile, setUserProfile] = useState<{
     full_name?: string;
@@ -662,20 +663,9 @@ const VendorDashboard = () => {
         try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
         setProducts(mappedData);
       } else {
-        // Empty result: try using recent cache (<5m) and schedule a quick retry
-        try {
-          const raw = localStorage.getItem(`cached_products_${caller.id}`);
-          if (raw) {
-            const parsed = JSON.parse(raw) as Product[];
-            // no ts on old cache -> accept it
-            setProducts(parsed);
-          } else {
-            setProducts([]);
-          }
-        } catch (e) {
-          console.warn('[VendorDashboard] cache error while handling empty backend products', e);
-          setProducts([]);
-        }
+        // If backend says no products, trust server state and clear stale cache.
+        try { localStorage.removeItem(`cached_products_${caller.id}`); } catch (e) { /* ignore */ }
+        setProducts([]);
       }
     } catch (err) {
       console.error('[VendorDashboard] fetchProducts error', err);
@@ -691,6 +681,103 @@ const VendorDashboard = () => {
       toast({ title: 'Erreur', description: 'Impossible de charger les produits', variant: 'destructive' });
     }
   }, [user, smsUser, toast]);
+
+  const handleToggleProductAvailability = async (product: Product) => {
+    const caller = smsUser || user;
+    if (!caller?.id) return;
+
+    const nextAvailability = !Boolean(product.is_available);
+    setTogglingProductId(product.id);
+
+    try {
+      const isDevVendor = Boolean(smsUser && String(caller.id).startsWith('dev-'));
+      if (isDevVendor) {
+        const applyToggle = (arr: Product[]) =>
+          (arr || []).map((p) => (p.id === product.id ? { ...p, is_available: nextAvailability } : p));
+
+        setProducts((prev) => applyToggle(prev));
+
+        try {
+          const devRaw = localStorage.getItem('dev_products');
+          const devArr = devRaw ? (JSON.parse(devRaw) as Product[]) : [];
+          localStorage.setItem('dev_products', JSON.stringify(applyToggle(devArr)));
+        } catch (e) {
+          console.warn('[VendorDashboard] dev cache update failed', e);
+        }
+
+        try {
+          const cacheKey = `cached_products_${caller.id}`;
+          const cacheRaw = localStorage.getItem(cacheKey);
+          const cacheArr = cacheRaw ? (JSON.parse(cacheRaw) as Product[]) : [];
+          localStorage.setItem(cacheKey, JSON.stringify(applyToggle(cacheArr)));
+        } catch (e) {
+          console.warn('[VendorDashboard] cached products update failed', e);
+        }
+
+        toast({
+          title: 'Succès',
+          description: nextAvailability ? 'Produit activé' : 'Produit désactivé'
+        });
+        return;
+      }
+
+      const smsSessionStr = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
+      if (smsSessionStr) {
+        const sms = JSON.parse(smsSessionStr);
+        const token = sms.access_token;
+        if (!token) throw new Error('Token d\'authentification manquant. Veuillez vous reconnecter.');
+
+        const resp = await fetch(apiUrl('/api/vendor/update-product'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({
+            vendor_id: sms.profileId,
+            product_id: product.id,
+            updates: { is_available: nextAvailability }
+          })
+        });
+
+        const json = await resp.json().catch(() => null);
+        if (!resp.ok || !json || !json.success) {
+          throw new Error(json?.error || 'Erreur lors du changement de statut produit');
+        }
+      } else {
+        const { error } = await supabase
+          .from('products')
+          .update({ is_available: nextAvailability })
+          .eq('id', product.id);
+        if (error) throw error;
+      }
+
+      setProducts((prev) =>
+        (prev || []).map((p) => (p.id === product.id ? { ...p, is_available: nextAvailability } : p))
+      );
+      try {
+        const cacheKey = `cached_products_${caller.id}`;
+        const cacheRaw = localStorage.getItem(cacheKey);
+        const cacheArr = cacheRaw ? (JSON.parse(cacheRaw) as Product[]) : products;
+        const updatedCache = (cacheArr || []).map((p) => (p.id === product.id ? { ...p, is_available: nextAvailability } : p));
+        localStorage.setItem(cacheKey, JSON.stringify(updatedCache));
+      } catch (e) {
+        console.warn('[VendorDashboard] cache update after toggle failed', e);
+      }
+
+      toast({
+        title: 'Succès',
+        description: nextAvailability ? 'Produit activé' : 'Produit désactivé'
+      });
+    } catch (error) {
+      console.error('handleToggleProductAvailability error:', error);
+      toast({
+        title: 'Erreur',
+        description: (error as any)?.message || 'Impossible de changer le statut du produit',
+        variant: 'destructive'
+      });
+    } finally {
+      setTogglingProductId(null);
+    }
+  };
+
   const fetchTransactions = useCallback(async () => {
     const caller = smsUser || user;
     if (!caller) return;
@@ -1236,6 +1323,26 @@ const VendorDashboard = () => {
           body: JSON.stringify({ vendor_id: sms.profileId, product_id: deleteProductId })
         });
         const json = await resp.json().catch(() => null);
+        if (resp.status === 404) {
+          // Produit déjà absent côté serveur (souvent cache local obsolète): nettoyer la liste locale.
+          setProducts((prev) => (prev || []).filter((p) => p.id !== deleteProductId));
+          try {
+            const cacheKey = `cached_products_${sms.profileId}`;
+            const raw = localStorage.getItem(cacheKey);
+            if (raw) {
+              const parsed = JSON.parse(raw) as Product[];
+              const next = (parsed || []).filter((p) => p.id !== deleteProductId);
+              if (next.length === 0) localStorage.removeItem(cacheKey);
+              else localStorage.setItem(cacheKey, JSON.stringify(next));
+            }
+          } catch {
+            // ignore cache cleanup errors
+          }
+          toast({ title: 'Information', description: 'Produit déjà supprimé côté serveur. Liste mise à jour.' });
+          setDeleteDialogOpen(false);
+          setDeleteProductId(null);
+          return;
+        }
         if (!resp.ok || !json || !json.success) {
           const errMsg = json?.error || 'Erreur lors de la suppression du produit (backend)';
           throw new Error(errMsg);
@@ -1478,16 +1585,43 @@ const VendorDashboard = () => {
             {products.map((product) => (
               <Card
                 key={product.id}
-                className="hover:shadow-lg transition-shadow h-fit"
+                className={`hover:shadow-lg transition-shadow h-fit ${!product.is_available ? 'opacity-70' : ''}`}
                 style={{ maxWidth: "100%", boxSizing: "border-box" }} // Empêche le débordement
               >
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-lg">{product.name}</CardTitle>
-                    <StatusBadge
-                      status={product.is_available ? 'active' : 'inactive'}
-                      size="sm"
-                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className={`relative h-7 w-16 rounded-full border-0 px-0 text-[10px] font-bold text-white ${
+                        product.is_available
+                          ? 'bg-gradient-to-r from-emerald-700 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600'
+                          : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
+                      }`}
+                      disabled={togglingProductId === product.id}
+                      onClick={() => handleToggleProductAvailability(product)}
+                      aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
+                      aria-pressed={product.is_available}
+                      title={product.is_available ? 'Actif (cliquer pour inactif)' : 'Inactif (cliquer pour actif)'}
+                    >
+                      {togglingProductId === product.id ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Spinner size="sm" className="h-3 w-3" hideWhenGlobal={false} />
+                          {product.is_available ? 'Actif' : 'Inactif'}
+                        </span>
+                      ) : product.is_available ? (
+                        <>
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Actif</span>
+                          <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+                        </>
+                      ) : (
+                        <>
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Inactif</span>
+                          <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -1521,11 +1655,11 @@ const VendorDashboard = () => {
                       </span>
                     </div>
                   </div>
-                  <div className="flex space-x-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      className="flex-1"
+                      className="w-full"
                       onClick={() => {
                         setEditProduct({
                           ...product,
@@ -1540,6 +1674,7 @@ const VendorDashboard = () => {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="w-full"
                       onClick={() => {
                         setDeleteProductId(product.id);
                         setDeleteDialogOpen(true);
@@ -1991,7 +2126,7 @@ const VendorDashboard = () => {
                       }}
                     >
                       <CardContent className="p-4">
-                        <div className="flex justify-between items-start">
+                        <div className="flex justify-between items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <h3
                               className="font-medium truncate"
@@ -2027,8 +2162,39 @@ const VendorDashboard = () => {
                               <span className="text-sm font-medium text-black whitespace-nowrap">{product.price} CFA</span>
                             </div>
                           </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className={`relative h-7 w-16 rounded-full border-0 px-0 text-[10px] flex-shrink-0 font-bold text-white ${
+                              product.is_available
+                                ? 'bg-gradient-to-r from-emerald-700 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600'
+                                : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
+                            }`}
+                            disabled={togglingProductId === product.id}
+                            onClick={() => handleToggleProductAvailability(product)}
+                            aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
+                            aria-pressed={product.is_available}
+                            title={product.is_available ? 'Actif (cliquer pour inactif)' : 'Inactif (cliquer pour actif)'}
+                          >
+                            {togglingProductId === product.id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Spinner size="sm" className="h-3 w-3" hideWhenGlobal={false} />
+                                {product.is_available ? 'Actif' : 'Inactif'}
+                              </span>
+                            ) : product.is_available ? (
+                              <>
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Actif</span>
+                                <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+                              </>
+                            ) : (
+                              <>
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Inactif</span>
+                                <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+                              </>
+                            )}
+                          </Button>
                         </div>
-                        {/* Boutons en bas côte-à-côte sur mobile */}
+                        {/* Boutons actions mobile */}
                         <div className="mt-4 flex gap-2">
                           <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-sm">
                             Modifier
@@ -2409,15 +2575,12 @@ const VendorDashboard = () => {
       </main>
       {/* Invoice Viewer Modal (in-app) */}
       <Dialog open={invoiceViewerOpen} onOpenChange={setInvoiceViewerOpen}>
-        <DialogContent className={`max-w-4xl ${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'max-w-full w-full h-screen p-0' : ''}`}>
+        <DialogContent hideCloseButton className={`max-w-4xl ${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'max-w-full w-full h-screen p-0' : ''}`}>
           {/* Mobile layout: make modal fullscreen with stacked header + iframe */}
           <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'h-full flex flex-col' : ''}`}>
-            <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex items-center justify-between p-4 border-b' : ''}`}>
-              <DialogHeader className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'p-0 m-0' : ''}`}>
-                <DialogTitle className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'text-lg' : ''}`}>{invoiceViewerTitle}</DialogTitle>
-              </DialogHeader>
+            <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex items-center justify-center p-4 border-b' : ''}`}>
               {typeof window !== 'undefined' && window.innerWidth <= 640 && (
-                <div className="flex gap-2 ml-2">
+                <div className="flex gap-2">
                   <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
@@ -2430,7 +2593,7 @@ const VendorDashboard = () => {
                 <div>
                   {/* Desktop: buttons above iframe; Mobile: buttons are in header */}
                   {!(typeof window !== 'undefined' && window.innerWidth <= 640) && (
-                    <div className="flex justify-end gap-2 mb-2">
+                    <div className="flex justify-center gap-2 mb-2">
                       <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">Télécharger</Button>
                       <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                     </div>

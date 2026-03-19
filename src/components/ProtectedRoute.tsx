@@ -4,6 +4,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
+import { LAST_ACTIVITY_KEY, REAUTH_REQUIRED_KEY, REAUTH_RETURN_PATH_KEY } from '@/components/SessionTimeoutManager';
 
 
 interface ProtectedRouteProps {
@@ -15,6 +16,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, userProfile, loading, isOnline, refreshProfile } = useAuth();
   const { toast } = useToast();
   const [retrying, setRetrying] = React.useState(false);
+  const REAUTH_BACKGROUND_THRESHOLD_MS = 2 * 60 * 1000;
 
   async function handleRetry() {
     try {
@@ -56,6 +58,36 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     } finally {
       setRetrying(false);
     }
+  }
+
+  // Verrou PIN prioritaire: vérifier AVANT le bypass loading pour empêcher
+  // toute apparition du dashboard pendant l'initialisation quand le PIN est requis.
+  if (typeof window !== 'undefined') {
+    const currentPath = window.location.pathname;
+    const isAdminPath = currentPath === '/admin' || currentPath.startsWith('/admin/');
+    const lockAlreadyRequired = localStorage.getItem(REAUTH_REQUIRED_KEY) === '1';
+    if (!lockAlreadyRequired && !isAdminPath && requiredRole !== 'admin') {
+      const now = Date.now();
+      const bgAtRaw = localStorage.getItem('app_backgrounded_at') || localStorage.getItem(LAST_ACTIVITY_KEY);
+      const bgAt = Number(bgAtRaw);
+      const hasSmsSession = !!localStorage.getItem('sms_auth_session');
+      const hasAuthenticatedContext = !!user || hasSmsSession;
+
+      if (hasAuthenticatedContext && Number.isFinite(bgAt) && now - bgAt >= REAUTH_BACKGROUND_THRESHOLD_MS) {
+        localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
+        localStorage.setItem(REAUTH_RETURN_PATH_KEY, window.location.pathname);
+      }
+    }
+  }
+
+  if (
+    typeof window !== 'undefined' &&
+    requiredRole !== 'admin' &&
+    window.location.pathname !== '/admin' &&
+    !window.location.pathname.startsWith('/admin/') &&
+    localStorage.getItem(REAUTH_REQUIRED_KEY) === '1'
+  ) {
+    return <Navigate to="/pin-reauth" replace />;
   }
 
   // Affichage de chargement - attendre que l'authentification soit prête
@@ -115,16 +147,6 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   if (!user) {
     return <Navigate to="/auth" replace />;
   }
-
-  // Autoriser l'accès même si le profil utilisateur n'est pas encore complet.
-  // Les pages protégées (dashboards) sont responsables de créer/compléter
-  // la ligne de profil dans la base de données et d'afficher un formulaire
-  // de complétion si nécessaire. Rediriger automatiquement vers /auth
-  // empêche l'accès immédiat après authentification (problème signalé).
-  // Si vous souhaitez forcer la complétion, implémentez une page dédiée
-  // de "profile setup" et redirigez explicitement vers celle-ci.
-  // (On continue si `userProfile` est absent ou `full_name` vide.)
-
 
   // Correction : si requiredRole est 'admin', on autorise l'accès même si userProfile n'est pas encore chargé,
   // mais on bloque explicitement l'accès aux autres rôles si userProfile est chargé et différent de 'admin'.

@@ -1,13 +1,18 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 
 // Durée minimum en arrière-plan avant de demander le PIN (en ms).
 // L'utilisateur ne verra PinReauth que s'il quitte l'app pendant >= ce délai.
 const BACKGROUND_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+// Mobile natif: délai aligné à 2 minutes.
+const NATIVE_BACKGROUND_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
 
 // Clé localStorage pour stocker la page de retour après re-auth
 const REAUTH_RETURN_PATH_KEY = 'reauth_return_path';
+const REAUTH_REQUIRED_KEY = 'reauth_required';
 // Clé localStorage pour stocker le timestamp de la dernière activité
 const LAST_ACTIVITY_KEY = 'last_activity_timestamp';
 // Clé pour le moment où l'app est passée en arrière-plan
@@ -29,7 +34,7 @@ const SessionTimeoutManager: React.FC = () => {
 
   // Pages qui ne doivent pas déclencher la re-auth
   const isExcludedPage = useCallback((path: string) => {
-    return path === '/auth' || path === '/pin-reauth' || path === '/';
+    return path === '/auth' || path === '/pin-reauth' || path === '/' || path === '/admin' || path === '/admin-login' || path.startsWith('/admin/');
   }, []);
 
   // Rediriger vers la page PIN
@@ -37,7 +42,9 @@ const SessionTimeoutManager: React.FC = () => {
     const currentPath = window.location.pathname;
     if (isExcludedPage(currentPath)) return;
 
+    localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
     localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentPath);
+    localStorage.removeItem('app_backgrounded_at'); // clean up background timestamp
     navigate('/pin-reauth', { replace: true });
   }, [navigate, isExcludedPage]);
 
@@ -49,68 +56,102 @@ const SessionTimeoutManager: React.FC = () => {
 
   // ---------- Détection arrière-plan / premier plan ----------
   useEffect(() => {
-    // Quand l'app passe en arrière-plan → enregistrer le timestamp.
-    // Quand l'app revient au premier plan → vérifier le temps écoulé.
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        // L'app part en arrière-plan
-        localStorage.setItem(BACKGROUNDED_AT_KEY, Date.now().toString());
-        return;
+    // Lire puis nettoyer le timestamp de background, et demander le PIN si nécessaire.
+    // Fallback: si BACKGROUNDED_AT_KEY n'existe pas (app tuée), utiliser LAST_ACTIVITY_KEY comme référence.
+    const evaluateBackgroundElapsed = (source: 'visibility' | 'focus' | 'native' | 'startup') => {
+      let bgAtRaw = localStorage.getItem(BACKGROUNDED_AT_KEY);
+      let usedFallback = false;
+
+      if (!bgAtRaw) {
+        // Fallback pour app tuée: utiliser le timestamp de dernière activité
+        bgAtRaw = localStorage.getItem(LAST_ACTIVITY_KEY);
+        usedFallback = !!bgAtRaw;
       }
 
-      // document.visibilityState === 'visible' → l'app revient
+      if (!bgAtRaw) return;
+
+      // Toujours nettoyer BACKGROUNDED_AT_KEY pour éviter qu'un timestamp ancien retrigger plus tard.
+      localStorage.removeItem(BACKGROUNDED_AT_KEY);
+
+      const bgAt = Number(bgAtRaw);
+      if (!Number.isFinite(bgAt)) return;
+
+      const elapsed = Date.now() - bgAt;
       if (!isAuthenticatedRef.current) return;
       if (isExcludedPage(window.location.pathname)) return;
 
-      const bgAt = localStorage.getItem(BACKGROUNDED_AT_KEY);
-      if (!bgAt) return;
+      const requiredThresholdMs = Capacitor.isNativePlatform() ? NATIVE_BACKGROUND_THRESHOLD_MS : BACKGROUND_THRESHOLD_MS;
 
-      const elapsed = Date.now() - parseInt(bgAt, 10);
-      localStorage.removeItem(BACKGROUNDED_AT_KEY);
-
-      if (elapsed >= BACKGROUND_THRESHOLD_MS) {
-        console.info(`[SessionTimeout] App en arrière-plan ${Math.round(elapsed / 1000)}s → PIN requis`);
+      if (elapsed >= requiredThresholdMs) {
+        console.info(`[SessionTimeout] (${source}${usedFallback ? '+fallback' : ''}) arrière-plan ${Math.round(elapsed / 1000)}s -> PIN requis`);
         redirectToPinReauth();
       }
+    };
+
+    // Quand l'app passe en arrière-plan -> enregistrer le timestamp.
+    // Quand l'app revient au premier plan -> vérifier le temps écoulé.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // L'app part en arrière-plan
+        const now = Date.now().toString();
+        localStorage.setItem(BACKGROUNDED_AT_KEY, now);
+        localStorage.setItem(LAST_ACTIVITY_KEY, now); // aussi mettre à jour la dernière activité
+        return;
+      }
+
+      // document.visibilityState === 'visible' -> l'app revient
+      evaluateBackgroundElapsed('visibility');
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Même logique sur focus (certains appareils ne déclenchent pas visibilitychange)
     const handleFocus = () => {
-      if (!isAuthenticatedRef.current) return;
-      if (isExcludedPage(window.location.pathname)) return;
-
-      const bgAt = localStorage.getItem(BACKGROUNDED_AT_KEY);
-      if (!bgAt) return;
-
-      const elapsed = Date.now() - parseInt(bgAt, 10);
-      localStorage.removeItem(BACKGROUNDED_AT_KEY);
-
-      if (elapsed >= BACKGROUND_THRESHOLD_MS) {
-        console.info(`[SessionTimeout] Focus regagné après ${Math.round(elapsed / 1000)}s → PIN requis`);
-        redirectToPinReauth();
-      }
+      evaluateBackgroundElapsed('focus');
     };
 
     window.addEventListener('focus', handleFocus);
 
-    // Au montage, vérifier si l'app a été tuée puis relancée avec un timestamp ancien
-    const bgAt = localStorage.getItem(BACKGROUNDED_AT_KEY);
-    if (bgAt) {
-      const elapsed = Date.now() - parseInt(bgAt, 10);
-      if (elapsed >= BACKGROUND_THRESHOLD_MS && isAuthenticatedRef.current && !isExcludedPage(window.location.pathname)) {
-        localStorage.removeItem(BACKGROUNDED_AT_KEY);
-        redirectToPinReauth();
-      } else {
-        // L'app est revenue rapidement, nettoyer
-        localStorage.removeItem(BACKGROUNDED_AT_KEY);
-      }
+    // Mobile natif: utiliser le cycle de vie Capacitor pour fiabiliser la sécurité PIN.
+    let nativeSub: { remove: () => Promise<void> } | null = null;
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) {
+          const now = Date.now().toString();
+          localStorage.setItem(BACKGROUNDED_AT_KEY, now);
+          localStorage.setItem(LAST_ACTIVITY_KEY, now); // aussi mettre à jour la dernière activité
+          return;
+        }
+        evaluateBackgroundElapsed('native');
+      }).then((sub) => {
+        nativeSub = sub;
+      }).catch(() => {
+        // noop
+      });
     }
+
+    // Heartbeat: garder LAST_ACTIVITY_KEY frais pour que le redémarrage après app tuée
+    // sache quand l'app était active pour la dernière fois.
+    // Cela assure que même si appStateChange ne se déclenche pas (app force-killed),
+    // on a un timestamp permettant de calculer le temps écoulé.
+    const heartbeatInterval = setInterval(() => {
+      if (isAuthenticatedRef.current && document.visibilityState === 'visible') {
+        localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
+      }
+    }, 30 * 1000); // toutes les 30 secondes
+
+    // Au montage, gérer un éventuel timestamp conservé après kill/restart.
+    evaluateBackgroundElapsed('startup');
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
+      clearInterval(heartbeatInterval);
+      if (nativeSub) {
+        nativeSub.remove().catch(() => {
+          // noop
+        });
+      }
     };
   }, [redirectToPinReauth, isExcludedPage]);
 
@@ -125,6 +166,7 @@ const SessionTimeoutManager: React.FC = () => {
         const currentPath = window.location.pathname;
         if (!isExcludedPage(currentPath)) {
           console.warn('[SessionTimeout] 401 détecté, redirection vers PIN re-auth');
+          localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
           localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentPath);
           setTimeout(() => {
             navigate('/pin-reauth', { replace: true });
@@ -144,4 +186,4 @@ const SessionTimeoutManager: React.FC = () => {
 };
 
 export default SessionTimeoutManager;
-export { REAUTH_RETURN_PATH_KEY, LAST_ACTIVITY_KEY };
+export { REAUTH_RETURN_PATH_KEY, REAUTH_REQUIRED_KEY, LAST_ACTIVITY_KEY };

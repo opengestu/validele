@@ -1,4 +1,5 @@
 
+import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -24,7 +25,7 @@ const AdminRedirect: React.FC = () => {
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
 
-    if (loading) {
+  if (loading) {
     return null;
   }
 
@@ -35,6 +36,20 @@ const AuthRoute: React.FC = () => {
   }
 
   return <AuthPage />;
+};
+
+const AuthReadySignal: React.FC = () => {
+  const { loading } = useAuth();
+  const alreadySentRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!loading && !alreadySentRef.current) {
+      alreadySentRef.current = true;
+      window.dispatchEvent(new Event('app:auth-ready'));
+    }
+  }, [loading]);
+
+  return null;
 };
 
 import VendorDashboard from "@/components/VendorDashboard";
@@ -73,6 +88,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <AuthProvider>
+          <AuthReadySignal />
           <BrowserRouter
             future={{
               v7_startTransition: true,

@@ -4,7 +4,7 @@ import PinInput from './auth/PinInput';
 import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
-import { REAUTH_RETURN_PATH_KEY, LAST_ACTIVITY_KEY } from './SessionTimeoutManager';
+import { REAUTH_RETURN_PATH_KEY, REAUTH_REQUIRED_KEY, LAST_ACTIVITY_KEY } from './SessionTimeoutManager';
 import { useAuth } from '@/hooks/useAuth';
 import validelLogo from '@/assets/validel-logo.png';
 
@@ -87,6 +87,7 @@ const PinReauth: React.FC = () => {
         // Réinitialiser les compteurs d'activité
         localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
         localStorage.removeItem('app_backgrounded_at');
+        localStorage.removeItem(REAUTH_REQUIRED_KEY);
 
         toast({
           title: 'Session renouvelée',
@@ -128,10 +129,16 @@ const PinReauth: React.FC = () => {
 
   const handleLogout = async () => {
     localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+    localStorage.removeItem(REAUTH_REQUIRED_KEY);
     localStorage.removeItem(LAST_ACTIVITY_KEY);
     localStorage.removeItem('app_backgrounded_at');
     await signOut();
     navigate('/auth', { replace: true });
+  };
+
+  const handleForgotPin = () => {
+    const queryPhone = phone ? `&phone=${encodeURIComponent(phone)}` : '';
+    navigate(`/auth?resetPin=1${queryPhone}`, { replace: true });
   };
 
   if (!phone) {
@@ -187,8 +194,14 @@ const PinReauth: React.FC = () => {
         </div>
       )}
 
-      {/* Bouton changer de compte */}
-      <div className="mt-8">
+      {/* Actions secondaires */}
+      <div className="mt-8 flex items-center gap-4">
+        <button
+          onClick={handleForgotPin}
+          className="text-sm text-gray-500 hover:text-gray-700 underline transition-colors"
+        >
+          PIN oublié ?
+        </button>
         <button
           onClick={handleLogout}
           className="text-sm text-gray-400 hover:text-gray-600 underline transition-colors"

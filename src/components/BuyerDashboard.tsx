@@ -109,7 +109,7 @@ const BuyerDashboard = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const isOnline = useNetwork();
   // Polling guard to avoid overlapping fetches during periodic polling
   const pollingRef = React.useRef({ orders: false, transactions: false });
@@ -772,7 +772,6 @@ const BuyerDashboard = () => {
           profiles(full_name, company_name)
         `)
         .ilike('code', searchCode.trim())
-        .eq('is_available', true)
         .single();
 
       if (error) throw error;
@@ -792,10 +791,18 @@ const BuyerDashboard = () => {
       };
       setSearchResult(normalizedProduct);
       setSearchModalOpen(true);
-      toast({
-        title: "Produit trouvé",
-        description: `${normalizedProduct.name} - ${normalizedProduct.price.toLocaleString()} FCFA`,
-      });
+      if (normalizedProduct.is_available) {
+        toast({
+          title: "Produit trouvé",
+          description: `${normalizedProduct.name} - ${normalizedProduct.price.toLocaleString()} FCFA`,
+        });
+      } else {
+        toast({
+          title: "Produit inactif",
+          description: "Ce produit est actuellement inactif et ne peut pas être acheté.",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       setSearchResult(null);
       setSearchModalOpen(false);
@@ -924,6 +931,15 @@ const BuyerDashboard = () => {
   // Nouvelle version de handleCreateOrderAndShowPayment : tout se fait en un clic
   const handleCreateOrderAndShowPayment = async () => {
     if (!searchResult || !user) return;
+
+    if (!searchResult.is_available) {
+      toast({
+        title: 'Produit inactif',
+        description: 'Ce produit est désactivé par le vendeur et ne peut pas être acheté.',
+        variant: 'destructive',
+      });
+      return;
+    }
     
     // Vérifier la connexion internet
     if (!navigator.onLine) {
@@ -1771,10 +1787,10 @@ const BuyerDashboard = () => {
                     : orders.filter(order => order.status !== 'pending').slice(0, 5)
                   );
 
-                  if (ordersLoading) {
+                  if (loading || ordersLoading) {
                     return (
                       <div className="flex justify-center py-4">
-                        <Spinner size="sm" />
+                        <Spinner size="sm" className="h-8 w-8" />
                       </div>
                     );
                   }
@@ -2048,15 +2064,12 @@ const BuyerDashboard = () => {
 
       {/* Modal facture */}
       <Dialog open={invoiceViewerOpen} onOpenChange={setInvoiceViewerOpen}>
-        <DialogContent className="w-full max-w-4xl mx-4 sm:mx-auto max-h-[90vh] overflow-auto p-4 sm:p-6">
-          <DialogHeader>
-            <DialogTitle>{invoiceViewerTitle}</DialogTitle>
-          </DialogHeader>
+        <DialogContent hideCloseButton className="w-full max-w-4xl mx-4 sm:mx-auto max-h-[90vh] overflow-auto p-4 sm:p-6">
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {invoiceViewerLoading && <div className="flex justify-center py-8"><Spinner size="sm" /></div>}
             {!invoiceViewerLoading && invoiceViewerHtml && (
               <div>
-                <div className="flex justify-end gap-2 mb-2">
+                <div className="flex justify-center gap-2 mb-2">
                   <Button size="sm" onClick={downloadVisibleInvoice} className="bg-black text-white">Télécharger</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceViewerOpen(false)}>Fermer</Button>
                 </div>
@@ -2467,6 +2480,17 @@ const BuyerDashboard = () => {
                   <div className="flex-1">
                     <h3 className="text-2xl font-bold text-gray-900">{searchResult.name}</h3>
                     <p className="text-gray-600 mt-2">{searchResult.description}</p>
+                    <div className="mt-3">
+                      {searchResult.is_available ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
+                          Produit actif
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
+                          Produit inactif
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-gray-500 mt-1">
                       <span className="font-medium">Vendeur(se):</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
                     </p>
@@ -2484,9 +2508,9 @@ const BuyerDashboard = () => {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="h-10 w-10"
+                      className="h-10 w-10 bg-white text-gray-900 hover:bg-gray-50 active:bg-white focus-visible:ring-0 [-webkit-tap-highlight-color:transparent]"
                       onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
-                      disabled={purchaseQuantity <= 1}
+                      disabled={!searchResult.is_available || purchaseQuantity <= 1}
                       aria-label="Diminuer la quantité"
                     >
                       <Minus className="h-4 w-4" />
@@ -2501,6 +2525,7 @@ const BuyerDashboard = () => {
                         setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
                       }}
                       onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
+                      disabled={!searchResult.is_available}
                       className="w-24 h-12 text-center text-xl font-semibold md:h-10 md:text-lg"
                       style={{ fontSize: '20px' }}
                     />
@@ -2508,8 +2533,9 @@ const BuyerDashboard = () => {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="h-10 w-10"
+                      className="h-10 w-10 bg-white text-gray-900 hover:bg-gray-50 active:bg-white focus-visible:ring-0 [-webkit-tap-highlight-color:transparent]"
                       onClick={() => setPurchaseQuantity(q => q + 1)}
+                      disabled={!searchResult.is_available}
                       aria-label="Augmenter la quantité"
                     >
                       <Plus className="h-4 w-4" />
@@ -2529,11 +2555,14 @@ const BuyerDashboard = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
-                      onClick={() => setPaymentMethod('wave')}
+                      onClick={() => searchResult.is_available && setPaymentMethod('wave')}
+                      disabled={!searchResult.is_available}
                       className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                         paymentMethod === 'wave' 
                           ? 'border-black bg-black/5' 
                           : 'border-gray-200 hover:border-gray-300'
+                      } ${
+                        !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                     >
                       <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
@@ -2548,11 +2577,14 @@ const BuyerDashboard = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPaymentMethod('orange_money')}
+                      onClick={() => searchResult.is_available && setPaymentMethod('orange_money')}
+                      disabled={!searchResult.is_available}
                       className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                         paymentMethod === 'orange_money' 
                           ? 'border-orange-500 bg-orange-50' 
                           : 'border-gray-200 hover:border-gray-300'
+                      } ${
+                        !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                     >
                       <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
@@ -2587,7 +2619,7 @@ const BuyerDashboard = () => {
                 </Button>
                 <Button
                   onClick={handleCreateOrderAndShowPayment}
-                  disabled={processingPayment}
+                  disabled={processingPayment || !searchResult.is_available}
                   className={`flex-1 ${paymentMethod === 'wave' ? 'bg-black hover:bg-black/80 text-white' : 'bg-orange-600 hover:bg-orange-700'}`}
                 >
                   {processingPayment ? (
@@ -2595,6 +2627,8 @@ const BuyerDashboard = () => {
                       <Spinner size="sm" className="mr-2" />
                       Traitement...
                     </>
+                  ) : !searchResult.is_available ? (
+                    <>Produit inactif</>
                   ) : (
                     <>
                       Payer avec {paymentMethod === 'wave' ? 'Wave' : 'Orange Money'}

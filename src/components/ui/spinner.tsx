@@ -7,10 +7,10 @@ interface SpinnerProps {
 }
 
 const sizeClasses = {
-  sm: 'h-16 w-16',
-  md: 'h-20 w-20',
-  lg: 'h-28 w-28',
-  xl: 'h-36 w-36',
+  sm: 'h-12 w-12',
+  md: 'h-16 w-16',
+  lg: 'h-24 w-24',
+  xl: 'h-32 w-32',
 };
 
 export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: SpinnerProps) {

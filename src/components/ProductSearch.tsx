@@ -24,7 +24,6 @@ const ProductSearch = () => {
           profiles(full_name, company_name)
         `)
         .eq('code', searchCode.toLowerCase())
-        .eq('is_available', true)
         .single();
 
       if (error) throw error;
@@ -96,7 +95,9 @@ const ProductSearch = () => {
                   )}
                   <div className="flex items-center space-x-2">
                     <Shield className="h-5 w-5 text-green-600" />
-                    <span className="text-sm text-green-600 font-medium">Produit vérifié</span>
+                    <span className={`text-sm font-medium ${searchResult.is_available ? 'text-green-600' : 'text-red-600'}`}>
+                      {searchResult.is_available ? 'Produit vérifié' : 'Produit inactif'}
+                    </span>
                   </div>
                 </div>
 
@@ -112,7 +113,9 @@ const ProductSearch = () => {
                     </div>
                     <div className="flex justify-between">
                       <span className="font-medium text-gray-700">Disponibilité:</span>
-                      <span className="text-green-600 font-medium">En stock</span>
+                      <span className={`font-medium ${searchResult.is_available ? 'text-green-600' : 'text-red-600'}`}>
+                        {searchResult.is_available ? 'En stock' : 'Inactif'}
+                      </span>
                     </div>
                   </div>
                   
@@ -122,9 +125,12 @@ const ProductSearch = () => {
                     </p>
                     
                     <Link to="/buyer">
-                      <Button className="w-full btn-buyer text-lg py-3">
+                      <Button
+                        className="w-full btn-buyer text-lg py-3"
+                        disabled={!searchResult.is_available}
+                      >
                         <ShoppingCart className="h-5 w-5 mr-2" />
-                        Acheter maintenant
+                        {searchResult.is_available ? 'Acheter maintenant' : 'Produit inactif'}
                       </Button>
                     </Link>
                   </div>
