@@ -1574,7 +1574,7 @@ const VendorDashboard = () => {
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
-                className="bg-primary text-primary-foreground hover:bg-primary/90 text-white shadow-md flex-shrink-0 text-sm px-4 py-2"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-md flex-shrink-0 text-sm px-4 py-2"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Ajouter
@@ -1709,7 +1709,7 @@ const VendorDashboard = () => {
               <div className="mt-3">
                 <Button
                   onClick={() => setAddModalOpen(true)}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 text-white text-sm px-3 py-1"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm px-3 py-1"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Ajouter un produit
@@ -2105,7 +2105,7 @@ const VendorDashboard = () => {
                   {products.length > 0 && (
                     <Button
                       onClick={() => setAddModalOpen(true)}
-                      className="bg-primary text-primary-foreground hover:bg-primary/90 text-white shadow-md flex-shrink-0 text-xs px-3 py-2"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-md flex-shrink-0 text-xs px-3 py-2"
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       Ajouter
@@ -2226,7 +2226,7 @@ const VendorDashboard = () => {
                     <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                     <p className="text-sm">Commencez par ajouter un produit.</p>
                     <div className="mt-3">
-                      <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground hover:bg-primary/90 text-white text-sm px-3 py-1">
+                      <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm px-3 py-1">
                         <Plus className="h-4 w-4 mr-2" />
                         Ajouter un produit
                       </Button>
