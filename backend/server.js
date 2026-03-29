@@ -2842,8 +2842,19 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 
     if (!phone) return res.status(400).json({ success: false, error: 'Numéro vendeur non trouvé' });
 
+    // For orders that belong to a payout batch with commission, pay net (not gross).
+    const payoutAmountInfo = await resolveOrderPayoutAmount(report.order.id, report.order.total_amount, supabase);
+    const payoutAmount = payoutAmountInfo.amount;
+    console.log('[ADMIN] payout-order resolved amount:', {
+      orderId: report.order.id,
+      gross: report.order.total_amount,
+      payoutAmount,
+      source: payoutAmountInfo.source,
+      batch_id: payoutAmountInfo.batch_id || null
+    });
+
     // Execute payout via PixPay
-    const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
+    const result = await pixpaySendMoney({ amount: payoutAmount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
     console.log('[ADMIN] payout-order Pixpay response:', JSON.stringify(result, null, 2));
 
@@ -2864,7 +2875,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         transaction_id: result.transaction_id,
         provider: 'pixpay',
         order_id: report.order.id,
-        amount: report.order.total_amount,
+        amount: payoutAmount,
         phone,
         status: result.state || 'PENDING1',
         transaction_type: 'payout',
@@ -2887,7 +2898,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         if (vendorTokens && vendorTokens.length > 0) {
           const notif = getNotificationTemplate('PAYOUT_PROCESSING', {
             orderCode: report.order.order_code,
-            amount: report.order.total_amount,
+            amount: payoutAmount,
             orderId: report.order.id
           });
 
@@ -2909,6 +2920,45 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: String(error) });
   }
 });
+
+// Resolve payout amount for an order:
+// - Prefer latest payout_batch_items.net_amount when available (commission-aware)
+// - Fallback to gross order amount otherwise
+async function resolveOrderPayoutAmount(orderId, grossAmount, dbClient = null) {
+  const db = dbClient || supabase;
+  const gross = Number(grossAmount || 0);
+
+  try {
+    const { data: items, error } = await db
+      .from('payout_batch_items')
+      .select('id, batch_id, amount, commission_amount, commission_pct, net_amount, created_at')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!error && items && items.length > 0) {
+      const it = items[0];
+      const amt = Number(it.amount || gross || 0);
+      const pct = Number(it.commission_pct || 0);
+      const commissionFromPct = Math.max(0, Math.round(amt * pct / 100));
+      const commission = Number.isFinite(Number(it.commission_amount)) ? Number(it.commission_amount) : commissionFromPct;
+      let net = Number(it.net_amount);
+      if (!Number.isFinite(net)) net = amt - commission;
+      if (net < 0 || net > amt) net = amt - commission;
+      if (net < 0) net = 0;
+
+      return {
+        amount: Math.round(net),
+        source: 'batch_item_net',
+        batch_id: it.batch_id || null
+      };
+    }
+  } catch (e) {
+    console.warn('[ADMIN] resolveOrderPayoutAmount warning:', e?.message || e);
+  }
+
+  return { amount: Math.round(gross), source: 'order_gross', batch_id: null };
+}
 
 // Helper: verify order payout eligibility and return a detailed report
 // NOTE: Per project rule, eligibility depends on order status, payout_status and that the buyer has paid.
@@ -3074,12 +3124,21 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
     // If executing, make sure eligible
     if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible_for_payout', report });
 
-    // Call PixPay to send money to vendor
-    const amount = report.order.total_amount;
+    // Call PixPay to send money to vendor.
+    // For batched orders, use net_amount (commission-aware) when available.
+    const payoutAmountInfo = await resolveOrderPayoutAmount(report.order.id, report.order.total_amount, supabase);
+    const amount = payoutAmountInfo.amount;
     const phone = report.vendor.phone;
     const walletType = report.vendor.wallet_type || 'wave-senegal';
 
-    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { amount, phone, walletType });
+    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, {
+      amount,
+      phone,
+      walletType,
+      amount_source: payoutAmountInfo.source,
+      batch_id: payoutAmountInfo.batch_id || null,
+      gross_amount: report.order.total_amount
+    });
 
     const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
