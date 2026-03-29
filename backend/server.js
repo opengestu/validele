@@ -4018,6 +4018,28 @@ async function processPayoutBatch(batchId) {
   try {
     if (!batchId) return { success: false, error: 'batch id required' };
 
+    const toNumber = (v, fallback = 0) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    // Defensive net computation: never trust a single DB field blindly.
+    const deriveItemAmounts = (item, defaultPct = 0) => {
+      const gross = toNumber(item?.amount, 0);
+      const itemPct = toNumber(item?.commission_pct, NaN);
+      const pct = Number.isFinite(itemPct) ? itemPct : toNumber(defaultPct, 0);
+      const commissionFromPct = Math.max(0, Math.round(gross * pct / 100));
+      const commission = Math.max(0, toNumber(item?.commission_amount, commissionFromPct));
+      const netField = toNumber(item?.net_amount, NaN);
+
+      // Prefer explicit net_amount when valid and coherent, otherwise recompute.
+      let net = Number.isFinite(netField) ? netField : (gross - commission);
+      if (net < 0 || net > gross) net = gross - commission;
+      if (net < 0) net = 0;
+
+      return { gross, commission, net, pct };
+    };
+
     // Use service role client to bypass RLS for payout batch operations
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!serviceRoleKey) {
@@ -4113,9 +4135,21 @@ async function processPayoutBatch(batchId) {
         continue;
       }
 
-      // Use net_amount (gross - commission) to compute payout per vendor
-      const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
-      console.log('[ADMIN] processPayoutBatch: Total net amount for vendor', vendorId, ':', totalNet);
+      // Compute payout amount from a defensive net calculation (gross - commission).
+      const payoutBreakdown = eligibleItems.map(it => ({ it, amounts: deriveItemAmounts(it, batch?.commission_pct || 0) }));
+      const totalGross = payoutBreakdown.reduce((s, row) => s + row.amounts.gross, 0);
+      const totalCommission = payoutBreakdown.reduce((s, row) => s + row.amounts.commission, 0);
+      const totalNet = payoutBreakdown.reduce((s, row) => s + row.amounts.net, 0);
+      const payoutAmount = Math.max(0, Math.round(totalNet));
+
+      console.log('[ADMIN] processPayoutBatch: Payout breakdown for vendor', vendorId, {
+        items: eligibleItems.length,
+        totalGross,
+        totalCommission,
+        totalNet,
+        payoutAmount,
+        batchCommissionPct: batch?.commission_pct || 0
+      });
 
       const { data: vendor } = await supabaseAdmin.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       console.log('[ADMIN] processPayoutBatch: Vendor info:', { vendorId, phone: vendor?.phone, wallet_type: vendor?.wallet_type });
@@ -4127,18 +4161,18 @@ async function processPayoutBatch(batchId) {
       }
 
       try {
-        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: totalNet, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal' });
-        const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
+        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: payoutAmount, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal', totalGross, totalCommission, totalNet });
+        const payoutRes = await pixpaySendMoney({ amount: payoutAmount, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
         console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
 
         if (payoutRes && payoutRes.transaction_id) {
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
+          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: payoutAmount, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
           // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
           await supabaseAdmin.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
           if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
-          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
+          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_gross: totalGross, total_commission: totalCommission, total_net: totalNet, payout_amount: payoutAmount });
         } else {
           await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
