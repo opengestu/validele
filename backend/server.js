@@ -4132,23 +4132,13 @@ async function processPayoutBatch(batchId) {
         console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
 
         if (payoutRes && payoutRes.transaction_id) {
-          const normalizedState = String(payoutRes.state || '').toUpperCase();
-          const isImmediateSuccess = normalizedState === 'SUCCESS' || normalizedState === 'SUCCESSFUL' || normalizedState === 'COMPLETED';
-
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: isImmediateSuccess ? 'SUCCESSFUL' : (payoutRes.state || 'PENDING1'), transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
-
-          // If provider already confirmed SUCCESSFUL at initiation, finalize immediately.
-          await supabaseAdmin.from('payout_batch_items').update({ status: isImmediateSuccess ? 'paid' : 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
+          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
+          // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
+          await supabaseAdmin.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
-          if (orderIds.length > 0) {
-            if (isImmediateSuccess) {
-              await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-            } else {
-              await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
-            }
-          }
-          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet, immediate_success: isImmediateSuccess });
+          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
+          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
           await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
@@ -4165,19 +4155,19 @@ async function processPayoutBatch(batchId) {
     // - If all vendor payouts succeeded but items are 'processing' (waiting for webhook) -> 'processing'
     // - If all items are already 'paid' -> 'completed'
     const anyFailed = results.some(r => !r.success && r.message !== 'all_already_paid');
-    const anyWaitingWebhook = results.some(r => r.success && r.transaction_id && !r.immediate_success); // Sent to Pixpay but still pending confirmation
+    const anyProcessing = results.some(r => r.success && r.transaction_id); // Has transaction_id = sent to Pixpay, waiting for confirmation
     const allAlreadyPaid = results.every(r => r.message === 'all_already_paid');
     
     let finalStatus = 'completed';
     if (anyFailed) {
       finalStatus = 'failed';
-    } else if (anyWaitingWebhook) {
+    } else if (anyProcessing) {
       finalStatus = 'processing'; // Wait for webhook to confirm and set to 'completed'
     } else if (allAlreadyPaid) {
       finalStatus = 'completed';
     }
     
-    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, anyWaitingWebhook, allAlreadyPaid, finalStatus, results });
+    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, anyProcessing, allAlreadyPaid, finalStatus, results });
     await supabaseAdmin.from('payout_batches').update({ status: finalStatus, processed_at: new Date().toISOString() }).eq('id', batchId);
 
     return { success: true, results };
@@ -4320,11 +4310,6 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
     
     const results = [];
     let syncedCount = 0;
-
-    const isProviderSuccessState = (value) => {
-      const s = String(value || '').toUpperCase();
-      return s === 'SUCCESS' || s === 'SUCCESSFUL' || s === 'COMPLETED';
-    };
     
     for (const tx of pendingTxs) {
       try {
@@ -4443,73 +4428,6 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
           transaction_id: tx.transaction_id, 
           synced: false, 
           error: String(txError) 
-        });
-      }
-    }
-
-    // Reconcile payout batch items stuck in processing when provider_response already says SUCCESSFUL.
-    // This heals cases where webhook did not finalize items/batch but provider already confirmed success.
-    const { data: processingItems, error: processingItemsErr } = await supabaseAdmin
-      .from('payout_batch_items')
-      .select('id, order_id, batch_id, status, provider_response, provider_transaction_id')
-      .eq('status', 'processing');
-
-    if (processingItemsErr) {
-      console.error('[ADMIN] sync-pending-transactions: payout_batch_items fetch error:', processingItemsErr);
-    } else if (processingItems && processingItems.length > 0) {
-      const itemIdsToPay = [];
-      const orderIdsToPay = [];
-      const touchedBatchIds = new Set();
-
-      for (const item of processingItems) {
-        try {
-          const providerResp = typeof item.provider_response === 'string'
-            ? JSON.parse(item.provider_response)
-            : item.provider_response;
-          const providerState = providerResp?.data?.state || providerResp?.state || providerResp?.status;
-          if (isProviderSuccessState(providerState)) {
-            itemIdsToPay.push(item.id);
-            if (item.order_id) orderIdsToPay.push(item.order_id);
-            if (item.batch_id) touchedBatchIds.add(item.batch_id);
-          }
-        } catch (e) {
-          // Ignore invalid JSON payloads
-        }
-      }
-
-      if (itemIdsToPay.length > 0) {
-        await supabaseAdmin
-          .from('payout_batch_items')
-          .update({ status: 'paid', updated_at: new Date().toISOString() })
-          .in('id', itemIdsToPay);
-
-        if (orderIdsToPay.length > 0) {
-          await supabaseAdmin
-            .from('orders')
-            .update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() })
-            .in('id', orderIdsToPay);
-        }
-
-        for (const batchId of Array.from(touchedBatchIds)) {
-          const { data: batchItems } = await supabaseAdmin
-            .from('payout_batch_items')
-            .select('status')
-            .eq('batch_id', batchId);
-
-          const allPaid = batchItems && batchItems.length > 0 && batchItems.every(i => i.status === 'paid');
-          if (allPaid) {
-            await supabaseAdmin
-              .from('payout_batches')
-              .update({ status: 'completed', processed_at: new Date().toISOString() })
-              .eq('id', batchId);
-          }
-        }
-
-        syncedCount += itemIdsToPay.length;
-        results.push({
-          type: 'batch_item_reconciliation',
-          synced_items: itemIdsToPay.length,
-          touched_batches: Array.from(touchedBatchIds)
         });
       }
     }
