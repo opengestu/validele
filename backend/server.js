@@ -1829,7 +1829,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       // Récupérer l'order_code de la commande
       const { data: orderData, error: fetchError } = await dbClient
         .from('orders')
-        .select('order_code, status')
+        .select('order_code, status, qr_code')
         .eq('id', orderId)
         .single();
       
@@ -1842,19 +1842,25 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
       } else {
         // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
+        const existingQr = String(orderData?.qr_code || '').trim();
+        const orderCode = String(orderData?.order_code || '').trim();
+        const secureQr = (existingQr && existingQr !== orderCode)
+          ? existingQr
+          : crypto.randomBytes(8).toString('hex').toUpperCase();
+
         const { error: orderError } = await dbClient
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
             payment_confirmed_at: new Date().toISOString(),
-            qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
+            qr_code: secureQr
           })
           .eq('id', orderId);
 
         if (orderError) {
           console.error('[PIXPAY-WEBHOOK] ❌ Erreur update order:', orderError);
         } else {
-          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
+          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR sécurisé');
           
           // Notifier l'acheteur et le vendeur du paiement confirmé
           try {
@@ -2077,7 +2083,7 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     // Fetch the order
     const { data: order, error: orderErr } = await supabaseAdmin
       .from('orders')
-      .select('id, order_code, status, buyer_id, vendor_id, total_amount, product_id')
+      .select('id, order_code, qr_code, status, buyer_id, vendor_id, total_amount, product_id')
       .eq('id', orderId)
       .single();
 
@@ -2093,12 +2099,18 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     }
 
     // Update order status to paid
+    const existingQr = String(order.qr_code || '').trim();
+    const orderCode = String(order.order_code || '').trim();
+    const secureQr = (existingQr && existingQr !== orderCode)
+      ? existingQr
+      : crypto.randomBytes(8).toString('hex').toUpperCase();
+
     const { error: updateErr } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'paid',
         payment_confirmed_at: new Date().toISOString(),
-        qr_code: order.order_code // Use order_code as QR code
+        qr_code: secureQr
       })
       .eq('id', orderId);
 
@@ -2814,6 +2826,60 @@ app.post('/api/admin/notify', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('[ADMIN] notify error:', error);
     res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Admin security maintenance: rotate insecure order QR codes
+// (orders where qr_code is missing or identical to order_code)
+app.post('/api/admin/security/rotate-order-qrs', requireAdmin, async (req, res) => {
+  try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' });
+    }
+
+    const { createClient: createAdminClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+    const normalize = (v) => String(v || '').trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+
+    const { data: orders, error } = await supabaseAdmin
+      .from('orders')
+      .select('id, order_code, qr_code, status')
+      .in('status', ['paid', 'assigned', 'in_delivery']);
+
+    if (error) throw error;
+
+    const insecureOrders = (orders || []).filter((o) => {
+      const qr = normalize(o.qr_code);
+      const oc = normalize(o.order_code);
+      return !qr || qr === oc;
+    });
+
+    if (insecureOrders.length === 0) {
+      return res.json({ success: true, rotated: 0, message: 'No insecure QR codes found' });
+    }
+
+    const updatedIds = [];
+    for (const o of insecureOrders) {
+      const newQr = crypto.randomBytes(8).toString('hex').toUpperCase();
+      const { error: updErr } = await supabaseAdmin
+        .from('orders')
+        .update({ qr_code: newQr })
+        .eq('id', o.id);
+      if (!updErr) updatedIds.push(o.id);
+    }
+
+    return res.json({
+      success: true,
+      scanned: insecureOrders.length,
+      rotated: updatedIds.length,
+      failed: insecureOrders.length - updatedIds.length,
+      updated_ids: updatedIds
+    });
+  } catch (err) {
+    console.error('[ADMIN] rotate-order-qrs error:', err);
+    return res.status(500).json({ success: false, error: String(err) });
   }
 });
 
@@ -5851,10 +5917,15 @@ async function getDeliveryPersonPhone(deliveryPersonId) {
 
 app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
-    const { orderId, deliveredBy } = req.body || {};
+    const { orderId, deliveredBy, scannedQrCode, scanned_qr_code } = req.body || {};
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
+    if (!deliveredBy) return res.status(400).json({ success: false, error: 'deliveredBy required' });
 
-    console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy });
+    const normalizeCode = (v) => String(v || '').trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const scannedNormalized = normalizeCode(scannedQrCode || scanned_qr_code);
+    if (!scannedNormalized) return res.status(400).json({ success: false, error: 'scannedQrCode required' });
+
+    console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy, scanned: scannedNormalized.slice(0, 6) + '...' });
 
     // Use service role client to bypass RLS
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -5866,13 +5937,34 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     }
 
     // Fetch current order
-    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
+    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code, qr_code, delivery_person_id').eq('id', orderId).maybeSingle();
     if (orderErr || !order) {
       console.error('[MARK-DELIVERED] Order not found:', orderErr);
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
-    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status });
+    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status, delivery_person_id: order.delivery_person_id });
+
+    if (String(order.delivery_person_id || '') !== String(deliveredBy || '')) {
+      return res.status(403).json({ success: false, error: 'forbidden_not_assigned_delivery_person' });
+    }
+
+    if (order.status !== 'in_delivery') {
+      return res.status(400).json({ success: false, error: 'order_not_in_delivery', currentStatus: order.status });
+    }
+
+    const expectedNormalized = normalizeCode(order.qr_code);
+    const orderCodeNormalized = normalizeCode(order.order_code);
+    if (!expectedNormalized) {
+      return res.status(400).json({ success: false, error: 'missing_order_qr_code' });
+    }
+    // Hard fail when secure QR has been collapsed into order_code.
+    if (expectedNormalized === orderCodeNormalized) {
+      return res.status(409).json({ success: false, error: 'insecure_qr_configuration_detected' });
+    }
+    if (scannedNormalized !== expectedNormalized) {
+      return res.status(400).json({ success: false, error: 'qr_code_mismatch' });
+    }
 
     // Update only if status not already delivered
     const updates = { status: 'delivered', delivered_at: new Date().toISOString() };

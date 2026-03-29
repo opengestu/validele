@@ -666,6 +666,7 @@ const QRScanner = () => {
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
+  const [validatedQrCode, setValidatedQrCode] = useState<string>('');
   // session id incrementation to reset scanner state after a delivery is confirmed
   const [scanSessionId, setScanSessionId] = useState(0);
   // When navigating from DeliveryDashboard with ?autoStart=1 we want to automatically start delivery and show scanner
@@ -1065,17 +1066,17 @@ const QRScanner = () => {
         
         console.log('[QRScanner] 🔍 Recherche commande VENDEUR - code scanné:', codeToCheck);
         console.log('[QRScanner] 🔍 Code nettoyé:', cleaned);
-        console.log('[QRScanner] ℹ️ Recherche dans order_code ET qr_code avec ilike pour tolérance');
+        console.log('[QRScanner] ℹ️ Recherche dans order_code uniquement (sécurité anti-bypass)');
         
         // Debug: voir toutes les commandes avec ce order_code (recherche flexible)
         const { data: allMatches, error: debugError } = await supabase
           .from('orders')
           .select('id, order_code, qr_code, status')
-          .or(`order_code.ilike.%${cleaned}%,qr_code.ilike.%${cleaned}%`);
+          .ilike('order_code', `%${cleaned}%`);
         
         console.log('[QRScanner] 📊 Commandes correspondant au code', cleaned, ':', allMatches);
         
-        // Recherche tolérante: order_code OU qr_code avec ilike + statuts valides
+        // Recherche tolérante: order_code uniquement
         let data: Order | null = null;
         let error: any = null;
         
@@ -1098,7 +1099,7 @@ const QRScanner = () => {
         data = result.data;
         error = result.error;
 
-        // 2) Si pas trouvé, recherche avec ilike (tolérante) sur order_code ET qr_code
+        // 2) Si pas trouvé, recherche avec ilike (tolérante) sur order_code uniquement
         if (!data && !error) {
           console.log('[QRScanner] 🔎 Recherche tolérante avec ilike...');
           result = await supabase
@@ -1109,7 +1110,7 @@ const QRScanner = () => {
               buyer_profile:profiles!orders_buyer_id_fkey(full_name),
               vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
             `)
-            .or(`order_code.ilike.%${cleaned}%,qr_code.ilike.%${cleaned}%`)
+            .ilike('order_code', `%${cleaned}%`)
             .in('status', ['paid', 'assigned', 'in_delivery'])
             .limit(1)
             .maybeSingle();
@@ -1117,25 +1118,6 @@ const QRScanner = () => {
           console.log('[QRScanner] Résultat recherche tolérante:', { found: !!result.data, status: result.data?.status, error: result.error });
           data = result.data;
           error = result.error;
-        }
-
-        // 3) Si toujours pas trouvé, fallback backend
-        if (!data && !error) {
-          console.log('[QRScanner] 🔎 Fallback vers backend /api/orders/search...');
-          try {
-            const resp = await fetch(apiUrl('/api/orders/search'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code: cleaned })
-            });
-            const json = await resp.json();
-            console.log('[QRScanner] Résultat backend:', json);
-            if (json && json.success && json.order) {
-              data = json.order as Order;
-            }
-          } catch (e) {
-            console.error('[QRScanner] Erreur fallback backend:', e);
-          }
         }
 
         if (error || !data) {
@@ -1190,6 +1172,11 @@ const QRScanner = () => {
     if (!currentOrder) {
       console.log('No currentOrder; attempting to find order by QR code');
       try {
+        const deliveryUserId = user?.id;
+        if (!deliveryUserId) {
+          toast({ title: 'Erreur', description: 'Utilisateur non connecté.', variant: 'destructive' });
+          return;
+        }
         const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
         const scannedNormalized = normalize(codeToCheck);
         // Query supabase for orders with matching qr_code (tolerant match)
@@ -1197,7 +1184,8 @@ const QRScanner = () => {
           .from('orders')
           .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
           .ilike('qr_code', `%${scannedNormalized}%`)
-          .in('status', ['assigned', 'in_delivery', 'paid', 'delivered'])
+          .eq('status', 'in_delivery')
+          .eq('delivery_person_id', deliveryUserId)
           .limit(1)
           .maybeSingle();
 
@@ -1225,6 +1213,10 @@ const QRScanner = () => {
       const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
       const scannedNormalized = normalize(codeToCheck);
       const expectedNormalized = normalize(currentOrder?.qr_code);
+      const orderCodeNormalized = normalize(currentOrder?.order_code);
+      if (expectedNormalized && expectedNormalized === orderCodeNormalized) {
+        throw new Error('Configuration QR non sécurisée: QR client identique au code commande');
+      }
       // Vérifier que le QR code correspond à la commande en cours
       if (scannedNormalized !== expectedNormalized) {
         throw new Error('QR code ne correspond pas à la commande');
@@ -1238,6 +1230,7 @@ const QRScanner = () => {
         status: 'valid',
         timestamp: new Date().toLocaleString()
       });
+      setValidatedQrCode(codeToCheck);
       console.log('QRScanner: validation OK, commande id =', currentOrder?.id, 'vendor_profile:', currentOrder?.vendor_profile);
       toast({
         title: "QR Code valide",
@@ -1254,6 +1247,7 @@ const QRScanner = () => {
         timestamp: new Date().toLocaleString(),
         error: errorMessage
       });
+      setValidatedQrCode('');
       console.error('QRScanner: validation échouée', errorMessage);
       toast({
         title: "QR Code invalide",
@@ -1270,6 +1264,9 @@ const QRScanner = () => {
   const handleConfirmDelivery = async () => {
     if (validationResult && validationResult.status === 'valid') {
       try {
+        if (!validatedQrCode) {
+          throw new Error('QR client validé manquant. Veuillez rescanner le QR code client.');
+        }
         setIsConfirmingDelivery(true);
         console.log('QRScanner: confirmation livraison, id =', validationResult.id);
         console.log('QRScanner: vendor_id =', validationResult.vendor_id);
@@ -1280,26 +1277,12 @@ const QRScanner = () => {
           const resp = await fetch(apiUrl('/api/orders/mark-delivered'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId: validationResult.id, deliveredBy: user?.id })
+            body: JSON.stringify({ orderId: validationResult.id, deliveredBy: user?.id, scannedQrCode: validatedQrCode })
           });
           const json = await resp.json().catch(() => ({}));
           console.log('QRScanner: mark-delivered response', resp.status, json);
           if (!resp.ok || !json || !json.success) {
-            // If backend failed, fall back to client update (best-effort)
-            console.warn('QRScanner: backend mark-delivered failed, attempting client-side update as fallback', json);
-            const { error: updateError, data: updatedOrders } = await supabase
-              .from('orders')
-              .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-              .eq('id', validationResult.id as string)
-              .select();
-            if (updateError) {
-              console.error('QRScanner: ERREUR mise à jour statut delivered (fallback):', updateError);
-              throw new Error(json?.error || updateError.message || 'Erreur mise à jour statut');
-            }
-            if (!updatedOrders || updatedOrders.length === 0) {
-              throw new Error('Commande non mise à jour - aucune donnée retournée. Vérifiez les politiques RLS.');
-            }
-            updatedOrder = updatedOrders[0];
+            throw new Error(json?.error || json?.message || 'Échec confirmation livraison côté serveur');
           } else {
             // Backend returns success; updated info may be in json.updated or json.order
             updatedOrder = json.order || json.updated || { id: validationResult.id, status: 'delivered' };
@@ -1341,6 +1324,7 @@ const QRScanner = () => {
 
         // Nettoyage de l'UI et confirmation locale
         setValidationResult(null);
+        setValidatedQrCode('');
         setScannedCode('');
         setOrderCode('');
         // Keep scanner open for the next delivery and reset session so scanner resumes
