@@ -170,7 +170,7 @@ async function sendMoney(params) {
   }
 
   const payload = {
-    amount: parseInt(amount),
+    amount: Number(amount),
     destination: formattedPhone,
     api_key: PIXPAY_CONFIG.api_key,
     service_id: service_id,

@@ -2940,7 +2940,7 @@ async function resolveOrderPayoutAmount(orderId, grossAmount, dbClient = null) {
       const it = items[0];
       const amt = Number(it.amount || gross || 0);
       const pct = Number(it.commission_pct || 0);
-      const commissionFromPct = Math.max(0, Math.round(amt * pct / 100));
+      const commissionFromPct = Math.max(0, amt * pct / 100);
       const commission = Number.isFinite(Number(it.commission_amount)) ? Number(it.commission_amount) : commissionFromPct;
       let net = Number(it.net_amount);
       if (!Number.isFinite(net)) net = amt - commission;
@@ -2948,7 +2948,7 @@ async function resolveOrderPayoutAmount(orderId, grossAmount, dbClient = null) {
       if (net < 0) net = 0;
 
       return {
-        amount: Math.round(net),
+        amount: net,
         source: 'batch_item_net',
         batch_id: it.batch_id || null
       };
@@ -2957,7 +2957,7 @@ async function resolveOrderPayoutAmount(orderId, grossAmount, dbClient = null) {
     console.warn('[ADMIN] resolveOrderPayoutAmount warning:', e?.message || e);
   }
 
-  return { amount: Math.round(gross), source: 'order_gross', batch_id: null };
+  return { amount: gross, source: 'order_gross', batch_id: null };
 }
 
 // Helper: verify order payout eligibility and return a detailed report
@@ -3369,7 +3369,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     // Compute commission and net per item and insert items with status 'queued'
     const items = orders.map(o => {
       const amount = Number(o.total_amount || 0);
-      const commission_amount = Math.round(amount * pct / 100);
+      const commission_amount = amount * pct / 100;
       const net_amount = amount - commission_amount;
       return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount, status: 'queued' };
     });
@@ -4087,7 +4087,7 @@ async function processPayoutBatch(batchId) {
       const gross = toNumber(item?.amount, 0);
       const itemPct = toNumber(item?.commission_pct, NaN);
       const pct = Number.isFinite(itemPct) ? itemPct : toNumber(defaultPct, 0);
-      const commissionFromPct = Math.max(0, Math.round(gross * pct / 100));
+      const commissionFromPct = Math.max(0, gross * pct / 100);
       const commission = Math.max(0, toNumber(item?.commission_amount, commissionFromPct));
       const netField = toNumber(item?.net_amount, NaN);
 
@@ -4199,7 +4199,7 @@ async function processPayoutBatch(batchId) {
       const totalGross = payoutBreakdown.reduce((s, row) => s + row.amounts.gross, 0);
       const totalCommission = payoutBreakdown.reduce((s, row) => s + row.amounts.commission, 0);
       const totalNet = payoutBreakdown.reduce((s, row) => s + row.amounts.net, 0);
-      const payoutAmount = Math.max(0, Math.round(totalNet));
+      const payoutAmount = Math.max(0, totalNet);
 
       console.log('[ADMIN] processPayoutBatch: Payout breakdown for vendor', vendorId, {
         items: eligibleItems.length,
