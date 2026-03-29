@@ -1061,6 +1061,8 @@ const QRScanner = () => {
     
     // Si on est en mode scan QR vendeur, chercher la commande PAR ORDER_CODE UNIQUEMENT
     if (scanVendorQRMode) {
+      // Ferme immédiatement l'écran de scan dès qu'un QR vendeur est lu.
+      setShowScanSection(false);
       try {
         const cleaned = codeToCheck.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
         
@@ -1081,7 +1083,7 @@ const QRScanner = () => {
         let error: any = null;
         
         // 1) D'abord, recherche exacte sur order_code
-        console.log('[QRScanner] 🔎 Recherche order_code exact avec statuts [paid, assigned, in_delivery]...');
+        console.log('[QRScanner] 🔎 Recherche order_code exact avec statuts [paid, assigned]...');
         let result = await supabase
           .from('orders')
           .select(`
@@ -1091,7 +1093,7 @@ const QRScanner = () => {
             vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
           `)
           .eq('order_code', cleaned)
-          .in('status', ['paid', 'assigned', 'in_delivery'])
+          .in('status', ['paid', 'assigned'])
           .maybeSingle();
         
         console.log('[QRScanner] Résultat recherche exacte:', { found: !!result.data, status: result.data?.status, error: result.error });
@@ -1111,7 +1113,7 @@ const QRScanner = () => {
               vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
             `)
             .ilike('order_code', `%${cleaned}%`)
-            .in('status', ['paid', 'assigned', 'in_delivery'])
+            .in('status', ['paid', 'assigned'])
             .limit(1)
             .maybeSingle();
           
@@ -1121,6 +1123,36 @@ const QRScanner = () => {
         }
 
         if (error || !data) {
+          // Si la commande est déjà en cours de livraison, interdire le scan QR vendeur
+          // et orienter vers le scan QR client.
+          try {
+            const { data: inDeliveryOrder } = await supabase
+              .from('orders')
+              .select(`
+                *,
+                products(name, code),
+                buyer_profile:profiles!orders_buyer_id_fkey(full_name),
+                vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
+              `)
+              .eq('order_code', cleaned)
+              .eq('status', 'in_delivery')
+              .maybeSingle();
+
+            if (inDeliveryOrder) {
+              setCurrentOrder(inDeliveryOrder as Order);
+              setLastMatchInfo({ type: 'order_code', code: inDeliveryOrder.order_code ?? '' });
+              setScanVendorQRMode(false);
+              setOrderModalOpen(true);
+              toast({
+                title: 'Commande déjà en cours',
+                description: 'Le QR vendeur n\'est plus scannable. Scannez uniquement le QR code client pour confirmer la livraison.',
+              });
+              return;
+            }
+          } catch (inDeliveryLookupError) {
+            console.warn('[QRScanner] Recherche in_delivery échouée:', inDeliveryLookupError);
+          }
+
           console.error('[QRScanner] ❌ Aucune commande trouvée. Erreur:', error);
           console.error('[QRScanner] 💡 Code scanné:', codeToCheck, '-> nettoyé:', cleaned);
           toast({
@@ -1128,6 +1160,7 @@ const QRScanner = () => {
             description: `Aucune commande ne correspond à ce QR code. Code scanné: ${cleaned.substring(0, 10)}...`,
             variant: "destructive",
           });
+          setShowScanSection(true);
           if (resetScan) resetScan();
           return;
         }
@@ -1153,6 +1186,7 @@ const QRScanner = () => {
           description: "Erreur lors de la recherche de la commande",
           variant: "destructive",
         });
+        setShowScanSection(true);
         if (resetScan) resetScan();
         return;
       }
@@ -1288,8 +1322,20 @@ const QRScanner = () => {
             updatedOrder = json.order || json.updated || { id: validationResult.id, status: 'delivered' };
           }
         } catch (e) {
-          console.error('QRScanner: erreur lors du mark-delivered backend+fallback flow:', e);
-          throw e;
+          console.warn('QRScanner: mark-delivered backend échoué, fallback client activé', e);
+          const { data: fallbackUpdated, error: fallbackError } = await supabase
+            .from('orders')
+            .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+            .eq('id', validationResult.id as string)
+            .select('*')
+            .single();
+
+          if (fallbackError) {
+            console.error('QRScanner: fallback client mark-delivered échoué:', fallbackError);
+            throw fallbackError;
+          }
+
+          updatedOrder = (fallbackUpdated as Order) || { id: validationResult.id, status: 'delivered' };
         }
         console.log('QRScanner: ✅ Statut mis à jour avec succès - Commande livrée:', updatedOrder?.status || 'delivered');
 
