@@ -1499,6 +1499,19 @@ const VendorDashboard = () => {
     setVendorQRModalOpen(true);
   };
 
+  // Ferme automatiquement la modale QR vendeur dès que la commande passe en livraison.
+  React.useEffect(() => {
+    if (!vendorQRModalOpen || !selectedOrderForQR?.id) return;
+
+    const latestSelectedOrder = orders.find((order) => String(order.id) === String(selectedOrderForQR.id));
+    const effectiveStatus = latestSelectedOrder?.status || selectedOrderForQR.status;
+
+    if (effectiveStatus === 'in_delivery') {
+      setVendorQRModalOpen(false);
+      setSelectedOrderForQR(null);
+    }
+  }, [vendorQRModalOpen, selectedOrderForQR, orders]);
+
   // Ouvre WhatsApp pour le client (même logique fallback que pour l'appel)
 
   // Calculate stats

@@ -673,6 +673,10 @@ const QRScanner = () => {
   const [autoOpenScanner, setAutoOpenScanner] = useState(false);
   // Mode pour scanner le QR code vendeur
   const [scanVendorQRMode, setScanVendorQRMode] = useState(false);
+  // Verrouille le rescannage QR vendeur pendant le flux de livraison en cours
+  const [vendorScanLocked, setVendorScanLocked] = useState(false);
+  // Lien de session: code commande vendeur scanné qui doit correspondre à la commande confirmée côté client
+  const [linkedVendorOrderCode, setLinkedVendorOrderCode] = useState<string>('');
 
   // Open the scanner with a short delay so the DOM can settle (prevents media play() AbortError)
   const openScannerSafely = () => {
@@ -1048,6 +1052,14 @@ const QRScanner = () => {
 
   // Fonction pour scanner le QR code vendeur
   const handleScanVendorQR = () => {
+    if (vendorScanLocked || currentOrder?.status === 'in_delivery') {
+      toast({
+        title: 'Scan vendeur bloqué',
+        description: 'Le QR vendeur ne peut plus être scanné pour cette commande en cours. Scannez le QR client pour confirmer la livraison.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setScanVendorQRMode(true);
     setShowScanSection(true);
     setScanSessionId(s => s + 1);
@@ -1141,7 +1153,9 @@ const QRScanner = () => {
             if (inDeliveryOrder) {
               setCurrentOrder(inDeliveryOrder as Order);
               setLastMatchInfo({ type: 'order_code', code: inDeliveryOrder.order_code ?? '' });
+              setLinkedVendorOrderCode(inDeliveryOrder.order_code ?? '');
               setScanVendorQRMode(false);
+              setVendorScanLocked(true);
               setOrderModalOpen(true);
               toast({
                 title: 'Commande déjà en cours',
@@ -1170,7 +1184,9 @@ const QRScanner = () => {
         // Commande trouvée via QR commande
         setCurrentOrder(data as Order);
         setLastMatchInfo({ type: 'order_code', code: data.order_code ?? '' });
+        setLinkedVendorOrderCode(data.order_code ?? cleaned);
         setScanVendorQRMode(false);
+        setVendorScanLocked(true);
         setShowScanSection(false);
         setOrderModalOpen(true);
         
@@ -1248,6 +1264,35 @@ const QRScanner = () => {
       const scannedNormalized = normalize(codeToCheck);
       const expectedNormalized = normalize(currentOrder?.qr_code);
       const orderCodeNormalized = normalize(currentOrder?.order_code);
+
+      // Anti-fraude: si un QR vendeur a été scanné dans ce flux, il doit pointer
+      // vers la même commande que celle validée par le QR acheteur.
+      const linkedVendorNormalized = normalize(linkedVendorOrderCode);
+      if (linkedVendorNormalized && orderCodeNormalized && linkedVendorNormalized !== orderCodeNormalized) {
+        throw new Error('Le QR vendeur scanné ne correspond pas à la commande client en cours');
+      }
+
+      // Blocage explicite: le QR vendeur (code commande) ne doit jamais servir
+      // à valider la livraison côté client.
+      if (scannedNormalized && orderCodeNormalized && scannedNormalized === orderCodeNormalized) {
+        toast({
+          title: 'QR vendeur détecté',
+          description: 'Veuillez scanner le QR code acheteur pour confirmer la livraison.',
+          variant: 'default',
+        });
+        if (resetScan) resetScan();
+        return;
+      }
+      if (scannedNormalized && linkedVendorNormalized && scannedNormalized === linkedVendorNormalized) {
+        toast({
+          title: 'QR vendeur déjà scanné',
+          description: 'Scannez maintenant le QR code acheteur pour continuer.',
+          variant: 'default',
+        });
+        if (resetScan) resetScan();
+        return;
+      }
+
       if (expectedNormalized && expectedNormalized === orderCodeNormalized) {
         throw new Error('Configuration QR non sécurisée: QR client identique au code commande');
       }
@@ -1301,6 +1346,20 @@ const QRScanner = () => {
         if (!validatedQrCode) {
           throw new Error('QR client validé manquant. Veuillez rescanner le QR code client.');
         }
+        const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+        const validatedNormalized = normalize(validatedQrCode);
+        const orderCodeNormalized = normalize(currentOrder?.order_code || validationResult?.order_code);
+        const linkedVendorNormalized = normalize(linkedVendorOrderCode);
+
+        // Défense en profondeur: même si l'UI est contournée, un QR vendeur
+        // (code commande) ne peut jamais confirmer une livraison.
+        if (
+          (validatedNormalized && orderCodeNormalized && validatedNormalized === orderCodeNormalized) ||
+          (validatedNormalized && linkedVendorNormalized && validatedNormalized === linkedVendorNormalized)
+        ) {
+          throw new Error('Tentative bloquée: le QR vendeur ne peut pas confirmer la livraison.');
+        }
+
         setIsConfirmingDelivery(true);
         console.log('QRScanner: confirmation livraison, id =', validationResult.id);
         console.log('QRScanner: vendor_id =', validationResult.vendor_id);
@@ -1373,6 +1432,8 @@ const QRScanner = () => {
         setValidatedQrCode('');
         setScannedCode('');
         setOrderCode('');
+        setVendorScanLocked(false);
+        setLinkedVendorOrderCode('');
         // Keep scanner open for the next delivery and reset session so scanner resumes
         setCurrentOrder(null);
         openScannerSafely();

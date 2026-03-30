@@ -1841,13 +1841,20 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       if (orderData?.status === 'delivered') {
         console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
       } else {
+        const secureBuyerQrCode = (
+          orderData?.qr_code &&
+          orderData.qr_code !== orderData?.order_code
+        )
+          ? orderData.qr_code
+          : crypto.randomBytes(8).toString('hex').toUpperCase();
+
         // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
         const { error: orderError } = await dbClient
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
             payment_confirmed_at: new Date().toISOString(),
-            qr_code: orderData?.order_code // Stocker aussi le code QR pour validation livraison
+            qr_code: secureBuyerQrCode
           })
           .eq('id', orderId);
 
@@ -2093,12 +2100,19 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     }
 
     // Update order status to paid
+    const secureBuyerQrCode = (
+      order?.qr_code &&
+      order.qr_code !== order?.order_code
+    )
+      ? order.qr_code
+      : crypto.randomBytes(8).toString('hex').toUpperCase();
+
     const { error: updateErr } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'paid',
         payment_confirmed_at: new Date().toISOString(),
-        qr_code: order.order_code // Also set qr_code for delivery verification
+        qr_code: secureBuyerQrCode
       })
       .eq('id', orderId);
 
