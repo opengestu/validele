@@ -17,11 +17,24 @@ import validelLogo from '@/assets/validel-logo.png';
 const PinReauth: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockRemainingSeconds, setLockRemainingSeconds] = useState<number>(0);
   const [phone, setPhone] = useState<string | null>(null);
   const [maskedPhone, setMaskedPhone] = useState<string>('');
   const navigate = useNavigate();
   const { toast } = useToast();
   const { signOut } = useAuth();
+
+  useEffect(() => {
+    if (lockRemainingSeconds <= 0) return;
+
+    const timer = window.setInterval(() => {
+      setLockRemainingSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [lockRemainingSeconds]);
 
   useEffect(() => {
     // Récupérer le numéro de téléphone depuis la session SMS
@@ -52,6 +65,10 @@ const PinReauth: React.FC = () => {
 
   const handlePinComplete = async (pin: string) => {
     if (!phone) return;
+    if (lockRemainingSeconds > 0) {
+      setError(`Trop de tentatives PIN. Réessayez dans ${lockRemainingSeconds} secondes.`);
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -117,7 +134,14 @@ const PinReauth: React.FC = () => {
           }
         }
       } else {
-        setError('Code PIN incorrect. Veuillez réessayer.');
+        const retryAfterSeconds = Number.parseInt(String(data?.retry_after_seconds ?? ''), 10);
+        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+          setLockRemainingSeconds(retryAfterSeconds);
+        }
+        const backendError = (data && typeof data.error === 'string' && data.error.trim().length > 0)
+          ? data.error
+          : null;
+        setError(backendError || 'Code PIN incorrect. Veuillez réessayer.');
         setLoading(false);
       }
     } catch (e) {
@@ -182,11 +206,25 @@ const PinReauth: React.FC = () => {
         </div>
       )}
 
+      {lockRemainingSeconds > 0 && (
+        <div className="w-full max-w-xs mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <p className="text-sm text-amber-700 text-center">
+            Nouvelle tentative dans {lockRemainingSeconds}s
+          </p>
+        </div>
+      )}
+
       {/* PIN Input */}
       {loading ? (
         <div className="flex flex-col items-center gap-3 py-8">
           <Spinner size="sm" />
           <p className="text-sm text-gray-500">Vérification...</p>
+        </div>
+      ) : lockRemainingSeconds > 0 ? (
+        <div className="w-full max-w-xs py-6">
+          <p className="text-sm text-center text-gray-500">
+            Saisie temporairement bloquée
+          </p>
         </div>
       ) : (
         <div className="w-full max-w-xs">

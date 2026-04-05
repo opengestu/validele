@@ -3,6 +3,57 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+const PIN_MAX_ATTEMPTS = Number.parseInt(process.env.PIN_MAX_ATTEMPTS || '5', 10);
+const PIN_ATTEMPT_WINDOW_MS = Number.parseInt(process.env.PIN_ATTEMPT_WINDOW_MS || String(5 * 60 * 1000), 10);
+const PIN_LOCK_MS = Number.parseInt(process.env.PIN_LOCK_MS || String(15 * 60 * 1000), 10);
+
+// In-memory brute-force guard for PIN attempts.
+// Keyed by normalized phone + client IP.
+const pinAttempts = new Map();
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+function getPinAttemptKey(phone, req) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const last9 = digits.slice(-9) || digits || 'unknown';
+  const ip = getClientIp(req);
+  return `${last9}:${ip}`;
+}
+
+function getRemainingLockMs(entry, now) {
+  if (!entry || !entry.lockedUntil || entry.lockedUntil <= now) return 0;
+  return entry.lockedUntil - now;
+}
+
+function registerPinFailure(key, now) {
+  const existing = pinAttempts.get(key);
+
+  if (!existing || now - existing.windowStart > PIN_ATTEMPT_WINDOW_MS) {
+    pinAttempts.set(key, {
+      attempts: 1,
+      windowStart: now,
+      lockedUntil: 0,
+    });
+    return;
+  }
+
+  existing.attempts += 1;
+  if (existing.attempts >= PIN_MAX_ATTEMPTS) {
+    existing.lockedUntil = now + PIN_LOCK_MS;
+  }
+  pinAttempts.set(key, existing);
+}
+
+function clearPinFailures(key) {
+  pinAttempts.delete(key);
+}
+
 // Use Supabase Admin client if environment variables are present
 let supabaseAdmin = null;
 try {
@@ -83,6 +134,18 @@ router.post('/login-pin', async (req, res) => {
   const { phone, pin } = req.body || {};
   if (!phone || !pin) return res.status(400).json({ error: 'Missing phone or pin' });
 
+  const attemptKey = getPinAttemptKey(phone, req);
+  const now = Date.now();
+  const existingAttempt = pinAttempts.get(attemptKey);
+  const remainingLockMs = getRemainingLockMs(existingAttempt, now);
+  if (remainingLockMs > 0) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(remainingLockMs / 1000));
+    return res.status(429).json({
+      error: `Trop de tentatives PIN. Réessayez dans ${retryAfterSeconds} secondes.`,
+      retry_after_seconds: retryAfterSeconds,
+    });
+  }
+
   const missing = ensureSupabase(req, res);
   if (missing) return missing;
 
@@ -108,6 +171,7 @@ router.post('/login-pin', async (req, res) => {
     }
     if (!Array.isArray(data) || data.length === 0) {
       console.warn('[LOGIN-PIN] User not found for phone:', phone, 'last9:', last9);
+      registerPinFailure(attemptKey, now);
       return res.status(401).json({ error: 'User not found' });
     }
 
@@ -116,6 +180,7 @@ router.post('/login-pin', async (req, res) => {
     // SECURITY: disallow PIN-based login for admin profiles
     if (user && user.role === 'admin') {
       console.warn('[LOGIN-PIN] PIN login attempt blocked for admin profile:', user.id);
+      registerPinFailure(attemptKey, now);
       return res.status(403).json({ error: 'PIN login disabled for admin; please use email/password' });
     }
 
@@ -149,8 +214,11 @@ router.post('/login-pin', async (req, res) => {
 
     if (!verified) {
       console.warn('[LOGIN-PIN] PIN incorrect. PIN reçu:', pin, '| PIN hash stocké:', pinHash);
+      registerPinFailure(attemptKey, now);
       return res.status(401).json({ error: 'Invalid PIN' });
     }
+
+    clearPinFailures(attemptKey);
 
     // Issue JWT if configured
     const jwtSecret = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
