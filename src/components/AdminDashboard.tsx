@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 import useNetwork from '@/hooks/useNetwork';
+import AdminLoginForm from '@/components/AdminLoginForm';
 
 type Order = {
   id: string;
@@ -207,11 +208,6 @@ const AdminDashboard: React.FC = () => {
   // Admin login state - DOIT ÊTRE DÉCLARÉ AVANT LES useEffect
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminOtp, setAdminOtp] = useState('');
-  const [adminProcessing, setAdminProcessing] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
 
   // Transaction details modal state
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionFull | null>(null);
@@ -976,73 +972,13 @@ const AdminDashboard: React.FC = () => {
 
   if (showAdminLogin) {
     return (
-      <div className="max-w-md mx-auto py-12 text-center">
-        <h1 className="text-xl font-bold mb-4">Authentification administrateur requise</h1>
-        <p className="text-gray-600 mb-4">Connectez-vous avec votre compte administrateur</p>
-
-        <div>
-          <input
-            type="email"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-            placeholder="Email"
-            className="mb-3 px-3 py-2 border rounded w-full"
-            autoComplete="username"
-          />
-          <input
-            type="password"
-            value={adminPassword}
-            onChange={(e) => setAdminPassword(e.target.value)}
-            placeholder="Mot de passe"
-            className="mb-3 px-3 py-2 border rounded w-full"
-            autoComplete="current-password"
-          />
-          <input
-            type="text"
-            value={adminOtp}
-            onChange={(e) => setAdminOtp(e.target.value)}
-            placeholder="Code 2FA (optionnel)"
-            className="mb-3 px-3 py-2 border rounded w-full"
-          />
-          {authError && <div className="text-sm text-red-600 mb-3">{authError}</div>}
-          <div className="flex gap-2 justify-center">
-            <Button disabled={adminProcessing} onClick={async () => {
-              setAdminProcessing(true);
-              setAuthError(null);
-              try {
-                const res = await fetch(apiUrl('/api/admin/login'), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  credentials: 'include',
-                  body: JSON.stringify({ email: adminEmail, password: adminPassword, otp: adminOtp || undefined })
-                });
-                const json = await res.json();
-                if (!res.ok) {
-                  const msg = json?.error || json?.message || 'Identifiants invalides';
-                  setAuthError(msg);
-                  toast({ title: 'Erreur', description: msg, variant: 'destructive' });
-                  return;
-                }
-                setIsAuthenticated(true);
-                setShowAdminLogin(false);
-                setAdminEmail(''); setAdminPassword(''); setAdminOtp('');
-                setAuthError(null);
-                toast({ title: 'Authentifié', description: "Vous êtes connecté en tant qu'admin" });
-                fetchData();
-              } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err || 'Erreur connexion');
-                setAuthError(message);
-                toast({ title: 'Erreur', description: message, variant: 'destructive' });
-              } finally {
-                setAdminProcessing(false);
-              }
-            }}>Se connecter</Button>
-
-            <Button variant="secondary" disabled title="Le login par PIN est désactivé pour les administrateurs">PIN désactivé</Button>
-          </div>
-        </div>
-
-      </div>
+      <AdminLoginForm
+        onSuccess={() => {
+          setIsAuthenticated(true);
+          setShowAdminLogin(false);
+          fetchData();
+        }}
+      />
     );
   }
 

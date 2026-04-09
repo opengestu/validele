@@ -5,7 +5,11 @@ import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 
-const AdminLoginForm: React.FC = () => {
+interface AdminLoginFormProps {
+  onSuccess?: () => void;
+}
+
+const AdminLoginForm: React.FC<AdminLoginFormProps> = ({ onSuccess }) => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -43,10 +47,13 @@ const AdminLoginForm: React.FC = () => {
       }
 
       toast({ title: 'Authentifié', description: "Vous êtes connecté en tant qu'admin" });
-      // Redirection automatique vers la page admin après connexion
-      setTimeout(() => {
+
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        // Fallback navigation when used standalone.
         navigate('/admin');
-      }, 500); // Laisse le toast s'afficher un court instant
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err || 'Erreur connexion');
       setError(message);
@@ -59,8 +66,8 @@ const AdminLoginForm: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto py-12 text-center">
-      <h1 className="text-xl font-bold mb-4">Aperçu - Connexion administrateur</h1>
-      <p className="text-gray-600 mb-4">Utilisez ce formulaire pour tester l'endpoint admin login.</p>
+      <h1 className="text-xl font-bold mb-4">Connexion administrateur</h1>
+      <p className="text-gray-600 mb-4">Connectez-vous avec votre compte administrateur.</p>
 
       <div>
         <input

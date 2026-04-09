@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
@@ -59,6 +59,11 @@ import ColorDemo from "./components/ColorDemo";
 
 const queryClient = new QueryClient();
 const paydunyaMode = import.meta.env.VITE_PAYDUNYA_MODE || 'prod';
+const envAdminOnlyMode = String(import.meta.env.VITE_ADMIN_ONLY_MODE || '').toLowerCase();
+const hostLooksLikeAdmin =
+  typeof window !== 'undefined'
+  && /(^admin[.-]|admin)/i.test(window.location.hostname || '');
+const adminOnlyMode = envAdminOnlyMode === 'true' || (envAdminOnlyMode !== 'false' && hostLooksLikeAdmin);
 
 // Wrapper interne qui déclenche l'animation CSS à chaque changement de route
 const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -105,20 +110,24 @@ const App = () => {
               <SessionTimeoutManager />
               <AnimatedRoutes>
               <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/auth" element={<AuthRoute />} />
-                <Route path="/pin-reauth" element={<PinReauth />} />
-                <Route path="/colors" element={<ColorDemo />} />
-                <Route path="/payment-success" element={<PaymentSuccess />} />
+                {adminOnlyMode && <Route path="/" element={<Navigate to="/admin" replace />} />}
+
+                {!adminOnlyMode && <Route path="/" element={<HomePage />} />}
+                {!adminOnlyMode && <Route path="/auth" element={<AuthRoute />} />}
+                {!adminOnlyMode && <Route path="/pin-reauth" element={<PinReauth />} />}
+                {!adminOnlyMode && <Route path="/colors" element={<ColorDemo />} />}
+                {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}
-                <Route 
-                  path="/vendor" 
-                  element={
-                    <ProtectedRoute requiredRole="vendor">
-                      <VendorDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/vendor" 
+                    element={
+                      <ProtectedRoute requiredRole="vendor">
+                        <VendorDashboard />
+                      </ProtectedRoute>
+                    } 
+                  />
+                )}
                 {/* Admin dashboard redirect and param route */}
                 <Route
                   path="/admin"
@@ -137,51 +146,61 @@ const App = () => {
                   }
                 />
                 {/* Protected Routes for Buyers */}
-                <Route 
-                  path="/buyer" 
-                  element={
-                    <ProtectedRoute requiredRole="buyer">
-                      <BuyerDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/buyer" 
+                    element={
+                      <ProtectedRoute requiredRole="buyer">
+                        <BuyerDashboard />
+                      </ProtectedRoute>
+                    } 
+                  />
+                )}
                 {/* Protected Route for Order Details */}
-                <Route 
-                  path="/orders/:orderId" 
-                  element={
-                    <ProtectedRoute requiredRole="buyer">
-                      <OrderDetails />
-                    </ProtectedRoute>
-                  } 
-                />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/orders/:orderId" 
+                    element={
+                      <ProtectedRoute requiredRole="buyer">
+                        <OrderDetails />
+                      </ProtectedRoute>
+                    } 
+                  />
+                )}
                 {/* Protected Routes for Delivery */}
-                <Route 
-                  path="/delivery" 
-                  element={
-                    <ProtectedRoute requiredRole="delivery">
-                      <DeliveryDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/delivery" 
+                    element={
+                      <ProtectedRoute requiredRole="delivery">
+                        <DeliveryDashboard />
+                      </ProtectedRoute>
+                    } 
+                  />
+                )}
                 {/* Protected Route for QR Scanner */}
-                <Route 
-                  path="/scanner" 
-                  element={
-                    <ProtectedRoute requiredRole="delivery">
-                      <QRScanner />
-                    </ProtectedRoute>
-                  } 
-                />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/scanner" 
+                    element={
+                      <ProtectedRoute requiredRole="delivery">
+                        <QRScanner />
+                      </ProtectedRoute>
+                    } 
+                  />
+                )}
                 {/* Page de succès de paiement, accessible à tous les rôles connectés */}
-                <Route 
-                  path="/payment-success" 
-                  element={
-                    <ProtectedRoute>
-                      <PaymentSuccess />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route path="*" element={<NotFound />} />
+                {!adminOnlyMode && (
+                  <Route 
+                    path="/payment-success" 
+                    element={
+                      <ProtectedRoute>
+                        <PaymentSuccess />
+                      </ProtectedRoute>
+                    }
+                  />
+                )}
+                <Route path="*" element={adminOnlyMode ? <Navigate to="/admin" replace /> : <NotFound />} />
               </Routes>
               </AnimatedRoutes>
 
