@@ -19,6 +19,7 @@ if (SUPABASE_ANON_KEY_SOURCE) {
   console.warn('[ADMIN] Supabase anon key not found in environment (SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY)');
 }
 const fs = require('fs');
+const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -319,10 +320,33 @@ app.get('/api/test', (req, res) => {
 // - FORCE_APP_UPDATE (true/false)
 // - APP_UPDATE_MESSAGE (optional)
 app.get('/api/version', (req, res) => {
+  const getAndroidVersionNameFallback = () => {
+    const candidates = [
+      path.resolve(__dirname, '../android/app/build.gradle'),
+      path.resolve(process.cwd(), 'android/app/build.gradle'),
+    ];
+
+    for (const filePath of candidates) {
+      try {
+        if (!fs.existsSync(filePath)) continue;
+        const content = fs.readFileSync(filePath, 'utf8');
+        const match = content.match(/versionName\s+"([^"]+)"/);
+        if (match && match[1] && match[1].trim()) {
+          return match[1].trim();
+        }
+      } catch (error) {
+        console.warn('[UPDATE] Unable to parse Android version from', filePath, error?.message || error);
+      }
+    }
+
+    return '';
+  };
+
   const latestVersion = String(
     process.env.APP_LATEST_VERSION
     || process.env.LATEST_APP_VERSION
     || process.env.ANDROID_LATEST_VERSION
+    || getAndroidVersionNameFallback()
     || ''
   ).trim();
 

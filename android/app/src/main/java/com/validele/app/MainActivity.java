@@ -1,6 +1,5 @@
 package com.validele.app;
 
-import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.IntentSender;
@@ -20,11 +19,10 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
 	private static final String TAG = "MainActivity";
 	private static final int APP_UPDATE_REQUEST_CODE = 1571;
-	private static final String STORE_FALLBACK_TITLE = "Mise a jour disponible";
-	private static final String STORE_FALLBACK_MESSAGE = "Une nouvelle version de l'application est disponible. Veuillez mettre a jour depuis Google Play.";
 
 	private AppUpdateManager appUpdateManager;
-	private boolean isStoreFallbackDialogVisible = false;
+	private boolean storeFallbackOpened;
+
 	private final InstallStateUpdatedListener installStateUpdatedListener = state -> {
 		if (state.installStatus() == InstallStatus.DOWNLOADED && appUpdateManager != null) {
 			Log.i(TAG, "Flexible update downloaded, completing update now");
@@ -54,9 +52,13 @@ public class MainActivity extends BridgeActivity {
 		}
 
 		int availability = appUpdateInfo.updateAvailability();
-		Integer stalenessDays = appUpdateInfo.clientVersionStalenessDays();
-		int priority = appUpdateInfo.updatePriority();
-		Log.i(TAG, "Update info availability=" + availability + ", priority=" + priority + ", stalenessDays=" + stalenessDays);
+		boolean immediateAllowed = appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE);
+		boolean flexibleAllowed = appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE);
+
+		Log.i(TAG, "Update info | availability=" + availability
+				+ " | installStatus=" + appUpdateInfo.installStatus()
+				+ " | immediateAllowed=" + immediateAllowed
+				+ " | flexibleAllowed=" + flexibleAllowed);
 
 		if (availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
 			startImmediateUpdate(appUpdateInfo);
@@ -67,107 +69,68 @@ public class MainActivity extends BridgeActivity {
 			return;
 		}
 
-		if (appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+		if (immediateAllowed) {
 			startImmediateUpdate(appUpdateInfo);
 			return;
 		}
 
-		if (appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)) {
+		if (flexibleAllowed) {
 			startFlexibleUpdate(appUpdateInfo);
 			return;
 		}
 
-		Log.w(TAG, "Update available but neither IMMEDIATE nor FLEXIBLE is allowed");
-		showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
+		Log.w(TAG, "Update available but neither IMMEDIATE nor FLEXIBLE is allowed. Opening Play Store fallback.");
+		openPlayStoreFallback();
 	}
 
 	private void startImmediateUpdate(AppUpdateInfo appUpdateInfo) {
 		try {
-			boolean started = appUpdateManager.startUpdateFlowForResult(
+			appUpdateManager.startUpdateFlowForResult(
 					appUpdateInfo,
 					AppUpdateType.IMMEDIATE,
 					this,
 					APP_UPDATE_REQUEST_CODE
 			);
-			if (!started) {
-				Log.w(TAG, "Play Core immediate flow did not start, opening fallback dialog");
-				showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
-			}
 		} catch (IntentSender.SendIntentException error) {
-			Log.e(TAG, "Failed to start in-app update flow", error);
-			showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
+			Log.e(TAG, "Failed to start in-app immediate update flow", error);
+			openPlayStoreFallback();
 		}
 	}
 
 	private void startFlexibleUpdate(AppUpdateInfo appUpdateInfo) {
 		try {
-			boolean started = appUpdateManager.startUpdateFlowForResult(
+			appUpdateManager.startUpdateFlowForResult(
 					appUpdateInfo,
 					AppUpdateType.FLEXIBLE,
 					this,
 					APP_UPDATE_REQUEST_CODE
 			);
-			if (!started) {
-				Log.w(TAG, "Play Core flexible flow did not start, opening fallback dialog");
-				showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
-			}
 		} catch (IntentSender.SendIntentException error) {
-			Log.e(TAG, "Failed to start flexible in-app update flow", error);
-			showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
+			Log.e(TAG, "Failed to start in-app flexible update flow", error);
+			openPlayStoreFallback();
 		}
 	}
 
-	private void showStoreUpdateFallbackDialog(String message) {
-		if (isFinishing() || isDestroyed()) {
+	private void openPlayStoreFallback() {
+		if (storeFallbackOpened) {
 			return;
 		}
 
-		runOnUiThread(() -> {
-			if (isFinishing() || isDestroyed() || isStoreFallbackDialogVisible) {
-				return;
-			}
-
-			isStoreFallbackDialogVisible = true;
-			new AlertDialog.Builder(this)
-					.setTitle(STORE_FALLBACK_TITLE)
-					.setMessage(message)
-					.setCancelable(true)
-					.setPositiveButton("Mettre a jour", (dialog, which) -> {
-						isStoreFallbackDialogVisible = false;
-						openPlayStoreListing();
-					})
-					.setNegativeButton("Plus tard", (dialog, which) -> {
-						isStoreFallbackDialogVisible = false;
-						dialog.dismiss();
-					})
-					.setOnDismissListener(dialog -> isStoreFallbackDialogVisible = false)
-					.show();
-		});
-	}
-
-	private void openPlayStoreListing() {
+		storeFallbackOpened = true;
 		String packageName = getPackageName();
-		String marketUrl = "market://details?id=" + packageName;
-		String webUrl = "https://play.google.com/store/apps/details?id=" + packageName;
 
 		try {
-			Intent marketIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(marketUrl));
-			marketIntent.setPackage("com.android.vending");
+			Intent marketIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName));
 			marketIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 			startActivity(marketIntent);
-			return;
 		} catch (ActivityNotFoundException error) {
-			Log.w(TAG, "Play Store app not found, falling back to web listing", error);
-		} catch (Exception error) {
-			Log.w(TAG, "Unable to open Play Store app, trying web listing", error);
-		}
-
-		try {
-			Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUrl));
+			Log.w(TAG, "Play Store app not found, opening web fallback", error);
+			Intent webIntent = new Intent(
+					Intent.ACTION_VIEW,
+					Uri.parse("https://play.google.com/store/apps/details?id=" + packageName)
+			);
 			webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 			startActivity(webIntent);
-		} catch (Exception error) {
-			Log.e(TAG, "Failed to open Play Store listing", error);
 		}
 	}
 
@@ -201,7 +164,7 @@ public class MainActivity extends BridgeActivity {
 
 		if (requestCode == APP_UPDATE_REQUEST_CODE && resultCode != RESULT_OK) {
 			Log.w(TAG, "In-app update canceled or failed with code: " + resultCode);
-			showStoreUpdateFallbackDialog(STORE_FALLBACK_MESSAGE);
+			openPlayStoreFallback();
 		}
 	}
 }

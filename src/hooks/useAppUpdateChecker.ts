@@ -24,7 +24,6 @@ type SnoozeRecord = {
 const SNOOZE_KEY = 'app_update_snooze_v1';
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PLAY_STORE_APP_ID = 'com.validele.app';
-const INITIAL_NATIVE_CHECK_DELAY_MS = 2500;
 
 const normalizeVersion = (value: string) => value.trim().replace(/^v/i, '');
 
@@ -107,8 +106,6 @@ export default function useAppUpdateChecker() {
   const [isOpeningStore, setIsOpeningStore] = useState(false);
   const isCheckingRef = useRef(false);
 
-  const nativeAndroidUsesPlayCore = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
-
   const checkForUpdate = useCallback(async () => {
     if (isCheckingRef.current) return;
     isCheckingRef.current = true;
@@ -117,26 +114,46 @@ export default function useAppUpdateChecker() {
       const appVersion = await getCurrentAppVersion();
       setCurrentVersion(appVersion);
 
-      const response = await fetch(apiUrl('/api/version'), {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
+      const versionEndpointCandidates = ['/api/version', '/version'];
+      let json: Partial<VersionApiResponse> | null = null;
 
-      if (!response.ok) return;
+      for (const endpoint of versionEndpointCandidates) {
+        const response = await fetch(apiUrl(endpoint), {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        }).catch(() => null);
 
-      const json = (await response.json().catch(() => null)) as Partial<VersionApiResponse> | null;
-      if (!json || typeof json.latestVersion !== 'string') return;
+        if (!response || !response.ok) continue;
 
-      const latestVersion = normalizeVersion(json.latestVersion);
-      if (!latestVersion) return;
+        const parsed = (await response.json().catch(() => null)) as Partial<VersionApiResponse> | null;
+        if (!parsed) continue;
+
+        json = parsed;
+        if (typeof parsed.latestVersion === 'string' && normalizeVersion(parsed.latestVersion)) {
+          break;
+        }
+      }
+
+      if (!json) return;
+
+      const latestVersion = typeof json.latestVersion === 'string' ? normalizeVersion(json.latestVersion) : '';
 
       const forceUpdate = Boolean(json.forceUpdate);
       const message = typeof json.message === 'string' && json.message.trim().length > 0
         ? json.message.trim()
         : 'Une nouvelle version est disponible avec des améliorations importantes.';
 
+      if (!latestVersion) {
+        if (forceUpdate) {
+          // Emergency path: let backend force update even if latestVersion is misconfigured.
+          setUpdateInfo({ latestVersion: appVersion, forceUpdate: true, message });
+          setIsOpen(true);
+        }
+        console.warn('[UpdateChecker] latestVersion manquant depuis /api/version');
+        return;
+      }
+
       if (compareVersions(appVersion, latestVersion) < 0) {
-        // Keep native Play Core as primary on Android; custom modal is fallback.
         if (!forceUpdate && hasActiveSnooze(latestVersion)) return;
 
         setUpdateInfo({ latestVersion, forceUpdate, message });
@@ -158,11 +175,7 @@ export default function useAppUpdateChecker() {
       void checkForUpdate();
     };
 
-    // On Android native, let Play Core attempt first then keep a fast fallback check.
-    const timeoutId = window.setTimeout(
-      runCheck,
-      nativeAndroidUsesPlayCore ? INITIAL_NATIVE_CHECK_DELAY_MS : 0,
-    );
+    const timeoutId = window.setTimeout(runCheck, 0);
 
     if (Capacitor.isNativePlatform()) {
       void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
@@ -188,32 +201,16 @@ export default function useAppUpdateChecker() {
         void appStateListener.remove();
       }
     };
-  }, [checkForUpdate, nativeAndroidUsesPlayCore]);
+  }, [checkForUpdate]);
 
   const handleUpdateNow = useCallback(async () => {
     const appId = getPlayStoreAppId();
     const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(appId)}`;
-    const marketUrl = `market://details?id=${encodeURIComponent(appId)}`;
     setIsOpeningStore(true);
 
     try {
       if (Capacitor.isNativePlatform()) {
-        const appAny = CapacitorApp as unknown as { openUrl?: (options: { url: string }) => Promise<void> };
-
-        if (typeof appAny.openUrl === 'function') {
-          // On Android, prefer market:// to open the full Play Store app page.
-          if (Capacitor.getPlatform() === 'android') {
-            try {
-              await appAny.openUrl({ url: marketUrl });
-            } catch {
-              await appAny.openUrl({ url: webUrl });
-            }
-          } else {
-            await appAny.openUrl({ url: webUrl });
-          }
-        } else {
-          await Browser.open({ url: webUrl });
-        }
+        await Browser.open({ url: webUrl });
       } else {
         window.open(webUrl, '_blank', 'noopener,noreferrer');
       }
@@ -224,7 +221,11 @@ export default function useAppUpdateChecker() {
     } catch (error) {
       console.error('[UpdateChecker] Erreur ouverture Play Store:', error);
       try {
-        window.open(webUrl, '_blank', 'noopener,noreferrer');
+        if (Capacitor.isNativePlatform()) {
+          window.location.href = webUrl;
+        } else {
+          window.open(webUrl, '_blank', 'noopener,noreferrer');
+        }
       } catch {
         // Ignore final fallback error.
       }
