@@ -241,20 +241,10 @@ const AdminDashboard: React.FC = () => {
   useEffect(() => {
     const checkAdminSession = async () => {
       try {
-        // First attempt: rely on http-only cookie (preferred)
-        let res = await fetch(apiUrl('/api/admin/validate'), {
+        // Only rely on secure server-side session validation (httpOnly cookie / current session)
+        const res = await fetch(apiUrl('/api/admin/validate'), {
           credentials: 'include'
         });
-
-        // If cookie-based validation failed, try Authorization header using cached admin token
-        if (!res.ok) {
-          const cached = localStorage.getItem('admin_token');
-          if (cached) {
-            res = await fetch(apiUrl('/api/admin/validate'), {
-              headers: { Authorization: `Bearer ${cached}` }
-            });
-          }
-        }
 
         if (res.ok) {
           setIsAuthenticated(true);
@@ -360,9 +350,7 @@ const AdminDashboard: React.FC = () => {
   }, [orders, isAuthenticated]);
 
   const getAuthHeader = (): HeadersInit => {
-    const adminToken = localStorage.getItem('admin_token');
     if (session?.access_token) return { Authorization: `Bearer ${session.access_token}` };
-    if (adminToken) return { Authorization: `Bearer ${adminToken}` };
     return {};
   };
 
@@ -1035,12 +1023,6 @@ const AdminDashboard: React.FC = () => {
                   toast({ title: 'Erreur', description: msg, variant: 'destructive' });
                   return;
                 }
-                // Prefer httpOnly cookie set by server. If server returns a token, persist as legacy fallback.
-                try {
-                  const token = (json && (json.access_token || json.admin_token)) || null;
-                  if (token) localStorage.setItem('admin_token', token);
-                  else localStorage.removeItem('admin_token');
-                } catch(e) { /* ignore storage errors */ }
                 setIsAuthenticated(true);
                 setShowAdminLogin(false);
                 setAdminEmail(''); setAdminPassword(''); setAdminOtp('');

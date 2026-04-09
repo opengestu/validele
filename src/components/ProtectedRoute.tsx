@@ -145,6 +145,12 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
 
   // Redirection si pas connecté
   if (!user) {
+    // For admin area, allow rendering the page even without a pre-existing
+    // frontend session. The admin page itself validates server-side session
+    // cookies and shows login when needed.
+    if (requiredRole === 'admin') {
+      return <>{children}</>;
+    }
     return <Navigate to="/auth" replace />;
   }
 

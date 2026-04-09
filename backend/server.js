@@ -34,6 +34,13 @@ try {
   console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || '';
+
+if (process.env.NODE_ENV === 'production' && !ADMIN_JWT_SECRET) {
+  console.error('[ADMIN] ADMIN_JWT_SECRET is required in production. Refusing to start.');
+  process.exit(1);
+}
+
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
@@ -2255,22 +2262,24 @@ app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
 
 // Generate/verify a simple HMAC-signed admin token (short-lived) using ADMIN_JWT_SECRET
 function generateAdminToken(userId) {
+  if (!ADMIN_JWT_SECRET) {
+    throw new Error('ADMIN_JWT_SECRET is not configured');
+  }
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const exp = Math.floor(Date.now() / 1000) + (parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10));
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp })).toString('base64url');
-  const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
-  const signature = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+  const signature = crypto.createHmac('sha256', ADMIN_JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
   return `${header}.${payload}.${signature}`;
 }
 
 function verifyAdminToken(token) {
   try {
+    if (!ADMIN_JWT_SECRET) return null;
     if (!token) return null;
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const [header, payload, signature] = parts;
-    const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
-    const expected = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+    const expected = crypto.createHmac('sha256', ADMIN_JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
     if (expected !== signature) return null;
     const obj = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
     if (!obj.exp || !obj.sub) return null;

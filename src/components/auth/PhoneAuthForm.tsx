@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, RefreshCw, Lock, User, Check, Clipboard, ShoppingCart, Truck } from 'lucide-react';
+import { ArrowRight, RefreshCw, Lock, User, Check, Clipboard, ShoppingCart, Truck, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
@@ -32,7 +32,16 @@ interface PhoneAuthFormProps {
   startResetPin?: boolean;
 }
 
+type UserRole = 'buyer' | 'vendor' | 'delivery';
+type SelectableRole = UserRole | '__role_unselected__';
+
+const ROLE_UNSELECTED: SelectableRole = '__role_unselected__';
+const ADDRESS_UNSELECTED = '__address_unselected__';
+const TRANSPORT_UNSELECTED = '__transport_unselected__';
+
 export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false }) => {
+  const FORGOT_PIN_CLICKS_KEY = 'pin_forgot_clicks_v1';
+  const MAX_FORGOT_PIN_CLICKS = 1;
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
   const [loading, setLoading] = useState(false);
   const [redirecting, setRedirecting] = useState(false); // Nouvel état pour le spinner de redirection
@@ -44,10 +53,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     pin: '',
     confirmPin: '',
     fullName: '',
-    role: 'buyer' as 'buyer' | 'vendor' | 'delivery',
+    role: ROLE_UNSELECTED as SelectableRole,
     companyName: '',
     vehicleInfo: '',
-    address: '',
+    address: ADDRESS_UNSELECTED,
     customAddress: '',
     walletType: 'wave-senegal'
   });
@@ -64,6 +73,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [confirmPinDigits, setConfirmPinDigits] = useState(['', '', '', '']);
   const [loginPinDigits, setLoginPinDigits] = useState(['', '', '', '']);
+  const [pinLockoutDetected, setPinLockoutDetected] = useState(false);
+  const [forgotPinClicks, setForgotPinClicks] = useState(0);
   // Store OTP code used for reset so we can re-verify server-side when saving the new PIN
   const [resetOtpCode, setResetOtpCode] = useState('');
  
@@ -77,6 +88,43 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // Local storage key used to persist the in-progress auth state so the flow
   // can be resumed if the app reloads / is backgrounded on mobile.
   const STORAGE_KEY = 'phone_auth_state_v1';
+
+  const isValidRole = (role: string): role is UserRole => role === 'buyer' || role === 'vendor' || role === 'delivery';
+  const getRoleLabel = (role: SelectableRole) => {
+    if (role === 'buyer') return 'Client(e)';
+    if (role === 'vendor') return 'Vendeur(se)';
+    if (role === 'delivery') return 'Livreur';
+    return 'Non sélectionné';
+  };
+
+  const normalizePhoneForKey = (rawPhone?: string | null) => String(rawPhone || '').replace(/\D/g, '');
+  const readForgotPinClicks = (rawPhone?: string | null) => {
+    const phoneKey = normalizePhoneForKey(rawPhone);
+    if (!phoneKey) return 0;
+    try {
+      const raw = localStorage.getItem(FORGOT_PIN_CLICKS_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      const value = Number(parsed[phoneKey] ?? 0);
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const saveForgotPinClicks = (rawPhone: string | null | undefined, value: number) => {
+    const phoneKey = normalizePhoneForKey(rawPhone);
+    if (!phoneKey) return;
+    try {
+      const raw = localStorage.getItem(FORGOT_PIN_CLICKS_KEY);
+      const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+      parsed[phoneKey] = Math.max(0, value);
+      localStorage.setItem(FORGOT_PIN_CLICKS_KEY, JSON.stringify(parsed));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
   // To avoid hammering clipboard reads on some mobile browsers, remember last attempt.
   const lastClipboardAttemptRef = useRef<number>(0);
 
@@ -131,11 +179,22 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // small delay to allow initialPhone to settle
       setTimeout(() => {
         // call the forgot handler to send OTP and set reset mode
-        handleForgotPin();
+        handleForgotPin(undefined, false);
       }, 150);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startResetPin, initialPhone]);
+
+  useEffect(() => {
+    if (step !== 'login-pin') {
+      setPinLockoutDetected(false);
+    }
+  }, [step]);
+
+  useEffect(() => {
+    const phoneSource = existingProfile ? formData.phone : null;
+    setForgotPinClicks(readForgotPinClicks(phoneSource));
+  }, [existingProfile, formData.phone]);
   // Clear stale existingProfile if somehow we're on the phone step with a leftover profile
   // (e.g. localStorage restored existingProfile without restoring step to login-pin)
   useEffect(() => {
@@ -682,8 +741,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
       const body = await loginResp.json().catch(() => ({}));
       if (!loginResp.ok) {
+        const retryAfterSeconds = Number.parseInt(String((body as any)?.retry_after_seconds ?? ''), 10);
+        const backendError = typeof (body as any)?.error === 'string' ? String((body as any).error) : '';
+        const isPinLockout =
+          loginResp.status === 429
+          || (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0)
+          || /trop\s+de\s+tentatives/i.test(backendError);
+        setPinLockoutDetected(isPinLockout);
         throw new Error(body.error || 'Code PIN incorrect');
       }
+      setPinLockoutDetected(false);
       // Succès : stocker token et session
       let accessToken = body.token;
       console.log('[DEBUG] /auth/login-pin result body:', body);
@@ -773,6 +840,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       handleSavePinForExistingUser();
     } else {
       // Nouvel utilisateur - compléter le profil
+      setFormData(prev => ({
+        ...prev,
+        role: ROLE_UNSELECTED,
+        address: ADDRESS_UNSELECTED,
+        customAddress: '',
+      }));
       setStep('profile');
     }
   };
@@ -854,6 +927,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   };
   // Compléter le profil
   const handleCompleteProfile = async () => {
+    if (!isValidRole(formData.role)) {
+      toast({
+        title: 'Erreur',
+        description: 'Veuillez choisir votre rôle: Client(e), Vendeur(se) ou Livreur.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const selectedRole = formData.role;
     const fullNameTrimmed = formData.fullName.trim();
     const fullNameParts = fullNameTrimmed.split(/\s+/).filter(Boolean);
     if (!fullNameTrimmed) {
@@ -872,11 +955,42 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
       return;
     }
+    if (selectedRole === 'delivery' && formData.vehicleInfo.trim().length === 0) {
+      toast({
+        title: 'Erreur',
+        description: 'Veuillez renseigner votre moyen de transport.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if ((selectedRole === 'buyer' || selectedRole === 'vendor') && formData.address === ADDRESS_UNSELECTED) {
+      toast({
+        title: 'Erreur',
+        description: 'Veuillez sélectionner une adresse.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if ((selectedRole === 'buyer' || selectedRole === 'vendor') && formData.address === 'Autre' && formData.customAddress.trim().length === 0) {
+      toast({
+        title: 'Erreur',
+        description: 'Veuillez saisir votre adresse exacte.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const selectedAddress = formData.address === 'Autre'
+      ? formData.customAddress.trim()
+      : (formData.address === ADDRESS_UNSELECTED ? '' : formData.address);
+
     setLoading(true);
     try {
       // Correction : normalisation stricte du wallet_type pour l'inscription
       let walletTypeToSend = formData.walletType;
-      if (formData.role === 'vendor') {
+      if (selectedRole === 'vendor') {
         if (walletTypeToSend === 'orange-money' || walletTypeToSend === 'orange-money-senegal') {
           walletTypeToSend = 'orange-senegal';
         }
@@ -892,11 +1006,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         body: JSON.stringify({
           full_name: fullNameTrimmed,
           phone: formData.phone,
-          role: formData.role,
+          role: selectedRole,
           company_name: formData.companyName,
           vehicle_info: formData.vehicleInfo,
-          wallet_type: formData.role === 'vendor' ? walletTypeToSend : null,
-          address: formData.address === 'Autre' ? formData.customAddress : formData.address,
+          wallet_type: selectedRole === 'vendor' ? walletTypeToSend : null,
+          address: selectedAddress,
           pin: formData.pin,
         }),
       });
@@ -917,7 +1031,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: newProfileId,
-        role: formData.role,
+        role: selectedRole,
         fullName: formData.fullName,
         loginTime: new Date().toISOString(),
         access_token: created && typeof created.token === 'string' ? created.token : undefined,
@@ -934,8 +1048,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      const redirectPath = formData.role === 'vendor' ? '/vendor' :
-                         formData.role === 'delivery' ? '/delivery' : '/buyer';
+      const redirectPath = selectedRole === 'vendor' ? '/vendor' :
+             selectedRole === 'delivery' ? '/delivery' : '/buyer';
      
       // Utiliser window.location pour forcer le rechargement et détecter la session
       window.location.href = redirectPath;
@@ -952,7 +1066,23 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     }
   };
   // Gérer le PIN oublié
-  const handleForgotPin = async (phoneOverride?: string) => {
+  const handleForgotPin = async (phoneOverride?: string, enforceLimit = true) => {
+    if (enforceLimit) {
+      const currentPhone = phoneOverride || formData.phone;
+      const currentClicks = readForgotPinClicks(currentPhone);
+      if (currentClicks >= MAX_FORGOT_PIN_CLICKS) {
+        toast({
+          title: 'Support requis',
+          description: 'Vous avez deja utilise la reinitialisation PIN. Veuillez appeler le support.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      const nextClicks = currentClicks + 1;
+      saveForgotPinClicks(currentPhone, nextClicks);
+      setForgotPinClicks(nextClicks);
+    }
+
     setLoading(true);
     try {
       // Format and set phone if override provided or to ensure correct format
@@ -1011,7 +1141,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
    
     // Si on est en mode reset PIN, ne pas rappeler handleSendOTP complet
     if (isResetPin) {
-      await handleForgotPin();
+      toast({
+        title: 'Support requis',
+        description: 'Pour limiter les SMS, un seul envoi est autorise. Veuillez appeler le support.',
+        variant: 'destructive',
+      });
+      return;
     } else {
       await handleSendOTP();
     }
@@ -1300,16 +1435,20 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           {/* PIN oublié + Changer de compte — côte à côte */}
           {step === 'login-pin' && (
             <div style={{ display: 'flex', gap: 14, justifyContent: 'center', alignItems: 'center', marginTop: 6, marginBottom: 8 }}>
-              <button
-                type="button"
-                onClick={() => handleForgotPin()}
-                disabled={!formData.phone || loading}
-                className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
-                style={{ color: '#111827', background: 'transparent' }}
-              >
-                PIN oublié ?
-              </button>
-              <span style={{ color: '#d1d5db', fontSize: 14 }}>|</span>
+              {pinLockoutDetected && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleForgotPin()}
+                    disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
+                    className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
+                    style={{ color: '#111827', background: 'transparent' }}
+                  >
+                    PIN oublié ?
+                  </button>
+                  <span style={{ color: '#d1d5db', fontSize: 14 }}>|</span>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1469,14 +1608,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
             {/* Desktop: bouton normal */}
             <div className="hidden sm:flex justify-center gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => handleForgotPin()}
-                disabled={!formData.phone || loading}
-                className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
-              >
-                PIN oublié ?
-              </button>
+              {pinLockoutDetected && (
+                <button
+                  type="button"
+                  onClick={() => handleForgotPin()}
+                  disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
+                  className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
+                >
+                  PIN oublié ?
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1543,10 +1684,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   <Truck className="w-8 h-8 text-blue-600" />
                 </div>
               )}
+              {!isValidRole(formData.role) && (
+                <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-2">
+                  <User className="w-8 h-8 text-gray-500" />
+                </div>
+              )}
               <h2 className="text-xl font-extrabold text-foreground">
-                {formData.role === 'buyer' && 'Profil Client(e)'}
-                {formData.role === 'vendor' && 'Profil Vendeur(se)'}
-                {formData.role === 'delivery' && 'Profil Livreur'}
+                Profil utilisateur
               </h2>
             </div>
             {/* QR Code supprimé à la demande */}
@@ -1560,7 +1704,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               />
             </div>
             <div>
-              <Label className="text-sm font-medium mb-2 block">Vous êtes...</Label>
+              <Label className="text-sm font-medium mb-2 block">Choisissez votre rôle</Label>
               {/* Mobile fallback: show a dialog sheet on small viewports to avoid native overlay issues */}
               {typeof window !== 'undefined' && window.innerWidth <= 640 ? (
                 <>
@@ -1569,17 +1713,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                     className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold justify-between w-full"
                     aria-haspopup="dialog"
                     aria-expanded={roleSheetOpen}
-                    aria-label={`Rôle: ${formData.role === 'buyer' ? 'Client(e)' : formData.role === 'vendor' ? 'Vendeur(se)' : 'Livreur'}`}
+                    aria-label={`Choix du rôle. Rôle actuel: ${getRoleLabel(formData.role)}`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       {formData.role === 'buyer' && <User className="h-5 w-5 text-primary" />}
                       {formData.role === 'vendor' && <ShoppingCart className="h-5 w-5 text-primary" />}
                       {formData.role === 'delivery' && <Truck className="h-5 w-5 text-primary" />}
+                      {!isValidRole(formData.role) && <User className="h-5 w-5 text-gray-500" />}
                       <span className="text-base font-semibold truncate min-w-0 ml-1 text-primary">
-                        {formData.role === 'buyer' ? 'Client(e)' : formData.role === 'vendor' ? 'Vendeur(se)' : 'Livreur'}
+                        Rôle: {isValidRole(formData.role) ? getRoleLabel(formData.role) : 'Sélectionner un rôle'}
                       </span>
                     </div>
-                    <span className="ml-2 opacity-60">▾</span>
+                    <ChevronDown className="ml-2 h-5 w-5 shrink-0 text-gray-700" />
                   </Button>
 
                   <Dialog open={roleSheetOpen} onOpenChange={setRoleSheetOpen}>
@@ -1623,27 +1768,49 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                             <div className="text-sm text-muted-foreground">Livrez des commandes</div>
                           </div>
                         </button>
+
+                              <div className="w-full p-3 rounded-xl border border-dashed bg-gray-50 text-sm text-muted-foreground opacity-80">
+                                Option par defaut desactivee: choisissez Client(e), Vendeur(se) ou Livreur.
+                              </div>
                       </div>
                     </DialogContent>
                   </Dialog>
                 </>
               ) : (
-                <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
-                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
-                    <SelectValue />
+                      <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                    <SelectValue placeholder="Sélectionner un rôle" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
-                    <SelectItem value="buyer" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                      <User className="h-5 w-5 text-primary" />
-                      <span className="text-primary">Client(e)</span>
+                          <SelectItem value={ROLE_UNSELECTED} disabled className="text-muted-foreground">
+                            Sélectionner un rôle (obligatoire)
+                          </SelectItem>
+                    <SelectItem value="buyer" className="py-2 px-3 hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <div className="flex items-start gap-2">
+                        <User className="h-5 w-5 text-primary mt-0.5" />
+                        <div className="leading-tight">
+                          <div className="text-base text-primary">Client(e)</div>
+                          <div className="text-xs text-muted-foreground">Achetez des produits</div>
+                        </div>
+                      </div>
                     </SelectItem>
-                    <SelectItem value="vendor" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                      <ShoppingCart className="h-5 w-5 text-primary" />
-                      <span className="text-primary">Vendeur(se)</span>
+                    <SelectItem value="vendor" className="py-2 px-3 hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <div className="flex items-start gap-2">
+                        <ShoppingCart className="h-5 w-5 text-primary mt-0.5" />
+                        <div className="leading-tight">
+                          <div className="text-base text-primary">Vendeur(se)</div>
+                          <div className="text-xs text-muted-foreground">Vendez vos produits</div>
+                        </div>
+                      </div>
                     </SelectItem>
-                    <SelectItem value="delivery" className="flex items-center gap-2 py-2 px-3 text-base hover:bg-primary/10 rounded-lg cursor-pointer">
-                      <Truck className="h-5 w-5 text-primary" />
-                      <span className="text-primary">Livreur</span>
+                    <SelectItem value="delivery" className="py-2 px-3 hover:bg-primary/10 rounded-lg cursor-pointer">
+                      <div className="flex items-start gap-2">
+                        <Truck className="h-5 w-5 text-primary mt-0.5" />
+                        <div className="leading-tight">
+                          <div className="text-base text-primary">Livreur</div>
+                          <div className="text-xs text-muted-foreground">Livrez des commandes</div>
+                        </div>
+                      </div>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1651,37 +1818,57 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             </div>
             {/* Champs spécifiques selon le rôle */}
             {formData.role === 'delivery' ? (
-              <Input
-                value={formData.vehicleInfo}
-                onChange={(e) => handleInputChange('vehicleInfo', e.target.value)}
-                placeholder="Immatriculation du véhicule (obligatoire)"
-                className="h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+              <Select
+                value={formData.vehicleInfo || TRANSPORT_UNSELECTED}
+                onValueChange={(value) => handleInputChange('vehicleInfo', value === TRANSPORT_UNSELECTED ? '' : value)}
                 required
-              />
+              >
+                <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                  <SelectValue placeholder="Moyen de transport" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                  <SelectItem value={TRANSPORT_UNSELECTED} disabled className="text-muted-foreground">
+                    Choisir un moyen de transport
+                  </SelectItem>
+                  <SelectItem value="Moto">Moto</SelectItem>
+                  <SelectItem value="Scooter">Scooter</SelectItem>
+                  <SelectItem value="Vélo">Vélo</SelectItem>
+                  <SelectItem value="Voiture">Voiture</SelectItem>
+                  <SelectItem value="Triporteur">Triporteur</SelectItem>
+                  <SelectItem value="Camionnette">Camionnette</SelectItem>
+                  <SelectItem value="Autre">Autre</SelectItem>
+                </SelectContent>
+              </Select>
             ) : (
               <>
-                <RoleSpecificFields
-                  role={formData.role}
-                  companyName={formData.companyName}
-                  vehicleInfo={formData.vehicleInfo}
-                  walletType={formData.walletType}
-                  onCompanyNameChange={(value) => handleInputChange('companyName', value)}
-                  onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
-                  onWalletTypeChange={(value) => handleInputChange('walletType', value)}
-                  disabled={loading}
-                  companyNamePlaceholder="Nom de votre boutique/entreprise"
-                />
+                {isValidRole(formData.role) ? (
+                  <RoleSpecificFields
+                    role={formData.role}
+                    companyName={formData.companyName}
+                    vehicleInfo={formData.vehicleInfo}
+                    walletType={formData.walletType}
+                    onCompanyNameChange={(value) => handleInputChange('companyName', value)}
+                    onVehicleInfoChange={(value) => handleInputChange('vehicleInfo', value)}
+                    onWalletTypeChange={(value) => handleInputChange('walletType', value)}
+                    disabled={loading}
+                    companyNamePlaceholder="Nom de votre boutique/entreprise"
+                  />
+                ) : null}
                 {/* Adresse: Select Senegal regions/quartiers + Autre */}
                 <Label className="text-sm font-medium mb-2 block">Adresse</Label>
                 <Select
                   value={formData.address}
                   onValueChange={(value) => handleInputChange('address', value)}
+                  disabled={!isValidRole(formData.role)}
                   required
                 >
-                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all">
-                    <SelectValue placeholder={formData.role === 'buyer' ? 'Adresse (obligatoire)' : 'Adresse de la boutique (obligatoire)'} />
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                    <SelectValue placeholder={formData.role === 'vendor' ? 'Adresse de la boutique (obligatoire)' : 'Adresse (obligatoire)'} />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                    <SelectItem value={ADDRESS_UNSELECTED} disabled className="text-muted-foreground">
+                      Adresse (obligatoire)
+                    </SelectItem>
                     <SelectItem value="Dakar - Plateau">Dakar - Plateau</SelectItem>
                     <SelectItem value="Dakar - Médina">Dakar - Médina</SelectItem>
                     <SelectItem value="Dakar - Parcelles Assainies">Dakar - Parcelles Assainies</SelectItem>
@@ -1774,7 +1961,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               type="button"
               onClick={handleCompleteProfile}
               className="w-full h-10 text-base rounded-xl"
-              disabled={loading || formData.fullName.trim().split(/\s+/).filter(Boolean).length < 2}
+              disabled={
+                loading
+                || !isValidRole(formData.role)
+                || formData.fullName.trim().split(/\s+/).filter(Boolean).length < 2
+                || ((formData.role === 'buyer' || formData.role === 'vendor') && formData.address === ADDRESS_UNSELECTED)
+                || ((formData.role === 'buyer' || formData.role === 'vendor') && formData.address === 'Autre' && formData.customAddress.trim().length === 0)
+                || (formData.role === 'delivery' && formData.vehicleInfo.trim().length === 0)
+              }
             >
               <div className="flex items-center gap-2">
                 <span>Terminer</span>
