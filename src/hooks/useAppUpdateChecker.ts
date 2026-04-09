@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { apiUrl } from '@/lib/api';
@@ -24,6 +24,7 @@ type SnoozeRecord = {
 const SNOOZE_KEY = 'app_update_snooze_v1';
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PLAY_STORE_APP_ID = 'com.validele.app';
+const INITIAL_NATIVE_CHECK_DELAY_MS = 2500;
 
 const normalizeVersion = (value: string) => value.trim().replace(/^v/i, '');
 
@@ -104,10 +105,14 @@ export default function useAppUpdateChecker() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isOpeningStore, setIsOpeningStore] = useState(false);
+  const isCheckingRef = useRef(false);
 
   const nativeAndroidUsesPlayCore = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
   const checkForUpdate = useCallback(async () => {
+    if (isCheckingRef.current) return;
+    isCheckingRef.current = true;
+
     try {
       const appVersion = await getCurrentAppVersion();
       setCurrentVersion(appVersion);
@@ -139,20 +144,51 @@ export default function useAppUpdateChecker() {
       }
     } catch (error) {
       console.warn('[UpdateChecker] Impossible de vérifier les mises à jour:', error);
+    } finally {
+      isCheckingRef.current = false;
     }
-  }, [nativeAndroidUsesPlayCore]);
+  }, []);
 
   useEffect(() => {
-    if (nativeAndroidUsesPlayCore) {
-      // Give native Play Core update flow time to start first.
-      const timeoutId = window.setTimeout(() => {
-        void checkForUpdate();
-      }, 12000);
-      return () => window.clearTimeout(timeoutId);
+    let cleanedUp = false;
+    let appStateListener: PluginListenerHandle | null = null;
+
+    const runCheck = () => {
+      if (cleanedUp) return;
+      void checkForUpdate();
+    };
+
+    // On Android native, let Play Core attempt first then keep a fast fallback check.
+    const timeoutId = window.setTimeout(
+      runCheck,
+      nativeAndroidUsesPlayCore ? INITIAL_NATIVE_CHECK_DELAY_MS : 0,
+    );
+
+    if (Capacitor.isNativePlatform()) {
+      void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) return;
+        runCheck();
+      })
+        .then((listener) => {
+          if (cleanedUp) {
+            void listener.remove();
+            return;
+          }
+          appStateListener = listener;
+        })
+        .catch(() => {
+          // Ignore listener registration errors.
+        });
     }
 
-    void checkForUpdate();
-  }, [checkForUpdate]);
+    return () => {
+      cleanedUp = true;
+      window.clearTimeout(timeoutId);
+      if (appStateListener) {
+        void appStateListener.remove();
+      }
+    };
+  }, [checkForUpdate, nativeAndroidUsesPlayCore]);
 
   const handleUpdateNow = useCallback(async () => {
     const appId = getPlayStoreAppId();
