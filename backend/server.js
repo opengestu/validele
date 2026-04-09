@@ -37,8 +37,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécuri
 const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || '';
 
 if (process.env.NODE_ENV === 'production' && !ADMIN_JWT_SECRET) {
-  console.error('[ADMIN] ADMIN_JWT_SECRET is required in production. Refusing to start.');
-  process.exit(1);
+  console.warn('[ADMIN] ADMIN_JWT_SECRET is missing in production. Local admin token flow (/api/admin/login-local) is disabled until configured.');
 }
 
 const cookieParser = require('cookie-parser');
@@ -2552,6 +2551,13 @@ app.post('/api/admin/login-local', async (req, res) => {
   try {
     const { profileId, pin } = req.body || {};
     if (!profileId || !pin) return res.status(400).json({ success: false, error: 'profileId and pin required' });
+
+    if (!ADMIN_JWT_SECRET) {
+      return res.status(503).json({
+        success: false,
+        error: 'ADMIN_JWT_SECRET is not configured. login-local is disabled on this environment.',
+      });
+    }
 
     // Fetch profile
     const { data: profile, error: profileErr } = await supabase
