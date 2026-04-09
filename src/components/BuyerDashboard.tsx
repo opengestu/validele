@@ -2476,29 +2476,31 @@ const BuyerDashboard = () => {
             
             <div className="flex-1 overflow-auto p-6">
               <div className="space-y-4">
-                <div className="flex justify-between items-start gap-4">
-                  <div className="flex-1">
-                    <h3 className="text-2xl font-bold text-gray-900">{searchResult.name}</h3>
-                    <p className="text-gray-600 mt-2">{searchResult.description}</p>
-                    <div className="mt-3">
-                      {searchResult.is_available ? (
-                        <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
-                          Produit actif
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
-                          Produit inactif
-                        </span>
-                      )}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-start gap-4">
+                    <h3 className="text-2xl font-bold text-gray-900 flex-1 min-w-0 leading-tight break-words">{searchResult.name}</h3>
+                    <div className="text-right shrink-0">
+                      <p className="text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
+                      <p className="text-sm text-gray-500 mt-1">Code: {searchResult.code}</p>
                     </div>
-                    <p className="text-sm text-gray-500 mt-1">
-                      <span className="font-medium">Vendeur(se):</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
-                    </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
-                    <p className="text-sm text-gray-500 mt-1">Code: {searchResult.code}</p>
+                  <p className="text-gray-600 whitespace-pre-line break-words leading-relaxed">
+                    {searchResult.description}
+                  </p>
+                  <div>
+                    {searchResult.is_available ? (
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
+                        Produit actif
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
+                        Produit inactif
+                      </span>
+                    )}
                   </div>
+                  <p className="text-sm text-gray-500 mt-1">
+                    <span className="font-medium">Vendeur(se):</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
+                  </p>
                 </div>
                 
                 <div className="flex items-center gap-3 pt-4 border-t">
@@ -2548,61 +2550,61 @@ const BuyerDashboard = () => {
                     Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
                   </p>
                 </div>
-
-                {/* Sélecteur de moyen de paiement */}
-                <div className="pt-4">
-                  <label className="text-base font-medium mb-2 block">Moyen de paiement</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => searchResult.is_available && setPaymentMethod('wave')}
-                      disabled={!searchResult.is_available}
-                      className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
-                        paymentMethod === 'wave' 
-                          ? 'border-black bg-black/5' 
-                          : 'border-gray-200 hover:border-gray-300'
-                      } ${
-                        !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
-                      <span className="text-sm font-semibold">Wave</span>
-                      {paymentMethod === 'wave' && (
-                        <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center">
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => searchResult.is_available && setPaymentMethod('orange_money')}
-                      disabled={!searchResult.is_available}
-                      className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
-                        paymentMethod === 'orange_money' 
-                          ? 'border-orange-500 bg-orange-50' 
-                          : 'border-gray-200 hover:border-gray-300'
-                      } ${
-                        !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
-                      <span className="text-sm font-semibold">Orange Money</span>
-                      {paymentMethod === 'orange_money' && (
-                        <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      )}
-                    </button>
-                  </div>
-                </div>
               </div>
             </div>
 
-            <div className="p-6 border-t bg-gray-50">
+            <div className="p-4 sm:p-6 border-t bg-gray-50 space-y-4">
+              {/* Garder le paiement visible hors zone scrollable */}
+              <div>
+                <label className="text-base font-medium mb-2 block">Moyen de paiement</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => searchResult.is_available && setPaymentMethod('wave')}
+                    disabled={!searchResult.is_available}
+                    className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                      paymentMethod === 'wave'
+                        ? 'border-black bg-black/5'
+                        : 'border-gray-200 hover:border-gray-300'
+                    } ${
+                      !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                    <span className="text-sm font-semibold">Wave</span>
+                    {paymentMethod === 'wave' && (
+                      <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => searchResult.is_available && setPaymentMethod('orange_money')}
+                    disabled={!searchResult.is_available}
+                    className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                      paymentMethod === 'orange_money'
+                        ? 'border-orange-500 bg-orange-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    } ${
+                      !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
+                    <span className="text-sm font-semibold">Orange Money</span>
+                    {paymentMethod === 'orange_money' && (
+                      <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </button>
+                </div>
+              </div>
+
               <div className="flex gap-3">
                 <Button
                   variant="outline"

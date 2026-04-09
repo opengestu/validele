@@ -313,6 +313,32 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
 
+// Version endpoint consumed by the app custom update checker.
+// Configure with env vars on Render:
+// - APP_LATEST_VERSION (ex: 3.2.4)
+// - FORCE_APP_UPDATE (true/false)
+// - APP_UPDATE_MESSAGE (optional)
+app.get('/api/version', (req, res) => {
+  const latestVersion = String(
+    process.env.APP_LATEST_VERSION
+    || process.env.LATEST_APP_VERSION
+    || process.env.ANDROID_LATEST_VERSION
+    || ''
+  ).trim();
+
+  const forceUpdate = String(process.env.FORCE_APP_UPDATE || 'false').toLowerCase() === 'true';
+  const message = String(
+    process.env.APP_UPDATE_MESSAGE
+    || 'Une nouvelle version est disponible avec des améliorations importantes.'
+  ).trim();
+
+  return res.json({
+    latestVersion,
+    forceUpdate,
+    message,
+  });
+});
+
 // Admin: test SMS sending (POST JSON { to, text }) or GET with query params
 app.all('/api/admin/test-sms', async (req, res) => {
   try {

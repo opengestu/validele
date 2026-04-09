@@ -92,12 +92,11 @@ const getCurrentAppVersion = async () => {
   return '0.0.0';
 };
 
-const getPlayStoreUrl = () => {
+const getPlayStoreAppId = () => {
   const envAppId = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env?.VITE_PLAY_STORE_APP_ID;
-  const appId = typeof envAppId === 'string' && envAppId.trim().length > 0
+  return typeof envAppId === 'string' && envAppId.trim().length > 0
     ? envAppId.trim()
     : DEFAULT_PLAY_STORE_APP_ID;
-  return `https://play.google.com/store/apps/details?id=${encodeURIComponent(appId)}`;
 };
 
 export default function useAppUpdateChecker() {
@@ -105,6 +104,8 @@ export default function useAppUpdateChecker() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isOpeningStore, setIsOpeningStore] = useState(false);
+
+  const nativeAndroidUsesPlayCore = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
   const checkForUpdate = useCallback(async () => {
     try {
@@ -130,6 +131,7 @@ export default function useAppUpdateChecker() {
         : 'Une nouvelle version est disponible avec des améliorations importantes.';
 
       if (compareVersions(appVersion, latestVersion) < 0) {
+        // Keep native Play Core as primary on Android; custom modal is fallback.
         if (!forceUpdate && hasActiveSnooze(latestVersion)) return;
 
         setUpdateInfo({ latestVersion, forceUpdate, message });
@@ -138,14 +140,24 @@ export default function useAppUpdateChecker() {
     } catch (error) {
       console.warn('[UpdateChecker] Impossible de vérifier les mises à jour:', error);
     }
-  }, []);
+  }, [nativeAndroidUsesPlayCore]);
 
   useEffect(() => {
+    if (nativeAndroidUsesPlayCore) {
+      // Give native Play Core update flow time to start first.
+      const timeoutId = window.setTimeout(() => {
+        void checkForUpdate();
+      }, 12000);
+      return () => window.clearTimeout(timeoutId);
+    }
+
     void checkForUpdate();
   }, [checkForUpdate]);
 
   const handleUpdateNow = useCallback(async () => {
-    const url = getPlayStoreUrl();
+    const appId = getPlayStoreAppId();
+    const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(appId)}`;
+    const marketUrl = `market://details?id=${encodeURIComponent(appId)}`;
     setIsOpeningStore(true);
 
     try {
@@ -153,12 +165,21 @@ export default function useAppUpdateChecker() {
         const appAny = CapacitorApp as unknown as { openUrl?: (options: { url: string }) => Promise<void> };
 
         if (typeof appAny.openUrl === 'function') {
-          await appAny.openUrl({ url });
+          // On Android, prefer market:// to open the full Play Store app page.
+          if (Capacitor.getPlatform() === 'android') {
+            try {
+              await appAny.openUrl({ url: marketUrl });
+            } catch {
+              await appAny.openUrl({ url: webUrl });
+            }
+          } else {
+            await appAny.openUrl({ url: webUrl });
+          }
         } else {
-          await Browser.open({ url });
+          await Browser.open({ url: webUrl });
         }
       } else {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        window.open(webUrl, '_blank', 'noopener,noreferrer');
       }
 
       if (!updateInfo?.forceUpdate) {
@@ -167,7 +188,7 @@ export default function useAppUpdateChecker() {
     } catch (error) {
       console.error('[UpdateChecker] Erreur ouverture Play Store:', error);
       try {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        window.open(webUrl, '_blank', 'noopener,noreferrer');
       } catch {
         // Ignore final fallback error.
       }
