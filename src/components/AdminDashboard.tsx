@@ -233,14 +233,29 @@ const AdminDashboard: React.FC = () => {
   const isAdminUser = userProfile ? !!(userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)) : true;
 
 
-  // Vérifier la session admin au chargement
+  // Vérifier la session admin au chargement/refresh.
+  // On attend que l'auth Supabase soit hydratée pour pouvoir fallback sur le Bearer token
+  // quand les cookies cross-site ne sont pas renvoyés par le navigateur.
   useEffect(() => {
+    if (authLoading) return;
+
+    let cancelled = false;
+
     const checkAdminSession = async () => {
       try {
-        // Only rely on secure server-side session validation (httpOnly cookie / current session)
-        const res = await fetch(apiUrl('/api/admin/validate'), {
+        let res = await fetch(apiUrl('/api/admin/validate'), {
           credentials: 'include'
         });
+
+        if (!res.ok && session?.access_token) {
+          res = await fetch(apiUrl('/api/admin/validate'), {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${session.access_token}` }
+          });
+        }
+
+        if (cancelled) return;
 
         if (res.ok) {
           setIsAuthenticated(true);
@@ -250,6 +265,7 @@ const AdminDashboard: React.FC = () => {
           setShowAdminLogin(true);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Erreur vérification session:', error);
         setIsAuthenticated(false);
         setShowAdminLogin(true);
@@ -257,8 +273,11 @@ const AdminDashboard: React.FC = () => {
     };
 
     checkAdminSession();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, session?.access_token]);
 
   useEffect(() => {
     // If the user is known and not admin, block access. If userProfile is missing, allow showing login form.
