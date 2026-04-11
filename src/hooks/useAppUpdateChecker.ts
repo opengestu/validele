@@ -105,6 +105,7 @@ export default function useAppUpdateChecker() {
   const [isOpen, setIsOpen] = useState(false);
   const [isOpeningStore, setIsOpeningStore] = useState(false);
   const isCheckingRef = useRef(false);
+  const nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
   const checkForUpdate = useCallback(async () => {
     if (isCheckingRef.current) return;
@@ -154,7 +155,8 @@ export default function useAppUpdateChecker() {
       }
 
       if (compareVersions(appVersion, latestVersion) < 0) {
-        if (!forceUpdate && hasActiveSnooze(latestVersion)) return;
+        // Emergency behavior: on Android, always re-show update prompt until user updates.
+        if (!nativeAndroid && !forceUpdate && hasActiveSnooze(latestVersion)) return;
 
         setUpdateInfo({ latestVersion, forceUpdate, message });
         setIsOpen(true);
@@ -164,7 +166,7 @@ export default function useAppUpdateChecker() {
     } finally {
       isCheckingRef.current = false;
     }
-  }, []);
+  }, [nativeAndroid]);
 
   useEffect(() => {
     let cleanedUp = false;
@@ -205,12 +207,26 @@ export default function useAppUpdateChecker() {
 
   const handleUpdateNow = useCallback(async () => {
     const appId = getPlayStoreAppId();
+    const marketUrl = `market://details?id=${encodeURIComponent(appId)}`;
     const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(appId)}`;
     setIsOpeningStore(true);
 
     try {
       if (Capacitor.isNativePlatform()) {
-        await Browser.open({ url: webUrl });
+        if (nativeAndroid) {
+          const appAny = CapacitorApp as unknown as { openUrl?: (options: { url: string }) => Promise<void> };
+          if (typeof appAny.openUrl === 'function') {
+            try {
+              await appAny.openUrl({ url: marketUrl });
+            } catch {
+              await appAny.openUrl({ url: webUrl });
+            }
+          } else {
+            await Browser.open({ url: webUrl });
+          }
+        } else {
+          await Browser.open({ url: webUrl });
+        }
       } else {
         window.open(webUrl, '_blank', 'noopener,noreferrer');
       }
@@ -222,7 +238,7 @@ export default function useAppUpdateChecker() {
       console.error('[UpdateChecker] Erreur ouverture Play Store:', error);
       try {
         if (Capacitor.isNativePlatform()) {
-          window.location.href = webUrl;
+          window.location.href = nativeAndroid ? marketUrl : webUrl;
         } else {
           window.open(webUrl, '_blank', 'noopener,noreferrer');
         }
@@ -232,7 +248,7 @@ export default function useAppUpdateChecker() {
     } finally {
       setIsOpeningStore(false);
     }
-  }, [updateInfo?.forceUpdate]);
+  }, [nativeAndroid, updateInfo?.forceUpdate]);
 
   const handleLater = useCallback(() => {
     if (!updateInfo || updateInfo.forceUpdate) return;

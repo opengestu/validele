@@ -2503,8 +2503,13 @@ const BuyerDashboard = () => {
                   </p>
                 </div>
                 
-                <div className="flex items-center gap-3 pt-4 border-t">
-                  <label className="text-base font-medium">Quantité:</label>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 border-t bg-gray-50 space-y-4">
+              <div className="rounded-lg border bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-base font-medium text-gray-900">Quantité:</label>
                   <div className="flex items-center gap-2">
                     <Button
                       type="button"
@@ -2544,16 +2549,14 @@ const BuyerDashboard = () => {
                     </Button>
                   </div>
                 </div>
-
-                <div className="pt-4 border-t">
-                  <p className="text-2xl font-bold text-gray-900">
-                    Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
-                  </p>
-                </div>
               </div>
-            </div>
 
-            <div className="p-4 sm:p-6 border-t bg-gray-50 space-y-4">
+              <div className="rounded-lg border bg-white px-4 py-3">
+                <p className="text-2xl font-bold text-gray-900">
+                  Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
+                </p>
+              </div>
+
               {/* Garder le paiement visible hors zone scrollable */}
               <div>
                 <label className="text-base font-medium mb-2 block">Moyen de paiement</label>
