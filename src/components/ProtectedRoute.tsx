@@ -94,6 +94,9 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // On rend les children derrière + un overlay transparent par-dessus
   // pour que l'utilisateur voie le contenu de l'app pendant le chargement
   if (loading) {
+    if (requiredRole === 'admin') {
+      return null;
+    }
     return <>{children}</>;
   }
 

@@ -1,6 +1,5 @@
  
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -162,9 +161,7 @@ type RefundRequest = {
 
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
-  const { session, userProfile, loading: authLoading, signOut } = useAuth();
-  const params = useParams();
-  const adminId = params?.adminId;
+  const { session, loading: authLoading, signOut } = useAuth();
   const [orders, setOrders] = useState<OrderFull[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
@@ -208,6 +205,7 @@ const AdminDashboard: React.FC = () => {
   // Admin login state - DOIT ÊTRE DÉCLARÉ AVANT LES useEffect
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminSessionChecked, setAdminSessionChecked] = useState(false);
 
   // Transaction details modal state
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionFull | null>(null);
@@ -227,21 +225,19 @@ const AdminDashboard: React.FC = () => {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
 
-  const ADMIN_ID = import.meta.env.VITE_ADMIN_USER_ID || '';
-  // If we have a userProfile, ensure it matches the admin id or the adminId param.
-  // If there is no userProfile (not signed-in via supabase), allow the page to attempt admin login via cookies.
-  const isAdminUser = userProfile ? !!(userProfile.id === ADMIN_ID || (adminId && userProfile.id === adminId)) : true;
-
-
   // Vérifier la session admin au chargement/refresh.
   // On attend que l'auth Supabase soit hydratée pour pouvoir fallback sur le Bearer token
   // quand les cookies cross-site ne sont pas renvoyés par le navigateur.
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading) {
+      setAdminSessionChecked(false);
+      return;
+    }
 
     let cancelled = false;
 
     const checkAdminSession = async () => {
+      setAdminSessionChecked(false);
       try {
         let res = await fetch(apiUrl('/api/admin/validate'), {
           credentials: 'include'
@@ -269,6 +265,8 @@ const AdminDashboard: React.FC = () => {
         console.error('Erreur vérification session:', error);
         setIsAuthenticated(false);
         setShowAdminLogin(true);
+      } finally {
+        if (!cancelled) setAdminSessionChecked(true);
       }
     };
 
@@ -280,16 +278,11 @@ const AdminDashboard: React.FC = () => {
   }, [authLoading, session?.access_token]);
 
   useEffect(() => {
-    // If the user is known and not admin, block access. If userProfile is missing, allow showing login form.
-    if (userProfile && !isAdminUser) {
-      setLoading(false);
-      return;
-    }
     if (isAuthenticated) {
       fetchData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile, adminId, isAuthenticated]);
+  }, [isAuthenticated]);
 
   // Background polling (silent): orders every 1s, transactions every 5s.
   useEffect(() => {
@@ -984,13 +977,14 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Le spinner de chargement est géré par ProtectedRoute (overlay transparent)
-
-  if (!isAdminUser) {
+  // Evite tout affichage du dashboard avant la fin de la vérification de session admin.
+  if (authLoading || !adminSessionChecked) {
     return (
-      <div className="max-w-3xl mx-auto py-12 text-center">
-        <h1 className="text-xl font-bold mb-2">Accès restreint</h1>
-        <p className="text-gray-600">Cette page est réservée à l'administrateur.</p>
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="flex items-center gap-3 text-slate-700">
+          <Spinner className="h-5 w-5" />
+          <span>Vérification de la session admin...</span>
+        </div>
       </div>
     );
   }
@@ -1001,6 +995,7 @@ const AdminDashboard: React.FC = () => {
         onSuccess={() => {
           setIsAuthenticated(true);
           setShowAdminLogin(false);
+          setAdminSessionChecked(true);
           fetchData();
         }}
       />
