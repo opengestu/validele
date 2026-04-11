@@ -53,16 +53,6 @@
         display: grid;
         gap: 10px;
       }
-      .btn-secondary {
-        border: 1px solid #cbd5e1;
-        background: #ffffff;
-        color: #0f172a;
-        border-radius: 10px;
-        padding: 12px 14px;
-        width: 100%;
-        cursor: pointer;
-        font-weight: 600;
-      }
       .error {
         margin-top: 10px;
         color: #b91c1c;
@@ -80,9 +70,8 @@
       </p>
       <div class="actions">
         <button id="open-login" class="btn" type="button">Se connecter en tant que membre invite</button>
-        <button id="open-signup" class="btn-secondary" type="button">Premier acces: definir mon mot de passe</button>
       </div>
-      <div id="hint" class="hint">Apres connexion, vous serez redirige vers la page admin.</div>
+      <div id="hint" class="hint">Premier acces: ouvrez le lien d'invitation recu par email pour definir le mot de passe. Ensuite, connectez-vous ici.</div>
       <div id="error" class="error" aria-live="polite"></div>
     </main>
 
@@ -90,7 +79,6 @@
       (function () {
         const errorEl = document.getElementById('error');
         const loginBtn = document.getElementById('open-login');
-        const signupBtn = document.getElementById('open-signup');
         const hintEl = document.getElementById('hint');
 
         const readParams = () => {
@@ -168,13 +156,6 @@
         if (loginBtn) {
           loginBtn.addEventListener('click', function () {
             window.netlifyIdentity.open('login');
-          });
-        }
-
-        if (signupBtn) {
-          signupBtn.addEventListener('click', function () {
-            window.netlifyIdentity.open('signup');
-            showHint('Si vous etes invite, utilisez le lien recu par email puis definissez votre mot de passe.');
           });
         }
       })();
