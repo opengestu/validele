@@ -53,15 +53,33 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 const app = express();
 
 // CORS global, avant toute route
-const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
+const normalizeOrigin = (value) => String(value || '').trim().replace(/\/+$/, '');
+const FRONTEND_ORIGIN = normalizeOrigin(process.env.VITE_DEV_ORIGIN || process.env.FRONTEND_ORIGIN || '');
+const EXTRA_FRONTEND_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => normalizeOrigin(o))
+  .filter(Boolean);
+const ALLOWED_ORIGINS = new Set([FRONTEND_ORIGIN, ...EXTRA_FRONTEND_ORIGINS].filter(Boolean));
+
+if (ALLOWED_ORIGINS.size > 0) {
+  console.log('[CORS] Allowed origins:', Array.from(ALLOWED_ORIGINS).join(', '));
+} else {
+  console.warn('[CORS] No explicit origin configured. Set VITE_DEV_ORIGIN or CORS_ALLOWED_ORIGINS in production.');
+}
+
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser (curl) or same-origin server requests
     if (!origin) return callback(null, true);
-    // Allow explicit VITE_DEV_ORIGIN
-    if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return callback(null, true);
+
+    const normalizedRequestOrigin = normalizeOrigin(origin);
+    // Allow explicit configured origins
+    if (ALLOWED_ORIGINS.has(normalizedRequestOrigin)) return callback(null, true);
+
     // Allow any localhost or 127.0.0.1 on any port (dev convenience)
-    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return callback(null, true);
+    if (/^https?:\/\/localhost(:\d+)?$/.test(normalizedRequestOrigin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(normalizedRequestOrigin)) return callback(null, true);
+
+    console.warn('[CORS] Blocked origin:', normalizedRequestOrigin);
     return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true,

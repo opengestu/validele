@@ -21,7 +21,7 @@ Recommended for compatibility with current codebase:
 - VITE_API_URL=https://your-backend.onrender.com
 - VITE_API_BASE=https://your-backend.onrender.com
 - VITE_ADMIN_USER_ID=<admin-profile-uuid>
-- VITE_ADMIN_ONLY_MODE=false
+- VITE_ADMIN_ONLY_MODE=true
 - VITE_PAYDUNYA_MODE=prod
 
 Optional local-only value (do not set in production Pages unless needed):
@@ -45,6 +45,9 @@ Required:
 - ADMIN_JWT_SECRET=<another-long-random-secret>
 - ADMIN_USER_ID=<admin-profile-uuid>
 - VITE_DEV_ORIGIN=https://your-project.pages.dev
+
+If you use multiple frontend domains (Pages + workers.dev preview/custom domains):
+- CORS_ALLOWED_ORIGINS=https://your-project.pages.dev,https://validele.numacademy110.workers.dev
 
 Payment and notification providers (required if those features are enabled):
 - DIRECT7_API_KEY=<direct7-api-key>
