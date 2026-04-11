@@ -3,8 +3,10 @@ import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path'; // Ajoutez ceci
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), cloudflare()],
   base: './', // Important pour Capacitor - chemins relatifs
   server: {
     https: {
