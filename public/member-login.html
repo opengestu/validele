@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Connexion Membre - Validel Admin</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: radial-gradient(circle at top, #f8fafc, #e2e8f0);
+        color: #0f172a;
+      }
+      .card {
+        width: min(92vw, 440px);
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+        padding: 24px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.3rem;
+      }
+      p {
+        margin: 0 0 18px;
+        color: #475569;
+        line-height: 1.45;
+      }
+      .btn {
+        border: 0;
+        background: #0f172a;
+        color: #fff;
+        border-radius: 10px;
+        padding: 12px 14px;
+        width: 100%;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .hint {
+        margin-top: 12px;
+        font-size: 0.9rem;
+        color: #64748b;
+      }
+      .error {
+        margin-top: 10px;
+        color: #b91c1c;
+        font-size: 0.9rem;
+      }
+    </style>
+    <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Acces Admin Restreint</h1>
+      <p>
+        Cette zone est reservee aux membres invites. Connectez-vous avec l'email invite
+        pour acceder au dashboard admin.
+      </p>
+      <button id="open-login" class="btn" type="button">Se connecter en tant que membre invite</button>
+      <div class="hint">Apres connexion, vous serez redirige vers la page admin.</div>
+      <div id="error" class="error" aria-live="polite"></div>
+    </main>
+
+    <script>
+      (function () {
+        const errorEl = document.getElementById('error');
+        const loginBtn = document.getElementById('open-login');
+
+        const showError = (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        };
+
+        if (!window.netlifyIdentity) {
+          showError('Netlify Identity non disponible. Verifiez la configuration du site.');
+          return;
+        }
+
+        window.netlifyIdentity.on('init', function (user) {
+          if (user) {
+            window.location.replace('/admin');
+          }
+        });
+
+        window.netlifyIdentity.on('login', function () {
+          window.location.replace('/admin');
+        });
+
+        window.netlifyIdentity.on('error', function (err) {
+          const message = err && err.message ? err.message : 'Erreur de connexion.';
+          showError(message);
+        });
+
+        window.netlifyIdentity.init();
+
+        if (loginBtn) {
+          loginBtn.addEventListener('click', function () {
+            window.netlifyIdentity.open('login');
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

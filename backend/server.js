@@ -2576,8 +2576,9 @@ app.post('/api/admin/refresh', async (req, res) => {
 
 // POST /api/admin/logout - clear admin cookies
 app.post('/api/admin/logout', async (req, res) => {
-  res.clearCookie('admin_access', { path: '/' });
-  res.clearCookie('admin_refresh', { path: '/api/admin/refresh' });
+  const clearCookieOptions = { httpOnly: true, secure: true, sameSite: 'none' };
+  res.clearCookie('admin_access', { ...clearCookieOptions, path: '/' });
+  res.clearCookie('admin_refresh', { ...clearCookieOptions, path: '/api/admin/refresh' });
   return res.json({ success: true });
 });
 

@@ -162,7 +162,7 @@ type RefundRequest = {
 
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
-  const { session, userProfile, loading: authLoading } = useAuth();
+  const { session, userProfile, loading: authLoading, signOut } = useAuth();
   const params = useParams();
   const adminId = params?.adminId;
   const [orders, setOrders] = useState<OrderFull[]>([]);
@@ -438,40 +438,46 @@ const AdminDashboard: React.FC = () => {
   const isOnline = useNetwork();
 
   const handleLogout = async () => {
+    let serverLogoutOk = false;
     try {
-      await fetch(apiUrl('/api/admin/logout'), {
+      const res = await fetch(apiUrl('/api/admin/logout'), {
         method: 'POST',
         headers: getAuthHeader(),
         credentials: 'include'
       });
-      
-      // Nettoyer le state et le localStorage
-      try { 
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_orders');
-        localStorage.removeItem('admin_transactions');
-      } catch(e) { /* ignore */ }
-      
-      setIsAuthenticated(false);
-      setShowAdminLogin(true);
-      setOrders([]);
-      setTransactions([]);
-      setBatches([]);
-      setRefunds([]);
-      setTransfers([]);
-      
-      toast({ 
-        title: 'Déconnecté', 
-        description: 'Vous avez été déconnecté avec succès' 
-      });
+      serverLogoutOk = res.ok;
     } catch (error) {
       console.error('Erreur déconnexion:', error);
-      toast({ 
-        title: 'Erreur', 
-        description: 'Erreur lors de la déconnexion', 
-        variant: 'destructive' 
-      });
     }
+
+    try {
+      // Ensure client-side Supabase session is removed so refresh cannot re-auth via bearer fallback.
+      await signOut();
+    } catch (error) {
+      console.error('Erreur déconnexion Supabase:', error);
+    }
+
+    // Nettoyer le state et le localStorage
+    try {
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_orders');
+      localStorage.removeItem('admin_transactions');
+    } catch(e) { /* ignore */ }
+
+    setIsAuthenticated(false);
+    setShowAdminLogin(true);
+    setOrders([]);
+    setTransactions([]);
+    setBatches([]);
+    setRefunds([]);
+    setTransfers([]);
+
+    toast({
+      title: 'Déconnecté',
+      description: serverLogoutOk
+        ? 'Vous avez été déconnecté avec succès'
+        : 'Session locale fermée. Reconnectez-vous pour continuer.'
+    });
   };
 
   // Ouvrir une facture dans une modal avec authentification admin
