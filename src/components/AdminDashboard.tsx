@@ -1002,12 +1002,13 @@ const AdminDashboard: React.FC = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto py-6">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Dashboard Admin</h1>
+    <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 md:py-6">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-xl font-bold sm:text-2xl">Dashboard Admin</h1>
         <Button 
           variant="destructive" 
           size="sm"
+          className="w-full sm:w-auto"
           onClick={handleLogout}
         >
           Se déconnecter
@@ -1021,14 +1022,17 @@ const AdminDashboard: React.FC = () => {
       )}
 
       <div>
-        <div className="flex gap-4 mb-4 flex-wrap">
-          <button className={`px-3 py-2 rounded ${activeTab === 'orders' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('orders')}>Commandes</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'refunds' ? 'bg-pink-700 text-white' : 'bg-pink-100 text-pink-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
-          <button className={`px-3 py-2 rounded ${activeTab === 'transfers' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
-          <div className="relative">
+        <div className="mb-4 space-y-3">
+          <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'orders' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('orders')}>Commandes</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'refunds' ? 'bg-pink-700 text-white' : 'bg-pink-100 text-pink-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'transfers' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
+          </div>
+
+          <div className="relative w-full">
             <input
               type="text"
               value={searchQuery}
@@ -1040,7 +1044,7 @@ const AdminDashboard: React.FC = () => {
                 activeTab === 'refunds' ? 'remboursements (order, acheteur, statut...)' : 
                 'batches (ID, statut...)'
               }`}
-              className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-10 text-sm focus:border-transparent focus:ring-2 focus:ring-green-500"
             />
             <svg className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1062,7 +1066,8 @@ const AdminDashboard: React.FC = () => {
               <CardTitle>Commandes</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[1080px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1135,6 +1140,7 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              </div>
 
 
             </CardContent>
@@ -1143,7 +1149,7 @@ const AdminDashboard: React.FC = () => {
 
         {activeTab === 'transactions' && (
           <Card>
-            <CardHeader className="flex items-center justify-between">
+            <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle>Transactions (payouts)</CardTitle>
               <Button 
                 variant="outline" 
@@ -1178,7 +1184,8 @@ const AdminDashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
 
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[980px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1227,6 +1234,7 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1239,9 +1247,9 @@ const AdminDashboard: React.FC = () => {
               <CardTitle>Payout Batches</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between mb-4">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div />
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button onClick={async () => {
                     setProcessing(true);
                     try {
@@ -1265,55 +1273,57 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-20">ID</TableHead>
-                    <TableHead>Scheduled</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filterBatches(batches).filter(b => !['completed','cancelled'].includes(b.status || '')).map(b => (
-                    <TableRow key={b.id}>
-                      <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
-                      <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
-                      <TableCell>
-                        <span className={`px-2 py-1 rounded text-sm ${
-                          b.status === 'processing' ? 'bg-blue-100 text-blue-800' :
-                          b.status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
-                          b.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          b.status === 'failed' ? 'bg-red-100 text-red-800' :
-                          'bg-slate-100 text-slate-700'
-                        }`}>
-                          {b.status === 'processing' ? '⏳ En cours' :
-                           b.status === 'scheduled' ? '📅 Programmé' :
-                           b.status === 'completed' ? '✓ Terminé' :
-                           b.status === 'failed' ? '✗ Échoué' :
-                           b.status || '-'}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {(b.total_amount||0).toLocaleString()} FCFA
-                        {b.commission_pct ? ` — commission ${b.commission_pct}%` : ''}
-                      </TableCell>
-                      <TableCell className="flex gap-2">
-                        <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
-                        <Button size="sm" disabled={b.status === 'processing' || processing} className={b.status === 'processing' ? 'bg-blue-400' : ''} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: b.status === 'failed' ? 'Relance du batch initiée' : 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? '⏳ En cours...' : b.status === 'failed' ? 'Relancer' : 'Traiter'}</Button>
-                        <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Annuler</Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-
-                  {filterBatches(batches).filter(b => !['completed','failed','cancelled'].includes(b.status || '')).length === 0 && (
+              <div className="w-full overflow-x-auto">
+                <Table className="min-w-[860px]">
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-gray-500">Aucun payout en attente</TableCell>
+                      <TableHead className="w-20">ID</TableHead>
+                      <TableHead>Scheduled</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filterBatches(batches).filter(b => !['completed','cancelled'].includes(b.status || '')).map(b => (
+                      <TableRow key={b.id}>
+                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={b.id}>{b.id.substring(0, 8)}...</TableCell>
+                        <TableCell>{b.scheduled_at ? new Date(b.scheduled_at).toLocaleString() : '-'}</TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded text-sm ${
+                            b.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                            b.status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
+                            b.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            b.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {b.status === 'processing' ? '⏳ En cours' :
+                             b.status === 'scheduled' ? '📅 Programmé' :
+                             b.status === 'completed' ? '✓ Terminé' :
+                             b.status === 'failed' ? '✗ Échoué' :
+                             b.status || '-'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {(b.total_amount||0).toLocaleString()} FCFA
+                          {b.commission_pct ? ` — commission ${b.commission_pct}%` : ''}
+                        </TableCell>
+                        <TableCell className="flex gap-2">
+                          <Button size="sm" onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/details`), { headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); setSelectedBatch(json.batch); setSelectedBatchItems(json.items||[]); setBatchDetailsOpen(true); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Details</Button>
+                          <Button size="sm" disabled={b.status === 'processing' || processing} className={b.status === 'processing' ? 'bg-blue-400' : ''} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/process`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: b.status === 'failed' ? 'Relance du batch initiée' : 'Batch processed' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>{b.status === 'processing' ? '⏳ En cours...' : b.status === 'failed' ? 'Relancer' : 'Traiter'}</Button>
+                          <Button size="sm" variant="destructive" disabled={b.status === 'processing' || processing} onClick={async () => { setProcessing(true); try { const res = await fetch(apiUrl(`/api/admin/payout-batches/${b.id}/cancel`), { method: 'POST', headers: { ...getAuthHeader() } }); const json = await res.json(); if (!res.ok) throw new Error(json?.error || 'Erreur'); toast({ title: 'Succès', description: 'Batch cancelled' }); fetchData(); } catch(err: unknown) { toast({ title: 'Erreur', description: err instanceof Error ? err.message : String(err), variant: 'destructive' }); } finally { setProcessing(false); } }}>Annuler</Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+
+                    {filterBatches(batches).filter(b => !['completed','failed','cancelled'].includes(b.status || '')).length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-gray-500">Aucun payout en attente</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1325,7 +1335,8 @@ const AdminDashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-600 mb-3">Liste des batches complétés / annulés (historique)</p>
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[860px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1361,6 +1372,7 @@ const AdminDashboard: React.FC = () => {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1489,7 +1501,8 @@ const AdminDashboard: React.FC = () => {
 
               {/* Transfer History */}
               <h4 className="font-semibold mb-3">Historique des transferts</h4>
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[820px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1538,6 +1551,7 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1554,7 +1568,8 @@ const AdminDashboard: React.FC = () => {
 
               {/* Pending Refunds */}
               <h4 className="font-semibold mb-3">Demandes en attente</h4>
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1624,10 +1639,12 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              </div>
 
               {/* Processed Refunds History */}
               <h4 className="font-semibold mt-8 mb-3">Historique des remboursements</h4>
-              <Table>
+              <div className="w-full overflow-x-auto">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">ID</TableHead>
@@ -1686,6 +1703,7 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1709,10 +1727,10 @@ const AdminDashboard: React.FC = () => {
     {/* Modal Invoice Viewer */}
     {invoiceViewerOpen && (
       <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center backdrop-blur-sm">
-        <div className="bg-white rounded-lg w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col shadow-2xl">
-          <div className="p-4 border-b flex items-center justify-between">
+        <div className="mx-3 flex max-h-[92vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-2xl sm:mx-4">
+          <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-lg font-semibold">{invoiceViewerTitle}</h3>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {invoiceViewerHtml && (
                 <Button size="sm" onClick={downloadVisibleInvoice} className="bg-primary text-primary-foreground">
                   Télécharger
@@ -1748,8 +1766,8 @@ const AdminDashboard: React.FC = () => {
 function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string) => void; onRetryItem?: (item: PayoutBatchItem) => void }){
   if (!batch) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
-      <div className="bg-white rounded-xl shadow-lg max-w-4xl w-full overflow-auto" style={{ maxHeight: '80vh' }}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6">
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl bg-white shadow-lg">
         <div className="p-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">Détails Batch {batch.id}</h3>
           <div className="flex items-center gap-2">
@@ -1763,7 +1781,8 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }
 
           <div className="mt-4">
             <h4 className="font-semibold mb-2">Items</h4>
-            <Table>
+            <div className="w-full overflow-x-auto">
+            <Table className="min-w-[860px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Order</TableHead>
@@ -1796,6 +1815,7 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
         </div>
       </div>
@@ -1810,8 +1830,8 @@ function TransactionDetailsModal({ tx, onClose }: { tx: TransactionFull | null; 
     try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-xl shadow-lg max-w-3xl w-full overflow-auto" style={{ maxHeight: '80vh' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl bg-white shadow-lg">
         <div className="p-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">Transaction {tx.transaction_id || tx.id}</h3>
           <div className="flex items-center gap-2">
