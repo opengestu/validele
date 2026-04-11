@@ -49,6 +49,20 @@
         font-size: 0.9rem;
         color: #64748b;
       }
+      .actions {
+        display: grid;
+        gap: 10px;
+      }
+      .btn-secondary {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #0f172a;
+        border-radius: 10px;
+        padding: 12px 14px;
+        width: 100%;
+        cursor: pointer;
+        font-weight: 600;
+      }
       .error {
         margin-top: 10px;
         color: #b91c1c;
@@ -64,8 +78,11 @@
         Cette zone est reservee aux membres invites. Connectez-vous avec l'email invite
         pour acceder au dashboard admin.
       </p>
-      <button id="open-login" class="btn" type="button">Se connecter en tant que membre invite</button>
-      <div class="hint">Apres connexion, vous serez redirige vers la page admin.</div>
+      <div class="actions">
+        <button id="open-login" class="btn" type="button">Se connecter en tant que membre invite</button>
+        <button id="open-signup" class="btn-secondary" type="button">Premier acces: definir mon mot de passe</button>
+      </div>
+      <div id="hint" class="hint">Apres connexion, vous serez redirige vers la page admin.</div>
       <div id="error" class="error" aria-live="polite"></div>
     </main>
 
@@ -73,9 +90,49 @@
       (function () {
         const errorEl = document.getElementById('error');
         const loginBtn = document.getElementById('open-login');
+        const signupBtn = document.getElementById('open-signup');
+        const hintEl = document.getElementById('hint');
+
+        const readParams = () => {
+          const query = new URLSearchParams(window.location.search || '');
+          const hashRaw = (window.location.hash || '').replace(/^#/, '');
+          const hash = new URLSearchParams(hashRaw);
+          return {
+            inviteToken: hash.get('invite_token') || query.get('invite_token') || '',
+            recoveryToken: hash.get('recovery_token') || query.get('recovery_token') || '',
+            confirmationToken: hash.get('confirmation_token') || query.get('confirmation_token') || '',
+            emailChangeToken: hash.get('email_change_token') || query.get('email_change_token') || ''
+          };
+        };
+
+        const tokenState = readParams();
+        const hasTokenFlow = !!(
+          tokenState.inviteToken ||
+          tokenState.recoveryToken ||
+          tokenState.confirmationToken ||
+          tokenState.emailChangeToken
+        );
 
         const showError = (msg) => {
           if (errorEl) errorEl.textContent = msg;
+        };
+
+        const showHint = (msg) => {
+          if (hintEl) hintEl.textContent = msg;
+        };
+
+        const openByFlow = () => {
+          if (tokenState.inviteToken) {
+            window.netlifyIdentity.open('signup');
+            showHint('Invitation detectee: definissez votre mot de passe, puis connectez-vous.');
+            return;
+          }
+          if (tokenState.recoveryToken) {
+            window.netlifyIdentity.open('recovery');
+            showHint('Lien de recuperation detecte: choisissez un nouveau mot de passe.');
+            return;
+          }
+          window.netlifyIdentity.open('login');
         };
 
         if (!window.netlifyIdentity) {
@@ -84,6 +141,10 @@
         }
 
         window.netlifyIdentity.on('init', function (user) {
+          if (hasTokenFlow) {
+            openByFlow();
+            return;
+          }
           if (user) {
             window.location.replace('/admin');
           }
@@ -100,9 +161,20 @@
 
         window.netlifyIdentity.init();
 
+        if (hasTokenFlow) {
+          showHint('Lien d\'invitation detecte. Finalisez le mot de passe dans la fenetre Netlify.');
+        }
+
         if (loginBtn) {
           loginBtn.addEventListener('click', function () {
             window.netlifyIdentity.open('login');
+          });
+        }
+
+        if (signupBtn) {
+          signupBtn.addEventListener('click', function () {
+            window.netlifyIdentity.open('signup');
+            showHint('Si vous etes invite, utilisez le lien recu par email puis definissez votre mot de passe.');
           });
         }
       })();

@@ -3,7 +3,7 @@
 /admin          /index.html          200   Role=authenticated
 /admin/*        /index.html          200   Role=authenticated
 
-/admin          /member-login        302
-/admin/*        /member-login        302
+/admin          /member-login.html   200
+/admin/*        /member-login.html   200
 
 /*              /index.html          200
