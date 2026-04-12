@@ -1498,8 +1498,19 @@ app.post('/api/otp/send', async (req, res) => {
 
     const otpResult = await sendOTP(formattedPhone);
     const channel = otpResult.channel || 'sms';
+    const reused = Boolean(otpResult.reused);
+    const provider = otpResult.provider || 'unknown';
 
-    res.json({ success: true, message: channel === 'whatsapp' ? 'Code envoyé par WhatsApp' : 'Code envoyé par SMS', phone: formattedPhone, channel });
+    res.json({
+      success: true,
+      message: reused
+        ? 'Un code est déjà actif. Réutilisez le code reçu récemment.'
+        : (channel === 'whatsapp' ? 'Code envoyé par WhatsApp' : 'Code envoyé par SMS'),
+      phone: formattedPhone,
+      channel,
+      reused,
+      provider,
+    });
   } catch (error) {
     console.error('[OTP] Erreur envoi:', error);
     const message = (error && error.message) ? String(error.message) : 'Erreur lors de l\'envoi du code';
@@ -1516,6 +1527,13 @@ app.post('/api/otp/send', async (req, res) => {
         success: false,
         error: 'Configuration SMS manquante côté serveur.',
         code: 'SMS_CONFIG_MISSING'
+      });
+    }
+    if (message.includes('D7_OTP')) {
+      return res.status(502).json({
+        success: false,
+        error: 'Erreur fournisseur OTP D7. Vérifiez la configuration Verify API.',
+        code: 'OTP_PROVIDER_ERROR'
       });
     }
     res.status(500).json({ success: false, error: message });

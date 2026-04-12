@@ -52,6 +52,14 @@ If you use multiple frontend domains (Pages + workers.dev preview/custom domains
 Payment and notification providers (required if those features are enabled):
 - DIRECT7_API_KEY=<direct7-api-key>
 - D7_API_KEY_NOTIFY=<direct7-notify-api-key>
+- D7_OTP_PROVIDER_ENABLED=true
+- D7_OTP_PROVIDER_STRICT=false
+- D7_OTP_SEND_URL=https://api.d7networks.com/verify/v1/otp/send-otp
+- D7_OTP_VERIFY_URL=https://api.d7networks.com/verify/v1/otp/verify-otp
+- D7_OTP_ORIGINATOR=VALIDEL
+- D7_OTP_TEMPLATE=Votre code de verification VALIDEL est: {}. Il expire dans 5 minutes.
+- D7_OTP_EXPIRY_SECONDS=300
+- D7_OTP_RESEND_COOLDOWN_MS=60000
 - PAYDUNYA_MODE=prod
 - PAYDUNYA_MASTER_KEY=<paydunya-master-key>
 - PAYDUNYA_PRIVATE_KEY=<paydunya-private-key>
