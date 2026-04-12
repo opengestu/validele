@@ -52,6 +52,65 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 
 const app = express();
 
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const OTP_SEND_MAX_ATTEMPTS = parsePositiveInt(process.env.OTP_SEND_MAX_ATTEMPTS, 3);
+const OTP_SEND_WINDOW_MS = parsePositiveInt(process.env.OTP_SEND_WINDOW_MS, 10 * 60 * 1000);
+const OTP_VERIFY_MAX_ATTEMPTS = parsePositiveInt(process.env.OTP_VERIFY_MAX_ATTEMPTS, 5);
+const OTP_VERIFY_WINDOW_MS = parsePositiveInt(process.env.OTP_VERIFY_WINDOW_MS, 10 * 60 * 1000);
+const OTP_LOCK_MS = parsePositiveInt(process.env.OTP_LOCK_MS, 15 * 60 * 1000);
+
+// In-memory OTP rate limit state by phone suffix + IP.
+const otpSendAttempts = new Map();
+const otpVerifyAttempts = new Map();
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+function getOtpAttemptKey(phone, req) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const last9 = digits.slice(-9) || digits || 'unknown';
+  const ip = getClientIp(req);
+  return `${last9}:${ip}`;
+}
+
+function getRemainingLockMs(entry, now) {
+  if (!entry || !entry.lockedUntil || entry.lockedUntil <= now) return 0;
+  return entry.lockedUntil - now;
+}
+
+function registerOtpAttempt(store, key, now, windowMs, maxAttempts, lockMs) {
+  const existing = store.get(key);
+
+  if (!existing || now - existing.windowStart > windowMs) {
+    const next = { attempts: 1, windowStart: now, lockedUntil: 0 };
+    if (next.attempts >= maxAttempts) {
+      next.lockedUntil = now + lockMs;
+    }
+    store.set(key, next);
+    return next;
+  }
+
+  existing.attempts += 1;
+  if (existing.attempts >= maxAttempts) {
+    existing.lockedUntil = now + lockMs;
+  }
+  store.set(key, existing);
+  return existing;
+}
+
+function clearOtpAttempts(store, key) {
+  store.delete(key);
+}
+
 // CORS global, avant toute route
 const normalizeOrigin = (value) => String(value || '').trim().replace(/\/+$/, '');
 const FRONTEND_ORIGIN = normalizeOrigin(process.env.VITE_DEV_ORIGIN || process.env.FRONTEND_ORIGIN || '');
@@ -1377,6 +1436,36 @@ app.post('/api/otp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
     }
 
+    const sendKey = getOtpAttemptKey(formattedPhone, req);
+    const now = Date.now();
+    const remainingLockMs = getRemainingLockMs(otpSendAttempts.get(sendKey), now);
+    if (remainingLockMs > 0) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(remainingLockMs / 1000));
+      return res.status(429).json({
+        success: false,
+        error: `Trop de demandes OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
+        retry_after_seconds: retryAfterSeconds,
+      });
+    }
+
+    const attemptEntry = registerOtpAttempt(
+      otpSendAttempts,
+      sendKey,
+      now,
+      OTP_SEND_WINDOW_MS,
+      OTP_SEND_MAX_ATTEMPTS,
+      OTP_LOCK_MS
+    );
+    const lockAfterAttemptMs = getRemainingLockMs(attemptEntry, now);
+    if (lockAfterAttemptMs > 0) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(lockAfterAttemptMs / 1000));
+      return res.status(429).json({
+        success: false,
+        error: `Trop de demandes OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
+        retry_after_seconds: retryAfterSeconds,
+      });
+    }
+
     console.log(`[OTP] Demande d'envoi pour: ${formattedPhone} (allowExisting: ${!!allowExisting})`);
 
     // Protection serveur : empêcher l'envoi d'OTP si un profil existe déjà pour ce numéro
@@ -1452,6 +1541,18 @@ app.post('/api/otp/verify', async (req, res) => {
       }
     }
 
+    const verifyKey = getOtpAttemptKey(formattedPhone, req);
+    const now = Date.now();
+    const remainingLockMs = getRemainingLockMs(otpVerifyAttempts.get(verifyKey), now);
+    if (remainingLockMs > 0) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(remainingLockMs / 1000));
+      return res.status(429).json({
+        success: false,
+        error: `Trop de tentatives de vérification OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
+        retry_after_seconds: retryAfterSeconds,
+      });
+    }
+
     console.log(`[OTP] Vérification pour: ${formattedPhone}, code: ${code}`);
 
     const result = await verifyOTP(formattedPhone, code);
@@ -1486,8 +1587,27 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
 });
 
     if (result.valid) {
+      clearOtpAttempts(otpVerifyAttempts, verifyKey);
       res.json({ success: true, valid: true });
     } else {
+      const attemptEntry = registerOtpAttempt(
+        otpVerifyAttempts,
+        verifyKey,
+        now,
+        OTP_VERIFY_WINDOW_MS,
+        OTP_VERIFY_MAX_ATTEMPTS,
+        OTP_LOCK_MS
+      );
+      const lockAfterAttemptMs = getRemainingLockMs(attemptEntry, now);
+      if (lockAfterAttemptMs > 0) {
+        const retryAfterSeconds = Math.max(1, Math.ceil(lockAfterAttemptMs / 1000));
+        return res.status(429).json({
+          success: false,
+          valid: false,
+          error: `Trop de tentatives de vérification OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
+          retry_after_seconds: retryAfterSeconds,
+        });
+      }
       res.status(400).json({ success: false, valid: false, error: result.error });
     }
   } catch (error) {
