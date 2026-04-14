@@ -1500,6 +1500,7 @@ app.post('/api/otp/send', async (req, res) => {
     const channel = otpResult.channel || 'sms';
     const reused = Boolean(otpResult.reused);
     const provider = otpResult.provider || 'unknown';
+    const otpLength = Number.parseInt(String(otpResult.otpLength || 4), 10) || 4;
 
     res.json({
       success: true,
@@ -1510,6 +1511,7 @@ app.post('/api/otp/send', async (req, res) => {
       channel,
       reused,
       provider,
+      otp_length: otpLength,
     });
   } catch (error) {
     console.error('[OTP] Erreur envoi:', error);
