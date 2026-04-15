@@ -1,5 +1,5 @@
  
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -49,17 +49,17 @@ type ProfileRef = {
 };
 
 // Module-level helpers (exported so they can be used by nested components/modals)
-export function displayProfileName(p?: ProfileRef | null, fallback?: string) {
+function displayProfileName(p?: ProfileRef | null, fallback?: string) {
   if (!p) return fallback || '-';
   return p.full_name || (p as any).name || `${(p as any).first_name || ''} ${(p as any).last_name || ''}`.trim() || p.phone || fallback || '-';
 }
 
-export function displayProfileAddress(p?: ProfileRef | null, fallback?: string) {
+function displayProfileAddress(p?: ProfileRef | null, fallback?: string) {
   if (!p) return fallback || '-';
   return p.address || fallback || p.phone || '-';
 }
 
-export function displayOrderPerson(o: any, role: 'buyer' | 'vendor' | 'delivery') {
+function displayOrderPerson(o: any, role: 'buyer' | 'vendor' | 'delivery') {
   try {
     const p = role === 'buyer' ? o.buyer : role === 'vendor' ? o.vendor : o.delivery;
     const orderLevelName = (o as any)[`${role}_full_name`] || (o as any)[`${role}_name`];
@@ -70,7 +70,7 @@ export function displayOrderPerson(o: any, role: 'buyer' | 'vendor' | 'delivery'
   }
 }
 
-export function displayOrderAddress(o: any) {
+function displayOrderAddress(o: any) {
   return (o && (o.buyer?.address || o.delivery_address)) || displayProfileAddress(o?.buyer) || '-';
 }
 
@@ -159,6 +159,27 @@ type RefundRequest = {
   buyer?: ProfileRef | null;
 };
 
+type CommissionRow = {
+  payoutItemId: string;
+  batchId: string;
+  orderId: string;
+  orderCode: string;
+  vendorName: string;
+  grossAmount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  vendorNetAmount: number;
+  status: string;
+  createdAt?: string;
+};
+
+const moneyValue = (value?: number | null): number => {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const formatFcfa = (amount: number) => `${Math.round(amount).toLocaleString('fr-FR')} FCFA`;
+
 const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
   const { session, loading: authLoading, signOut } = useAuth();
@@ -171,7 +192,7 @@ const AdminDashboard: React.FC = () => {
   const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'transfers'|'refunds'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'commissions'|'transfers'|'refunds'>('orders');
 
   // Admin transfers state
   const [transfers, setTransfers] = useState<AdminTransfer[]>([]);
@@ -653,6 +674,86 @@ const AdminDashboard: React.FC = () => {
     );
   };
 
+  const filterCommissionRows = (rows: CommissionRow[]) => {
+    if (!searchQuery.trim()) return rows;
+    const q = searchQuery.toLowerCase();
+    return rows.filter(r =>
+      r.batchId.toLowerCase().includes(q) ||
+      r.orderId.toLowerCase().includes(q) ||
+      r.orderCode.toLowerCase().includes(q) ||
+      r.vendorName.toLowerCase().includes(q) ||
+      r.status.toLowerCase().includes(q)
+    );
+  };
+
+  const commissionOverview = useMemo(() => {
+    const ordersMap = new Map((orders || []).map((o) => [o.id, o]));
+
+    let totalCommission = 0;
+    let commissionPaid = 0;
+    let commissionPending = 0;
+    let commissionFailed = 0;
+    const rows: CommissionRow[] = [];
+
+    for (const item of batchItems || []) {
+      const grossAmount = moneyValue(item.amount);
+      const itemAmount = moneyValue(item.amount);
+      const commissionRate = moneyValue(item.commission_pct);
+      const inferredCommission = itemAmount > 0 && commissionRate > 0 ? (itemAmount * commissionRate) / 100 : 0;
+      const commissionAmount = moneyValue(item.commission_amount) || inferredCommission;
+      if (commissionAmount <= 0) continue;
+
+      const vendorNetAmount = moneyValue(item.net_amount) || Math.max(itemAmount - commissionAmount, 0);
+      const itemStatus = String(item.status || 'queued').toLowerCase();
+      const orderId = item.order_id || item.order?.id || '-';
+      const linkedOrder = ordersMap.get(orderId);
+      const vendorFromItem = displayProfileName(item.vendor, '');
+      const vendorFromOrder = linkedOrder ? displayOrderPerson(linkedOrder, 'vendor') : '';
+
+      totalCommission += commissionAmount;
+
+      if (itemStatus === 'paid') {
+        commissionPaid += commissionAmount;
+      } else if (itemStatus === 'failed') {
+        commissionFailed += commissionAmount;
+      } else {
+        commissionPending += commissionAmount;
+      }
+
+      rows.push({
+        payoutItemId: item.id,
+        batchId: item.batch_id || '-',
+        orderId,
+        orderCode: item.order?.order_code || linkedOrder?.order_code || '-',
+        vendorName: vendorFromItem || vendorFromOrder || '-',
+        grossAmount,
+        commissionRate,
+        commissionAmount,
+        vendorNetAmount,
+        status: itemStatus,
+        createdAt: item.created_at
+      });
+    }
+
+    const rowsSorted = rows.slice().sort((a, b) => {
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    });
+
+    const averageRate = rows.length > 0 ? rows.reduce((sum, r) => sum + r.commissionRate, 0) / rows.length : 0;
+    const averageCommission = rows.length > 0 ? totalCommission / rows.length : 0;
+
+    return {
+      payoutsWithCommission: rows.length,
+      totalCommission,
+      commissionPaid,
+      commissionPending,
+      commissionFailed,
+      averageRate,
+      averageCommission,
+      rows: rowsSorted
+    };
+  }, [batchItems, orders]);
+
   // Profile display helpers are defined at module top and reused here.
 
   // Helper: determine if a refund is truly pending (unreviewed and unprocessed)
@@ -1029,6 +1130,7 @@ const AdminDashboard: React.FC = () => {
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
+            <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'commissions' ? 'bg-emerald-700 text-white' : 'bg-emerald-100 text-emerald-900'}`} onClick={() => setActiveTab('commissions')}>📊 Commissions</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'refunds' ? 'bg-pink-700 text-white' : 'bg-pink-100 text-pink-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'transfers' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`} onClick={() => setActiveTab('transfers')}>💸 Transferts</button>
           </div>
@@ -1041,6 +1143,7 @@ const AdminDashboard: React.FC = () => {
               placeholder={`🔍 Rechercher ${
                 activeTab === 'orders' ? 'commandes (code, nom, téléphone, statut...)' : 
                 activeTab === 'transactions' ? 'transactions (ID, order, batch, provider...)' : 
+                activeTab === 'commissions' ? 'commissions (order, vendeur, statut...)' :
                 activeTab === 'transfers' ? 'transfers (téléphone, wallet, statut...)' : 
                 activeTab === 'refunds' ? 'remboursements (order, acheteur, statut...)' : 
                 'batches (ID, statut...)'
@@ -1373,6 +1476,102 @@ const AdminDashboard: React.FC = () => {
                   ))}
                 </TableBody>
               </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'commissions' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>📊 Commissions Payouts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="mb-4 text-sm text-gray-600">
+                Affichage limité aux commissions réellement appliquées sur les payouts.
+              </p>
+
+              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-emerald-700">Total commissions appliquées</p>
+                  <p className="mt-1 text-xl font-semibold text-emerald-900">{formatFcfa(commissionOverview.totalCommission)}</p>
+                  <p className="text-xs text-emerald-800">Commission moyenne: {formatFcfa(commissionOverview.averageCommission)}</p>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-blue-700">Commissions payées</p>
+                  <p className="mt-1 text-xl font-semibold text-blue-900">{formatFcfa(commissionOverview.commissionPaid)}</p>
+                  <p className="text-xs text-blue-800">Déjà encaissées</p>
+                </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-amber-700">Commissions en cours</p>
+                  <p className="mt-1 text-xl font-semibold text-blue-900">{formatFcfa(commissionOverview.commissionPending)}</p>
+                  <p className="text-xs text-amber-800">Payouts non finalisés</p>
+                </div>
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-rose-700">Payouts commissionnés</p>
+                  <p className="mt-1 text-xl font-semibold text-rose-900">{commissionOverview.payoutsWithCommission}</p>
+                  <p className="text-xs text-rose-800">Taux moyen: {commissionOverview.averageRate.toFixed(2)}%</p>
+                </div>
+              </div>
+
+              <p className="mb-5 text-xs text-slate-500">
+                Commissions échouées: {formatFcfa(commissionOverview.commissionFailed)}
+              </p>
+
+              <div className="w-full overflow-x-auto">
+                <Table className="min-w-[1080px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Batch</TableHead>
+                      <TableHead>Commande</TableHead>
+                      <TableHead>Vendeur</TableHead>
+                      <TableHead>Montant payout</TableHead>
+                      <TableHead>Taux</TableHead>
+                      <TableHead>Commission</TableHead>
+                      <TableHead>Statut</TableHead>
+                      <TableHead>Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filterCommissionRows(commissionOverview.rows).map(row => (
+                      <TableRow key={row.payoutItemId}>
+                        <TableCell className="font-mono text-xs truncate max-w-[90px]" title={row.batchId}>
+                          {row.batchId !== '-' ? `${row.batchId.slice(0, 8)}...` : '-'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium">{row.orderCode}</div>
+                          <div className="text-xs text-gray-500">{row.orderId !== '-' ? `${row.orderId.slice(0, 8)}...` : '-'}</div>
+                        </TableCell>
+                        <TableCell>{row.vendorName}</TableCell>
+                        <TableCell>{formatFcfa(row.grossAmount)}</TableCell>
+                        <TableCell>{row.commissionRate > 0 ? `${row.commissionRate.toFixed(2)}%` : '-'}</TableCell>
+                        <TableCell className="font-semibold text-emerald-700">{formatFcfa(row.commissionAmount)}</TableCell>
+                        <TableCell>
+                          <span className={`rounded px-2 py-1 text-xs ${
+                            row.status === 'paid' ? 'bg-green-100 text-green-800' :
+                            row.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                            row.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {row.status === 'paid' ? 'Payée' :
+                             row.status === 'processing' ? 'En cours' :
+                             row.status === 'failed' ? 'Échouée' :
+                             'En file'}
+                          </span>
+                        </TableCell>
+                        <TableCell>{row.createdAt ? new Date(row.createdAt).toLocaleString() : '-'}</TableCell>
+                      </TableRow>
+                    ))}
+
+                    {filterCommissionRows(commissionOverview.rows).length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-gray-500">
+                          Aucune commission calculable pour le moment
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             </CardContent>
           </Card>

@@ -1,10 +1,12 @@
-# Environment Variables Setup
+<!-- # Environment Variables Setup
 
 This project uses two deployment environments:
+
 - Frontend: Cloudflare Pages
 - Backend: Render
 
 Important:
+
 - Variables starting with VITE_ are exposed in browser bundles.
 - Never put private provider keys or service_role keys in VITE_ variables.
 
@@ -13,21 +15,25 @@ Important:
 Add these in Cloudflare Pages -> Settings -> Variables and Secrets:
 
 Required:
-- VITE_API_BASE_URL=https://your-backend.onrender.com
+
+- VITE_API_BASE_URL=<https://your-backend.onrender.com>
 - VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
 - VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 
 Recommended for compatibility with current codebase:
-- VITE_API_URL=https://your-backend.onrender.com
-- VITE_API_BASE=https://your-backend.onrender.com
+
+- VITE_API_URL=<https://your-backend.onrender.com>
+- VITE_API_BASE=<https://your-backend.onrender.com>
 - VITE_ADMIN_USER_ID=<admin-profile-uuid>
 - VITE_ADMIN_ONLY_MODE=true
 - VITE_PAYDUNYA_MODE=prod
 
 Optional local-only value (do not set in production Pages unless needed):
-- VITE_DEV_BACKEND=http://localhost:5000
+
+- VITE_DEV_BACKEND=<http://localhost:5000>
 
 Do NOT add real secrets in frontend variables:
+
 - VITE_PAYDUNYA_MASTER_KEY
 - VITE_PAYDUNYA_PRIVATE_KEY
 - VITE_PAYDUNYA_TOKEN
@@ -37,6 +43,7 @@ Do NOT add real secrets in frontend variables:
 Add these in Render -> Service -> Environment:
 
 Required:
+
 - NODE_ENV=production
 - PORT=5000
 - SUPABASE_URL=https://<your-project-ref>.supabase.co
@@ -44,18 +51,20 @@ Required:
 - JWT_SECRET=<long-random-secret>
 - ADMIN_JWT_SECRET=<another-long-random-secret>
 - ADMIN_USER_ID=<admin-profile-uuid>
-- VITE_DEV_ORIGIN=https://your-project.pages.dev
+- VITE_DEV_ORIGIN=<https://your-project.pages.dev>
 
 If you use multiple frontend domains (Pages + workers.dev preview/custom domains):
-- CORS_ALLOWED_ORIGINS=https://your-project.pages.dev,https://validele.numacademy110.workers.dev
+
+- CORS_ALLOWED_ORIGINS=<https://your-project.pages.dev,https://validele.numacademy110.workers.dev>
 
 Payment and notification providers (required if those features are enabled):
+
 - DIRECT7_API_KEY=<direct7-api-key>
 - D7_API_KEY_NOTIFY=<direct7-notify-api-key>
 - D7_OTP_PROVIDER_ENABLED=true
 - D7_OTP_PROVIDER_STRICT=false
-- D7_OTP_SEND_URL=https://api.d7networks.com/verify/v1/otp/send-otp
-- D7_OTP_VERIFY_URL=https://api.d7networks.com/verify/v1/otp/verify-otp
+- D7_OTP_SEND_URL=<https://api.d7networks.com/verify/v1/otp/send-otp>
+- D7_OTP_VERIFY_URL=<https://api.d7networks.com/verify/v1/otp/verify-otp>
 - D7_OTP_ORIGINATOR=VALIDEL
 - D7_OTP_TEMPLATE=Votre code de verification VALIDEL est: {}. Il expire dans 5 minutes.
 - D7_OTP_LENGTH=4
@@ -66,11 +75,12 @@ Payment and notification providers (required if those features are enabled):
 - PAYDUNYA_PRIVATE_KEY=<paydunya-private-key>
 - PAYDUNYA_PUBLIC_KEY=<paydunya-public-key>
 - PAYDUNYA_TOKEN=<paydunya-token>
-- PAYDUNYA_CALLBACK_URL=https://your-backend.onrender.com/api/paydunya/callback
+- PAYDUNYA_CALLBACK_URL=<https://your-backend.onrender.com/api/paydunya/callback>
 - PIXPAY_API_KEY=<pixpay-api-key>
 - PIXPAY_BUSINESS_ID=<pixpay-business-id>
 
 Recommended defaults:
+
 - ADMIN_TOKEN_TTL=3600
 - FORCE_APP_UPDATE=false
 - APP_LATEST_VERSION=1.0.0
@@ -88,4 +98,4 @@ Recommended defaults:
 - .env.example
 - backend/.env.example
 
-Use these templates as the source of truth when adding variables to Cloudflare and Render.
+Use these templates as the source of truth when adding variables to Cloudflare and Render. -->
