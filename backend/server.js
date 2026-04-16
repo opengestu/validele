@@ -19,7 +19,6 @@ if (SUPABASE_ANON_KEY_SOURCE) {
   console.warn('[ADMIN] Supabase anon key not found in environment (SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY)');
 }
 const fs = require('fs');
-const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -35,12 +34,6 @@ try {
   console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
-const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || '';
-
-if (process.env.NODE_ENV === 'production' && !ADMIN_JWT_SECRET) {
-  console.warn('[ADMIN] ADMIN_JWT_SECRET is missing in production. Local admin token flow (/api/admin/login-local) is disabled until configured.');
-}
-
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
@@ -52,93 +45,16 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 
 const app = express();
 
-const parsePositiveInt = (value, fallback) => {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
-
-const OTP_SEND_MAX_ATTEMPTS = parsePositiveInt(process.env.OTP_SEND_MAX_ATTEMPTS, 3);
-const OTP_SEND_WINDOW_MS = parsePositiveInt(process.env.OTP_SEND_WINDOW_MS, 10 * 60 * 1000);
-const OTP_VERIFY_MAX_ATTEMPTS = parsePositiveInt(process.env.OTP_VERIFY_MAX_ATTEMPTS, 5);
-const OTP_VERIFY_WINDOW_MS = parsePositiveInt(process.env.OTP_VERIFY_WINDOW_MS, 10 * 60 * 1000);
-const OTP_LOCK_MS = parsePositiveInt(process.env.OTP_LOCK_MS, 15 * 60 * 1000);
-
-// In-memory OTP rate limit state by phone suffix + IP.
-const otpSendAttempts = new Map();
-const otpVerifyAttempts = new Map();
-
-function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.ip || req.connection?.remoteAddress || 'unknown';
-}
-
-function getOtpAttemptKey(phone, req) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  const last9 = digits.slice(-9) || digits || 'unknown';
-  const ip = getClientIp(req);
-  return `${last9}:${ip}`;
-}
-
-function getRemainingLockMs(entry, now) {
-  if (!entry || !entry.lockedUntil || entry.lockedUntil <= now) return 0;
-  return entry.lockedUntil - now;
-}
-
-function registerOtpAttempt(store, key, now, windowMs, maxAttempts, lockMs) {
-  const existing = store.get(key);
-
-  if (!existing || now - existing.windowStart > windowMs) {
-    const next = { attempts: 1, windowStart: now, lockedUntil: 0 };
-    if (next.attempts >= maxAttempts) {
-      next.lockedUntil = now + lockMs;
-    }
-    store.set(key, next);
-    return next;
-  }
-
-  existing.attempts += 1;
-  if (existing.attempts >= maxAttempts) {
-    existing.lockedUntil = now + lockMs;
-  }
-  store.set(key, existing);
-  return existing;
-}
-
-function clearOtpAttempts(store, key) {
-  store.delete(key);
-}
-
 // CORS global, avant toute route
-const normalizeOrigin = (value) => String(value || '').trim().replace(/\/+$/, '');
-const FRONTEND_ORIGIN = normalizeOrigin(process.env.VITE_DEV_ORIGIN || process.env.FRONTEND_ORIGIN || '');
-const EXTRA_FRONTEND_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((o) => normalizeOrigin(o))
-  .filter(Boolean);
-const ALLOWED_ORIGINS = new Set([FRONTEND_ORIGIN, ...EXTRA_FRONTEND_ORIGINS].filter(Boolean));
-
-if (ALLOWED_ORIGINS.size > 0) {
-  console.log('[CORS] Allowed origins:', Array.from(ALLOWED_ORIGINS).join(', '));
-} else {
-  console.warn('[CORS] No explicit origin configured. Set VITE_DEV_ORIGIN or CORS_ALLOWED_ORIGINS in production.');
-}
-
+const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser (curl) or same-origin server requests
     if (!origin) return callback(null, true);
-
-    const normalizedRequestOrigin = normalizeOrigin(origin);
-    // Allow explicit configured origins
-    if (ALLOWED_ORIGINS.has(normalizedRequestOrigin)) return callback(null, true);
-
+    // Allow explicit VITE_DEV_ORIGIN
+    if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return callback(null, true);
     // Allow any localhost or 127.0.0.1 on any port (dev convenience)
-    if (/^https?:\/\/localhost(:\d+)?$/.test(normalizedRequestOrigin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(normalizedRequestOrigin)) return callback(null, true);
-
-    console.warn('[CORS] Blocked origin:', normalizedRequestOrigin);
+    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true,
@@ -389,55 +305,6 @@ app.post('/api/vendor/add-product', async (req, res) => {
 // Endpoint de test
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
-});
-
-// Version endpoint consumed by the app custom update checker.
-// Configure with env vars on Render:
-// - APP_LATEST_VERSION (ex: 3.2.4)
-// - FORCE_APP_UPDATE (true/false)
-// - APP_UPDATE_MESSAGE (optional)
-app.get('/api/version', (req, res) => {
-  const getAndroidVersionNameFallback = () => {
-    const candidates = [
-      path.resolve(__dirname, '../android/app/build.gradle'),
-      path.resolve(process.cwd(), 'android/app/build.gradle'),
-    ];
-
-    for (const filePath of candidates) {
-      try {
-        if (!fs.existsSync(filePath)) continue;
-        const content = fs.readFileSync(filePath, 'utf8');
-        const match = content.match(/versionName\s+"([^"]+)"/);
-        if (match && match[1] && match[1].trim()) {
-          return match[1].trim();
-        }
-      } catch (error) {
-        console.warn('[UPDATE] Unable to parse Android version from', filePath, error?.message || error);
-      }
-    }
-
-    return '';
-  };
-
-  const latestVersion = String(
-    process.env.APP_LATEST_VERSION
-    || process.env.LATEST_APP_VERSION
-    || process.env.ANDROID_LATEST_VERSION
-    || getAndroidVersionNameFallback()
-    || ''
-  ).trim();
-
-  const forceUpdate = String(process.env.FORCE_APP_UPDATE || 'false').toLowerCase() === 'true';
-  const message = String(
-    process.env.APP_UPDATE_MESSAGE
-    || 'Une nouvelle version est disponible avec des améliorations importantes.'
-  ).trim();
-
-  return res.json({
-    latestVersion,
-    forceUpdate,
-    message,
-  });
 });
 
 // Admin: test SMS sending (POST JSON { to, text }) or GET with query params
@@ -1436,36 +1303,6 @@ app.post('/api/otp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
     }
 
-    const sendKey = getOtpAttemptKey(formattedPhone, req);
-    const now = Date.now();
-    const remainingLockMs = getRemainingLockMs(otpSendAttempts.get(sendKey), now);
-    if (remainingLockMs > 0) {
-      const retryAfterSeconds = Math.max(1, Math.ceil(remainingLockMs / 1000));
-      return res.status(429).json({
-        success: false,
-        error: `Trop de demandes OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
-        retry_after_seconds: retryAfterSeconds,
-      });
-    }
-
-    const attemptEntry = registerOtpAttempt(
-      otpSendAttempts,
-      sendKey,
-      now,
-      OTP_SEND_WINDOW_MS,
-      OTP_SEND_MAX_ATTEMPTS,
-      OTP_LOCK_MS
-    );
-    const lockAfterAttemptMs = getRemainingLockMs(attemptEntry, now);
-    if (lockAfterAttemptMs > 0) {
-      const retryAfterSeconds = Math.max(1, Math.ceil(lockAfterAttemptMs / 1000));
-      return res.status(429).json({
-        success: false,
-        error: `Trop de demandes OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
-        retry_after_seconds: retryAfterSeconds,
-      });
-    }
-
     console.log(`[OTP] Demande d'envoi pour: ${formattedPhone} (allowExisting: ${!!allowExisting})`);
 
     // Protection serveur : empêcher l'envoi d'OTP si un profil existe déjà pour ce numéro
@@ -1498,21 +1335,8 @@ app.post('/api/otp/send', async (req, res) => {
 
     const otpResult = await sendOTP(formattedPhone);
     const channel = otpResult.channel || 'sms';
-    const reused = Boolean(otpResult.reused);
-    const provider = otpResult.provider || 'unknown';
-    const otpLength = Number.parseInt(String(otpResult.otpLength || 4), 10) || 4;
 
-    res.json({
-      success: true,
-      message: reused
-        ? 'Un code est déjà actif. Réutilisez le code reçu récemment.'
-        : (channel === 'whatsapp' ? 'Code envoyé par WhatsApp' : 'Code envoyé par SMS'),
-      phone: formattedPhone,
-      channel,
-      reused,
-      provider,
-      otp_length: otpLength,
-    });
+    res.json({ success: true, message: channel === 'whatsapp' ? 'Code envoyé par WhatsApp' : 'Code envoyé par SMS', phone: formattedPhone, channel });
   } catch (error) {
     console.error('[OTP] Erreur envoi:', error);
     const message = (error && error.message) ? String(error.message) : 'Erreur lors de l\'envoi du code';
@@ -1529,13 +1353,6 @@ app.post('/api/otp/send', async (req, res) => {
         success: false,
         error: 'Configuration SMS manquante côté serveur.',
         code: 'SMS_CONFIG_MISSING'
-      });
-    }
-    if (message.includes('D7_OTP')) {
-      return res.status(502).json({
-        success: false,
-        error: 'Erreur fournisseur OTP D7. Vérifiez la configuration Verify API.',
-        code: 'OTP_PROVIDER_ERROR'
       });
     }
     res.status(500).json({ success: false, error: message });
@@ -1559,18 +1376,6 @@ app.post('/api/otp/verify', async (req, res) => {
       } else {
         formattedPhone = '+221' + formattedPhone;
       }
-    }
-
-    const verifyKey = getOtpAttemptKey(formattedPhone, req);
-    const now = Date.now();
-    const remainingLockMs = getRemainingLockMs(otpVerifyAttempts.get(verifyKey), now);
-    if (remainingLockMs > 0) {
-      const retryAfterSeconds = Math.max(1, Math.ceil(remainingLockMs / 1000));
-      return res.status(429).json({
-        success: false,
-        error: `Trop de tentatives de vérification OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
-        retry_after_seconds: retryAfterSeconds,
-      });
     }
 
     console.log(`[OTP] Vérification pour: ${formattedPhone}, code: ${code}`);
@@ -1607,27 +1412,8 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
 });
 
     if (result.valid) {
-      clearOtpAttempts(otpVerifyAttempts, verifyKey);
       res.json({ success: true, valid: true });
     } else {
-      const attemptEntry = registerOtpAttempt(
-        otpVerifyAttempts,
-        verifyKey,
-        now,
-        OTP_VERIFY_WINDOW_MS,
-        OTP_VERIFY_MAX_ATTEMPTS,
-        OTP_LOCK_MS
-      );
-      const lockAfterAttemptMs = getRemainingLockMs(attemptEntry, now);
-      if (lockAfterAttemptMs > 0) {
-        const retryAfterSeconds = Math.max(1, Math.ceil(lockAfterAttemptMs / 1000));
-        return res.status(429).json({
-          success: false,
-          valid: false,
-          error: `Trop de tentatives de vérification OTP. Réessayez dans ${retryAfterSeconds} secondes.`,
-          retry_after_seconds: retryAfterSeconds,
-        });
-      }
       res.status(400).json({ success: false, valid: false, error: result.error });
     }
   } catch (error) {
@@ -1834,101 +1620,12 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
 
     console.log('[PIXPAY] Initiation paiement Orange Money:', { amount, phone, orderId });
 
-    const fallbackEnabled = process.env.PIXPAY_FALLBACK_TO_PAYDUNYA !== 'false';
-    let provider = 'pixpay';
-    let fallbackUsed = false;
-    let fallbackReason = null;
-    let pixpayError = null;
-
-    let result;
-
-    try {
-      const pixpayResult = await pixpayInitiate({
-        amount,
-        phone,
-        orderId,
-        customData
-      });
-
-      const hasUsableLink = !!pixpayResult?.sms_link;
-      if (pixpayResult?.success && hasUsableLink) {
-        result = pixpayResult;
-      } else if (fallbackEnabled) {
-        fallbackReason = pixpayResult?.success ? 'pixpay_missing_payment_link' : 'pixpay_unsuccessful_response';
-        console.warn('[PIXPAY] Reponse PixPay non exploitable, bascule PayDunya:', {
-          orderId,
-          fallbackReason,
-          pixpayState: pixpayResult?.state,
-          hasSmsLink: hasUsableLink
-        });
-        result = await initiatePayDunyaCheckoutFallback({
-          amount,
-          orderId,
-          customData,
-          paymentMethod: 'orange_money',
-          reason: fallbackReason,
-          pixpayRaw: pixpayResult?.raw || pixpayResult
-        });
-        provider = 'paydunya';
-        fallbackUsed = true;
-      } else {
-        result = pixpayResult;
-      }
-    } catch (error) {
-      pixpayError = error;
-      console.error('[PIXPAY] Erreur initiate:', error);
-
-      if (fallbackEnabled) {
-        try {
-          fallbackReason = 'pixpay_exception';
-          result = await initiatePayDunyaCheckoutFallback({
-            amount,
-            orderId,
-            customData,
-            paymentMethod: 'orange_money',
-            reason: fallbackReason,
-            pixpayRaw: error?.raw || error
-          });
-          provider = 'paydunya';
-          fallbackUsed = true;
-        } catch (fallbackError) {
-          console.error('[PAYDUNYA-FALLBACK] Erreur fallback Orange:', fallbackError?.response?.data || fallbackError?.message || fallbackError);
-        }
-      }
-
-      if (!result) {
-        const pixpayMessage = error?.message || error?.raw?.message || (error?.raw?.data && error.raw.data.message) || 'Erreur lors de l\'initiation du paiement';
-        const pixpayStatus = error?.status || (error?.raw?.statut_code ? error.raw.statut_code : 500);
-
-        const responseBody = {
-          success: false,
-          error: pixpayMessage
-        };
-        if (fallbackReason) {
-          responseBody.fallback_reason = fallbackReason;
-        }
-        if (process.env.DEBUG_PIXPAY === 'true') {
-          responseBody.pixpay = error?.raw || error;
-        }
-
-        return res.status(pixpayStatus >= 400 && pixpayStatus < 600 ? pixpayStatus : 500).json(responseBody);
-      }
-    }
-
-    if (!result?.success || !result?.sms_link) {
-      const paymentMessage = result?.error || result?.message || 'Aucun lien de paiement disponible';
-      const responseBody = {
-        success: false,
-        error: paymentMessage
-      };
-      if (fallbackReason) {
-        responseBody.fallback_reason = fallbackReason;
-      }
-      if (process.env.DEBUG_PIXPAY === 'true') {
-        responseBody.pixpay = pixpayError?.raw || result?.raw || pixpayError || result;
-      }
-      return res.status(502).json(responseBody);
-    }
+    const result = await pixpayInitiate({
+      amount,
+      phone,
+      orderId,
+      customData
+    });
 
     // Sauvegarder la transaction dans Supabase
     if (result.success && result.transaction_id) {
@@ -1936,7 +1633,7 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
         .from('payment_transactions')
         .insert({
           transaction_id: result.transaction_id,
-          provider,
+          provider: 'pixpay',
           provider_transaction_id: result.provider_id,
           order_id: orderId,
           amount,
@@ -1954,9 +1651,6 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
       success: result.success,
       transaction_id: result.transaction_id,
       provider_id: result.provider_id,
-      provider,
-      fallback_used: fallbackUsed,
-      fallback_reason: fallbackReason,
       message: result.message,
       sms_link: result.sms_link,
       amount: result.amount,
@@ -1981,289 +1675,6 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
   }
 });
 
-function formatPhoneForPayDunyaWave(phone) {
-  if (!phone) return '';
-  let cleanPhone = String(phone).replace(/[\s\-\(\)]/g, '');
-  if (cleanPhone.startsWith('+')) cleanPhone = cleanPhone.substring(1);
-  if (cleanPhone.startsWith('221')) cleanPhone = cleanPhone.substring(3);
-  return cleanPhone;
-}
-
-function getPayDunyaWebhookUrl() {
-  if (process.env.PAYDUNYA_CALLBACK_URL) return process.env.PAYDUNYA_CALLBACK_URL;
-  const base = String(process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com').replace(/\/+$/, '');
-  return `${base}/api/paydunya/notification`;
-}
-
-async function initiatePayDunyaCheckoutFallback({ amount, orderId, customData = {}, paymentMethod = 'orange_money', reason = 'pixpay_unavailable', pixpayRaw = null }) {
-  const paydunyaMode = process.env.PAYDUNYA_MODE === 'sandbox' ? 'sandbox' : 'prod';
-  const paydunyaApiBase = paydunyaMode === 'sandbox'
-    ? 'https://app.paydunya.com/sandbox-api/v1'
-    : 'https://app.paydunya.com/api/v1';
-
-  if (!process.env.PAYDUNYA_MASTER_KEY || !process.env.PAYDUNYA_PRIVATE_KEY || !process.env.PAYDUNYA_TOKEN) {
-    throw new Error('Fallback PayDunya indisponible: configuration des cles manquante');
-  }
-
-  const safeCustomData = (customData && typeof customData === 'object') ? customData : {};
-  const amountNumber = Number(amount);
-  const description = safeCustomData.description ? String(safeCustomData.description) : `Commande ${orderId}`;
-  const storeName = safeCustomData.storeName ? String(safeCustomData.storeName) : 'Validel';
-  const callbackUrl = getPayDunyaWebhookUrl();
-  const returnUrlBase = String(process.env.PAYDUNYA_RETURN_URL || `${process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'}/payment-success`);
-  const returnUrl = returnUrlBase.includes('order_id=')
-    ? returnUrlBase
-    : `${returnUrlBase}${returnUrlBase.includes('?') ? '&' : '?'}order_id=${encodeURIComponent(orderId)}`;
-
-  const invoicePayload = {
-    invoice: {
-      total_amount: amountNumber,
-      description,
-      custom_data: {
-        order_id: orderId,
-        payment_method: paymentMethod,
-        fallback_source: 'pixpay',
-        fallback_reason: reason
-      }
-    },
-    store: {
-      name: storeName
-    },
-    actions: {
-      cancel_url: process.env.PAYDUNYA_CANCEL_URL || 'https://validele.onrender.com/payment-error',
-      return_url: returnUrl,
-      callback_url: callbackUrl
-    }
-  };
-
-  console.log('[PAYDUNYA-FALLBACK] Creation facture checkout:', {
-    amount: amountNumber,
-    orderId,
-    paymentMethod,
-    reason,
-    mode: paydunyaMode,
-    callback_url: callbackUrl
-  });
-
-  const invoiceResponse = await axios.post(`${paydunyaApiBase}/checkout-invoice/create`, invoicePayload, {
-    headers: {
-      'Content-Type': 'application/json',
-      'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
-      'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-      'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN,
-    },
-    timeout: 30000
-  });
-
-  const invoiceData = invoiceResponse.data || {};
-  if (invoiceData.response_code !== '00' || !invoiceData.token) {
-    throw new Error(invoiceData.response_text || invoiceData.description || 'Erreur creation facture PayDunya');
-  }
-
-  const invoiceToken = invoiceData.token;
-  const checkoutLink = invoiceData.response_text || invoiceData.url || invoiceData.redirect_url || null;
-  if (!checkoutLink) {
-    throw new Error('PayDunya n\'a pas fourni de lien checkout');
-  }
-
-  // Keep order/token mapping for PayDunya webhook updates.
-  try {
-    const { supabase: sb } = require('./supabase');
-    if (sb && orderId) {
-      const { error: updateTokenError } = await sb
-        .from('orders')
-        .update({ token: invoiceToken })
-        .eq('id', orderId);
-      if (updateTokenError) {
-        console.warn('[PAYDUNYA-FALLBACK] Impossible de stocker le token sur la commande:', updateTokenError);
-      }
-    }
-  } catch (tokenError) {
-    console.warn('[PAYDUNYA-FALLBACK] Erreur update token commande:', tokenError?.message || tokenError);
-  }
-
-  return {
-    success: true,
-    transaction_id: invoiceToken,
-    provider_id: invoiceToken,
-    state: 'PENDING',
-    message: 'PixPay indisponible, bascule automatique vers PayDunya.',
-    sms_link: checkoutLink,
-    amount: amountNumber,
-    fee: null,
-    provider: 'paydunya',
-    fallback_reason: reason,
-    raw: {
-      invoice: invoiceData,
-      pixpay: pixpayRaw
-    }
-  };
-}
-
-async function initiatePayDunyaWaveFallback({ amount, phone, orderId, customData = {}, reason = 'pixpay_unavailable', pixpayRaw = null }) {
-  const paydunyaMode = process.env.PAYDUNYA_MODE === 'sandbox' ? 'sandbox' : 'prod';
-  const paydunyaApiBase = paydunyaMode === 'sandbox'
-    ? 'https://app.paydunya.com/sandbox-api/v1'
-    : 'https://app.paydunya.com/api/v1';
-  const paydunyaSoftpayWave = paydunyaMode === 'sandbox'
-    ? 'https://app.paydunya.com/sandbox-api/v1/softpay/wave-senegal'
-    : 'https://app.paydunya.com/api/v1/softpay/wave-senegal';
-
-  if (!process.env.PAYDUNYA_MASTER_KEY || !process.env.PAYDUNYA_PRIVATE_KEY || !process.env.PAYDUNYA_TOKEN) {
-    throw new Error('Fallback PayDunya indisponible: configuration des cles manquante');
-  }
-
-  const safeCustomData = (customData && typeof customData === 'object') ? customData : {};
-  const amountNumber = Number(amount);
-  const fallbackPhone = formatPhoneForPayDunyaWave(phone);
-  const description = safeCustomData.description ? String(safeCustomData.description) : `Commande ${orderId}`;
-  const storeName = safeCustomData.storeName ? String(safeCustomData.storeName) : 'Validel';
-  const callbackUrl = getPayDunyaWebhookUrl();
-
-  const returnUrlBase = String(process.env.PAYDUNYA_RETURN_URL || `${process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'}/payment-success`);
-  const returnUrl = returnUrlBase.includes('order_id=')
-    ? returnUrlBase
-    : `${returnUrlBase}${returnUrlBase.includes('?') ? '&' : '?'}order_id=${encodeURIComponent(orderId)}`;
-
-  const invoicePayload = {
-    invoice: {
-      total_amount: amountNumber,
-      description,
-      custom_data: {
-        order_id: orderId,
-        payment_method: 'wave',
-        fallback_source: 'pixpay',
-        fallback_reason: reason
-      }
-    },
-    store: {
-      name: storeName
-    },
-    actions: {
-      cancel_url: process.env.PAYDUNYA_CANCEL_URL || 'https://validele.onrender.com/payment-error',
-      return_url: returnUrl,
-      callback_url: callbackUrl
-    }
-  };
-
-  console.log('[PAYDUNYA-FALLBACK] Creation facture Wave:', {
-    amount: amountNumber,
-    orderId,
-    reason,
-    mode: paydunyaMode,
-    callback_url: callbackUrl
-  });
-
-  const invoiceResponse = await axios.post(`${paydunyaApiBase}/checkout-invoice/create`, invoicePayload, {
-    headers: {
-      'Content-Type': 'application/json',
-      'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
-      'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-      'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN,
-    },
-    timeout: 30000
-  });
-
-  const invoiceData = invoiceResponse.data || {};
-  if (invoiceData.response_code !== '00' || !invoiceData.token) {
-    throw new Error(invoiceData.response_text || invoiceData.description || 'Erreur creation facture PayDunya');
-  }
-
-  const invoiceToken = invoiceData.token;
-
-  // Keep order/token mapping for PayDunya webhook updates.
-  try {
-    const { supabase: sb } = require('./supabase');
-    if (sb && orderId) {
-      const { error: updateTokenError } = await sb
-        .from('orders')
-        .update({ token: invoiceToken })
-        .eq('id', orderId);
-      if (updateTokenError) {
-        console.warn('[PAYDUNYA-FALLBACK] Impossible de stocker le token sur la commande:', updateTokenError);
-      }
-    }
-  } catch (tokenError) {
-    console.warn('[PAYDUNYA-FALLBACK] Erreur update token commande:', tokenError?.message || tokenError);
-  }
-
-  let softpayData = null;
-  let paymentLink = invoiceData.response_text || null;
-
-  try {
-    if (fallbackPhone) {
-      if (paydunyaMode === 'sandbox') {
-        const sandboxResponse = await axios.post(
-          'https://app.paydunya.com/sandbox-api/v1/checkout/make-payment',
-          {
-            phone_number: fallbackPhone,
-            customer_email: process.env.PAYDUNYA_WAVE_FALLBACK_EMAIL || 'client@validele.app',
-            password: process.env.PAYDUNYA_SANDBOX_PASSWORD || 'Miliey@2121',
-            invoice_token: invoiceToken
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-            },
-            timeout: 30000
-          }
-        );
-        softpayData = sandboxResponse.data || {};
-      } else {
-        const softpayResponse = await axios.post(
-          paydunyaSoftpayWave,
-          {
-            wave_senegal_fullName: safeCustomData.fullName ? String(safeCustomData.fullName) : 'Client Validele',
-            wave_senegal_email: safeCustomData.email ? String(safeCustomData.email) : (process.env.PAYDUNYA_WAVE_FALLBACK_EMAIL || 'client@validele.app'),
-            wave_senegal_phone: fallbackPhone,
-            wave_senegal_payment_token: invoiceToken
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
-            },
-            timeout: 30000
-          }
-        );
-        softpayData = softpayResponse.data || {};
-      }
-
-      paymentLink = softpayData.url
-        || softpayData.response_text
-        || softpayData.redirect_url
-        || softpayData?.data?.url
-        || softpayData?.response_data?.url
-        || paymentLink;
-    }
-  } catch (softpayError) {
-    console.warn('[PAYDUNYA-FALLBACK] SoftPay Wave indisponible, utilisation du lien checkout:', softpayError?.response?.data || softpayError?.message || softpayError);
-  }
-
-  if (!paymentLink) {
-    throw new Error('PayDunya n\'a pas fourni de lien de paiement utilisable');
-  }
-
-  return {
-    success: true,
-    transaction_id: invoiceToken,
-    provider_id: invoiceToken,
-    state: 'PENDING',
-    message: 'PixPay indisponible, bascule automatique vers PayDunya.',
-    sms_link: paymentLink,
-    amount: amountNumber,
-    fee: null,
-    provider: 'paydunya_wave',
-    fallback_reason: reason,
-    raw: {
-      invoice: invoiceData,
-      softpay: softpayData,
-      pixpay: pixpayRaw
-    }
-  };
-}
-
 // Endpoint PixPay Wave
 app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
   try {
@@ -2278,101 +1689,12 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
 
     console.log('[PIXPAY-WAVE] Initiation paiement Wave:', { amount, phone, orderId });
 
-    const fallbackEnabled = process.env.PIXPAY_WAVE_FALLBACK_TO_PAYDUNYA !== 'false';
-    let provider = 'pixpay_wave';
-    let fallbackUsed = false;
-    let fallbackReason = null;
-    let pixpayError = null;
-
-    let result;
-
-    try {
-      const pixpayResult = await pixpayWaveInitiate({
-        amount,
-        phone,
-        orderId,
-        customData
-      });
-
-      const hasUsableWaveLink = !!pixpayResult?.sms_link;
-      if (pixpayResult?.success && hasUsableWaveLink) {
-        result = pixpayResult;
-      } else if (fallbackEnabled) {
-        fallbackReason = pixpayResult?.success ? 'pixpay_missing_wave_link' : 'pixpay_unsuccessful_response';
-        console.warn('[PIXPAY-WAVE] Reponse PixPay non exploitable, bascule PayDunya:', {
-          orderId,
-          fallbackReason,
-          pixpayState: pixpayResult?.state,
-          hasSmsLink: hasUsableWaveLink
-        });
-        result = await initiatePayDunyaWaveFallback({
-          amount,
-          phone,
-          orderId,
-          customData,
-          reason: fallbackReason,
-          pixpayRaw: pixpayResult?.raw || pixpayResult
-        });
-        provider = 'paydunya_wave';
-        fallbackUsed = true;
-      } else {
-        result = pixpayResult;
-      }
-    } catch (error) {
-      pixpayError = error;
-      console.error('[PIXPAY-WAVE] Erreur initiate:', error);
-
-      if (fallbackEnabled) {
-        try {
-          fallbackReason = 'pixpay_exception';
-          result = await initiatePayDunyaWaveFallback({
-            amount,
-            phone,
-            orderId,
-            customData,
-            reason: fallbackReason,
-            pixpayRaw: error?.raw || error
-          });
-          provider = 'paydunya_wave';
-          fallbackUsed = true;
-        } catch (fallbackError) {
-          console.error('[PAYDUNYA-FALLBACK] Erreur fallback Wave:', fallbackError?.response?.data || fallbackError?.message || fallbackError);
-        }
-      }
-
-      if (!result) {
-        const pixpayMessage = error?.message || error?.raw?.message || (error?.raw?.data && error.raw.data.message) || 'Erreur lors de l\'initiation du paiement Wave';
-        const pixpayStatus = error?.status || (error?.raw?.statut_code ? error.raw.statut_code : 500);
-
-        const responseBody = {
-          success: false,
-          error: pixpayMessage
-        };
-        if (fallbackReason) {
-          responseBody.fallback_reason = fallbackReason;
-        }
-        if (process.env.DEBUG_PIXPAY === 'true') {
-          responseBody.pixpay = error?.raw || error;
-        }
-
-        return res.status(pixpayStatus >= 400 && pixpayStatus < 600 ? pixpayStatus : 500).json(responseBody);
-      }
-    }
-
-    if (!result?.success || !result?.sms_link) {
-      const paymentMessage = result?.error || result?.message || 'Aucun lien de paiement disponible';
-      const responseBody = {
-        success: false,
-        error: paymentMessage
-      };
-      if (fallbackReason) {
-        responseBody.fallback_reason = fallbackReason;
-      }
-      if (process.env.DEBUG_PIXPAY === 'true') {
-        responseBody.pixpay = pixpayError?.raw || result?.raw || pixpayError || result;
-      }
-      return res.status(502).json(responseBody);
-    }
+    const result = await pixpayWaveInitiate({
+      amount,
+      phone,
+      orderId,
+      customData
+    });
 
     // Sauvegarder la transaction dans Supabase
     if (result.success && result.transaction_id) {
@@ -2380,7 +1702,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
         .from('payment_transactions')
         .insert({
           transaction_id: result.transaction_id,
-          provider,
+          provider: 'pixpay_wave',
           provider_transaction_id: result.provider_id,
           order_id: orderId,
           amount,
@@ -2398,9 +1720,6 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       success: result.success,
       transaction_id: result.transaction_id,
       provider_id: result.provider_id,
-      provider,
-      fallback_used: fallbackUsed,
-      fallback_reason: fallbackReason,
       message: result.message,
       sms_link: result.sms_link,  // IMPORTANT: retourner le lien Wave
       amount: result.amount,
@@ -2503,14 +1822,14 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
 
     // Si paiement réussi, mettre à jour la commande
     // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts ou remboursements
-    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout' && transactionType !== 'refund' && transactionType !== 'admin_withdrawal') {
+    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout' && transactionType !== 'refund') {
       // Utiliser supabaseAdmin pour bypass RLS policies
       const dbClient = supabaseAdmin || supabase;
       
       // Récupérer l'order_code de la commande
       const { data: orderData, error: fetchError } = await dbClient
         .from('orders')
-        .select('order_code, status, qr_code')
+        .select('order_code, status')
         .eq('id', orderId)
         .single();
       
@@ -2522,27 +1841,20 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       if (orderData?.status === 'delivered') {
         console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
       } else {
-        const secureBuyerQrCode = (
-          orderData?.qr_code &&
-          orderData.qr_code !== orderData?.order_code
-        )
-          ? orderData.qr_code
-          : crypto.randomBytes(8).toString('hex').toUpperCase();
-
         // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
         const { error: orderError } = await dbClient
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
             payment_confirmed_at: new Date().toISOString(),
-            qr_code: secureBuyerQrCode
+            qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
           })
           .eq('id', orderId);
 
         if (orderError) {
           console.error('[PIXPAY-WEBHOOK] ❌ Erreur update order:', orderError);
         } else {
-          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée et QR code généré');
+          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
           
           // Notifier l'acheteur et le vendeur du paiement confirmé
           try {
@@ -2765,7 +2077,7 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     // Fetch the order
     const { data: order, error: orderErr } = await supabaseAdmin
       .from('orders')
-      .select('id, order_code, qr_code, status, buyer_id, vendor_id, total_amount, product_id')
+      .select('id, order_code, status, buyer_id, vendor_id, total_amount, product_id')
       .eq('id', orderId)
       .single();
 
@@ -2781,19 +2093,12 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
     }
 
     // Update order status to paid
-    const secureBuyerQrCode = (
-      order?.qr_code &&
-      order.qr_code !== order?.order_code
-    )
-      ? order.qr_code
-      : crypto.randomBytes(8).toString('hex').toUpperCase();
-
     const { error: updateErr } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'paid',
         payment_confirmed_at: new Date().toISOString(),
-        qr_code: secureBuyerQrCode
+        qr_code: order.order_code // Use order_code as QR code
       })
       .eq('id', orderId);
 
@@ -2936,24 +2241,22 @@ app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
 
 // Generate/verify a simple HMAC-signed admin token (short-lived) using ADMIN_JWT_SECRET
 function generateAdminToken(userId) {
-  if (!ADMIN_JWT_SECRET) {
-    throw new Error('ADMIN_JWT_SECRET is not configured');
-  }
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const exp = Math.floor(Date.now() / 1000) + (parseInt(process.env.ADMIN_TOKEN_TTL || '3600', 10));
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp })).toString('base64url');
-  const signature = crypto.createHmac('sha256', ADMIN_JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
+  const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
+  const signature = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
   return `${header}.${payload}.${signature}`;
 }
 
 function verifyAdminToken(token) {
   try {
-    if (!ADMIN_JWT_SECRET) return null;
     if (!token) return null;
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const [header, payload, signature] = parts;
-    const expected = crypto.createHmac('sha256', ADMIN_JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
+    const secret = process.env.ADMIN_JWT_SECRET || 'dev_admin_secret_change_me';
+    const expected = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
     if (expected !== signature) return null;
     const obj = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
     if (!obj.exp || !obj.sub) return null;
@@ -3201,9 +2504,8 @@ app.post('/api/admin/refresh', async (req, res) => {
 
 // POST /api/admin/logout - clear admin cookies
 app.post('/api/admin/logout', async (req, res) => {
-  const clearCookieOptions = { httpOnly: true, secure: true, sameSite: 'none' };
-  res.clearCookie('admin_access', { ...clearCookieOptions, path: '/' });
-  res.clearCookie('admin_refresh', { ...clearCookieOptions, path: '/api/admin/refresh' });
+  res.clearCookie('admin_access', { path: '/' });
+  res.clearCookie('admin_refresh', { path: '/api/admin/refresh' });
   return res.json({ success: true });
 });
 
@@ -3227,13 +2529,6 @@ app.post('/api/admin/login-local', async (req, res) => {
   try {
     const { profileId, pin } = req.body || {};
     if (!profileId || !pin) return res.status(400).json({ success: false, error: 'profileId and pin required' });
-
-    if (!ADMIN_JWT_SECRET) {
-      return res.status(503).json({
-        success: false,
-        error: 'ADMIN_JWT_SECRET is not configured. login-local is disabled on this environment.',
-      });
-    }
 
     // Fetch profile
     const { data: profile, error: profileErr } = await supabase
@@ -3547,19 +2842,8 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
 
     if (!phone) return res.status(400).json({ success: false, error: 'Numéro vendeur non trouvé' });
 
-    // For orders that belong to a payout batch with commission, pay net (not gross).
-    const payoutAmountInfo = await resolveOrderPayoutAmount(report.order.id, report.order.total_amount, supabase);
-    const payoutAmount = payoutAmountInfo.amount;
-    console.log('[ADMIN] payout-order resolved amount:', {
-      orderId: report.order.id,
-      gross: report.order.total_amount,
-      payoutAmount,
-      source: payoutAmountInfo.source,
-      batch_id: payoutAmountInfo.batch_id || null
-    });
-
     // Execute payout via PixPay
-    const result = await pixpaySendMoney({ amount: payoutAmount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
+    const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
     console.log('[ADMIN] payout-order Pixpay response:', JSON.stringify(result, null, 2));
 
@@ -3580,7 +2864,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         transaction_id: result.transaction_id,
         provider: 'pixpay',
         order_id: report.order.id,
-        amount: payoutAmount,
+        amount: report.order.total_amount,
         phone,
         status: result.state || 'PENDING1',
         transaction_type: 'payout',
@@ -3603,7 +2887,7 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
         if (vendorTokens && vendorTokens.length > 0) {
           const notif = getNotificationTemplate('PAYOUT_PROCESSING', {
             orderCode: report.order.order_code,
-            amount: payoutAmount,
+            amount: report.order.total_amount,
             orderId: report.order.id
           });
 
@@ -3625,45 +2909,6 @@ app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: String(error) });
   }
 });
-
-// Resolve payout amount for an order:
-// - Prefer latest payout_batch_items.net_amount when available (commission-aware)
-// - Fallback to gross order amount otherwise
-async function resolveOrderPayoutAmount(orderId, grossAmount, dbClient = null) {
-  const db = dbClient || supabase;
-  const gross = Number(grossAmount || 0);
-
-  try {
-    const { data: items, error } = await db
-      .from('payout_batch_items')
-      .select('id, batch_id, amount, commission_amount, commission_pct, net_amount, created_at')
-      .eq('order_id', orderId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (!error && items && items.length > 0) {
-      const it = items[0];
-      const amt = Number(it.amount || gross || 0);
-      const pct = Number(it.commission_pct || 0);
-      const commissionFromPct = Math.max(0, amt * pct / 100);
-      const commission = Number.isFinite(Number(it.commission_amount)) ? Number(it.commission_amount) : commissionFromPct;
-      let net = Number(it.net_amount);
-      if (!Number.isFinite(net)) net = amt - commission;
-      if (net < 0 || net > amt) net = amt - commission;
-      if (net < 0) net = 0;
-
-      return {
-        amount: net,
-        source: 'batch_item_net',
-        batch_id: it.batch_id || null
-      };
-    }
-  } catch (e) {
-    console.warn('[ADMIN] resolveOrderPayoutAmount warning:', e?.message || e);
-  }
-
-  return { amount: gross, source: 'order_gross', batch_id: null };
-}
 
 // Helper: verify order payout eligibility and return a detailed report
 // NOTE: Per project rule, eligibility depends on order status, payout_status and that the buyer has paid.
@@ -3829,21 +3074,12 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
     // If executing, make sure eligible
     if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible_for_payout', report });
 
-    // Call PixPay to send money to vendor.
-    // For batched orders, use net_amount (commission-aware) when available.
-    const payoutAmountInfo = await resolveOrderPayoutAmount(report.order.id, report.order.total_amount, supabase);
-    const amount = payoutAmountInfo.amount;
+    // Call PixPay to send money to vendor
+    const amount = report.order.total_amount;
     const phone = report.vendor.phone;
     const walletType = report.vendor.wallet_type || 'wave-senegal';
 
-    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, {
-      amount,
-      phone,
-      walletType,
-      amount_source: payoutAmountInfo.source,
-      batch_id: payoutAmountInfo.batch_id || null,
-      gross_amount: report.order.total_amount
-    });
+    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { amount, phone, walletType });
 
     const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
@@ -4074,7 +3310,7 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     // Compute commission and net per item and insert items with status 'queued'
     const items = orders.map(o => {
       const amount = Number(o.total_amount || 0);
-      const commission_amount = amount * pct / 100;
+      const commission_amount = Math.round(amount * pct / 100);
       const net_amount = amount - commission_amount;
       return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount, status: 'queued' };
     });
@@ -4204,7 +3440,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     // Try to fetch the batch and vendor-specific items using the chosen client
     let { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
     // Include product info from the order (if available) so we can show product names in the invoice
-    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId);
+    let { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId);
     let { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     // Fallback: if batch not found, try to find latest batch that contains vendor items
@@ -4217,7 +3453,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
         console.log('[ADMIN] fallback found batchId for vendor:', batchId);
         const q = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
         batch = q.data;
-        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId);
+        const it = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount)').eq('batch_id', batchId).eq('vendor_id', vendorId);
         items = it.data || [];
       }
     }
@@ -4239,31 +3475,26 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       return res.status(404).send('No payout items found for this vendor in the specified batch');
     }
 
-    // Map rows and extract product name + real quantity
+    // Map rows and extract product name (if present on order.products.name)
     const rows = (items || []).map(i => {
       const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
-      const orderQty = Number(i.order?.quantity);
-      const productPrice = Number(i.order?.products?.price || (Array.isArray(i.order?.products) ? (i.order.products[0] && i.order.products[0].price) : 0));
-      const fallbackQty = productPrice > 0 ? Math.round((Number(i.order?.total_amount) || 0) / productPrice) : 0;
-      const resolvedQty = orderQty > 0 ? orderQty : (fallbackQty > 0 ? fallbackQty : 1);
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
-        quantity: resolvedQty,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
       };
     });
 
-    // Group products by name and aggregate totals using real quantity
+    // Group products by name and aggregate totals
     const productGroups = {};
     for (const r of rows) {
       const key = r.product_name || '-';
       if (!productGroups[key]) {
         productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
       }
-      productGroups[key].count += r.quantity;
+      productGroups[key].count += 1;
       productGroups[key].gross += r.gross;
       productGroups[key].commission += r.commission;
       productGroups[key].net += r.net;
@@ -4273,66 +3504,40 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
     const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
-    const vendorPayoutMethodRaw = String(vendor.wallet_type || '').trim().toLowerCase();
-    const vendorPayoutMethod = ({
-      wave: 'Wave',
-      orange_money: 'Orange Money',
-      orange: 'Orange Money',
-      free_money: 'Free Money',
-      free: 'Free Money',
-      bank: 'Virement bancaire'
-    })[vendorPayoutMethodRaw] || (vendor.wallet_type || 'Non renseigné');
-
-    // Toujours afficher le logo Validel sur la facture batch
-    const validelLogoText = 'VALIDEL';
+    const totalQty = rows.length;
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const batchDateFr = batchDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
-    // Simple HTML invoice (grouped by product with real quantity)
+    // Simple HTML invoice (grouped by product with sales count)
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture de paiement du ${batchDateFr}</title>
-          <style>
-            body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
-            .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
-            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; letter-spacing:0.7px; flex-shrink:0; text-align:center; line-height:1.1; padding:6px; box-sizing:border-box;}
-            .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
-            .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
-            table{width:100%; border-collapse:collapse; margin-top:12px;}
-            th,td{border:1px solid #ddd; padding:8px 10px; text-align:left;}
-            th{background:#f5f5f5; font-weight:600;}
-            tfoot tr{background:#f0f4ff; font-weight:700;}
-            .total-line{margin-top:16px; font-size:16px;}
-            .signature{margin-top:32px; color:#555;}
-          </style>
+          <title>Facture de paiement du ${capitalizedDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <div class="header">
-            <div class="avatar" aria-label="Logo Validel">${validelLogoText}</div>
-            <div class="vendor-info">
-              <h2>${vendor.full_name || ''}</h2>
-              <p>${vendor.phone || ''}</p>
-              <p>Facture de paiement — ${batchDateFr}</p>
-            </div>
-          </div>
-          <h3>Détails des ventes</h3>
+          <h2>Facture de paiement du ${capitalizedDate}</h2>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
+          <h3>Détails</h3>
           <table>
-            <thead><tr><th>Produit</th><th style="text-align:center">Quantité</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString('fr-FR')}</td><td>${r.commission.toLocaleString('fr-FR')}</td><td>${r.net.toLocaleString('fr-FR')}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><td>Total</td><td style="text-align:center">${totalQty}</td><td>${totalGross.toLocaleString('fr-FR')}</td><td>${totalCommission.toLocaleString('fr-FR')}</td><td>${totalNet.toLocaleString('fr-FR')}</td></tr>
+              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
             </tfoot>
           </table>
-          <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
-          <p class="total-line">Paiement perçu via: <strong>${vendorPayoutMethod}</strong></p>
-          <p class="signature">Signature: _________________________</p>
+          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
+          <p>Signature: _________________________</p>
         </body>
       </html>`;
 
@@ -4447,8 +3652,8 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     }
 
     const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    // Include product info and quantity from order
-    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, quantity, products(name, price))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
+    // Include product info from order.products to show product names
+    const { data: items } = await db.from('payout_batch_items').select('*, order:orders(id, order_code, total_amount, products(name))').eq('batch_id', batchId).eq('vendor_id', vendorId).order('id', { ascending: true });
     const { data: vendor } = await db.from('profiles').select('id, full_name, phone, wallet_type').eq('id', vendorId).maybeSingle();
 
     console.log('[VENDOR] Invoice - batch:', batch?.id, 'vendor:', vendor?.full_name, 'items:', items?.length || 0);
@@ -4459,28 +3664,23 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
 
     const rows = (items || []).map(i => {
       const productName = i.order && i.order.products ? (i.order.products.name || (Array.isArray(i.order.products) ? (i.order.products[0] && i.order.products[0].name) : null)) : null;
-      const orderQty = Number(i.order?.quantity);
-      const productPrice = Number(i.order?.products?.price || (Array.isArray(i.order?.products) ? (i.order.products[0] && i.order.products[0].price) : 0));
-      const fallbackQty = productPrice > 0 ? Math.round((Number(i.order?.total_amount) || 0) / productPrice) : 0;
-      const resolvedQty = orderQty > 0 ? orderQty : (fallbackQty > 0 ? fallbackQty : 1);
       return {
         order_code: i.order?.order_code || '-',
         product_name: productName || '-',
-        quantity: resolvedQty,
         gross: Number(i.amount || 0),
         commission: Number(i.commission_amount || 0),
         net: Number(i.net_amount || 0)
       };
     });
 
-    // Group products by name and aggregate totals using real quantity
+    // Group products by name and aggregate totals
     const productGroups = {};
     for (const r of rows) {
       const key = r.product_name || '-';
       if (!productGroups[key]) {
         productGroups[key] = { product_name: key, count: 0, gross: 0, commission: 0, net: 0 };
       }
-      productGroups[key].count += r.quantity;
+      productGroups[key].count += 1;
       productGroups[key].gross += r.gross;
       productGroups[key].commission += r.commission;
       productGroups[key].net += r.net;
@@ -4490,69 +3690,43 @@ app.get('/api/vendor/payout-batches/:id/invoice', async (req, res) => {
     const totalGross = groupedRows.reduce((s, r) => s + r.gross, 0);
     const totalCommission = groupedRows.reduce((s, r) => s + r.commission, 0);
     const totalNet = groupedRows.reduce((s, r) => s + r.net, 0);
-    const totalQty = groupedRows.reduce((s, r) => s + r.count, 0);
-    const vendorPayoutMethodRaw = String(vendor.wallet_type || '').trim().toLowerCase();
-    const vendorPayoutMethod = ({
-      wave: 'Wave',
-      orange_money: 'Orange Money',
-      orange: 'Orange Money',
-      free_money: 'Free Money',
-      free: 'Free Money',
-      bank: 'Virement bancaire'
-    })[vendorPayoutMethodRaw] || (vendor.wallet_type || 'Non renseigné');
-
-    // Toujours afficher le logo Validel sur la facture batch
-    const validelLogoText = 'VALIDEL';
+    const totalQty = rows.length;
 
     // Format date for title: "06 Février 2026"
     const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
-    const batchDateFr = batchDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const formattedDate = batchDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    // Capitalize first letter of month: "02 février 2026" -> "02 Février 2026"
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture de paiement du ${batchDateFr}</title>
-          <style>
-            body{font-family: Arial, Helvetica, sans-serif; padding:24px; color:#111;}
-            .header{display:flex; align-items:center; gap:16px; margin-bottom:20px; padding-bottom:16px; border-bottom:2px solid #e5e7eb;}
-            .avatar{width:64px; height:64px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; letter-spacing:0.7px; flex-shrink:0; text-align:center; line-height:1.1; padding:6px; box-sizing:border-box;}
-            .vendor-info h2{margin:0 0 4px 0; font-size:20px;}
-            .vendor-info p{margin:2px 0; color:#555; font-size:14px;}
-            table{width:100%; border-collapse:collapse; margin-top:12px;}
-            th,td{border:1px solid #ddd; padding:8px 10px; text-align:left;}
-            th{background:#f5f5f5; font-weight:600;}
-            tfoot tr{background:#f0f4ff; font-weight:700;}
-            .total-line{margin-top:16px; font-size:16px;}
-            .signature{margin-top:32px; color:#555;}
-          </style>
+          <title>Facture de paiement du ${capitalizedDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <div class="header">
-            <div class="avatar" aria-label="Logo Validel">${validelLogoText}</div>
-            <div class="vendor-info">
-              <h2>${vendor.full_name || ''}</h2>
-              <p>${vendor.phone || ''}</p>
-              <p>Facture de paiement — ${batchDateFr}</p>
-            </div>
-          </div>
-          <h3>Détails des ventes</h3>
+          <h2>Facture de paiement du ${capitalizedDate}</h2>
+          <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
+          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
+          <h3>Détails</h3>
           <table>
-            <thead><tr><th>Produit</th><th style="text-align:center">Quantité</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
+            <thead><tr><th>Produit</th><th>Ventes</th><th>Brut (FCFA)</th><th>Commission (FCFA)</th><th>Net (FCFA)</th></tr></thead>
             <tbody>
-              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString('fr-FR')}</td><td>${r.commission.toLocaleString('fr-FR')}</td><td>${r.net.toLocaleString('fr-FR')}</td></tr>`).join('')}
+              ${groupedRows.map(r => `<tr><td>${r.product_name}</td><td style="text-align:center">${r.count}</td><td>${r.gross.toLocaleString()}</td><td>${r.commission.toLocaleString()}</td><td>${r.net.toLocaleString()}</td></tr>`).join('')}
             </tbody>
             <tfoot>
-              <tr><td>Total</td><td style="text-align:center">${totalQty}</td><td>${totalGross.toLocaleString('fr-FR')}</td><td>${totalCommission.toLocaleString('fr-FR')}</td><td>${totalNet.toLocaleString('fr-FR')}</td></tr>
+              <tr><th>Total</th><th style="text-align:center">${totalQty}</th><th>${totalGross.toLocaleString()}</th><th>${totalCommission.toLocaleString()}</th><th>${totalNet.toLocaleString()}</th></tr>
             </tfoot>
           </table>
-          <p class="total-line">Montant versé: <strong>${totalNet.toLocaleString('fr-FR')} FCFA</strong></p>
-          <p class="total-line">Paiement perçu via: <strong>${vendorPayoutMethod}</strong></p>
-          <p class="signature">Signature: _________________________</p>
+          <p>Montant versé: <strong>${totalNet.toLocaleString()} FCFA</strong></p>
+          <p>Signature: _________________________</p>
         </body>
       </html>`;
 
-    const filename = `facture-paiement-${batchDateFr.replace(/\s/g, '-')}.html`;
+    const filename = `facture-paiement-${capitalizedDate.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -4593,59 +3767,35 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
     }
 
     // Récupérer la commande et vérifier qu'elle appartient au vendeur
-    const { data: order } = await db.from('orders').select('*, products(name, price), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone)').eq('id', orderId).maybeSingle();
+    const { data: order } = await db.from('orders').select('*, products(name, price), buyer:profiles!orders_buyer_id_fkey(full_name, phone, address)').eq('id', orderId).maybeSingle();
     if (!order) return res.status(404).send('order_not_found');
     if (String(order.vendor_id) !== String(vendorId)) return res.status(403).send('forbidden: not your order');
 
     // Générer la facture HTML
     const product = order.products || {};
     const buyer = order.buyer || {};
-    const vendor = order.vendor || {};
-    const shopName = vendor.company_name || vendor.full_name || 'Boutique';
-    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
-    const orderDateFr = orderDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
     // Calculs quantité / prix unitaire / total ligne
-    const rawQty = Number(order.quantity);
-    const fallbackQty = Number(product.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
-    const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
+    const qty = Number(order.quantity) || 1;
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
-    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
-    const buyerPaymentMethod = ({
-      wave: 'Wave',
-      orange_money: 'Orange Money',
-      orange: 'Orange Money',
-      card: 'Carte bancaire',
-      cash: 'Paiement cash',
-      wallet: 'Portefeuille'
-    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
 
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture commande du ${orderDateFr}</title>
-          <style>
-            body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
-            .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
-            .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
-            table{width:100%; border-collapse:collapse}
-            th,td{border:1px solid #ddd;padding:8px;text-align:left}
-            th{background:#f5f5f5}
-          </style>
+          <title>Facture commande du ${capitalizedDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <div class="header">
-            <div class="avatar">${shopInitials}</div>
-            <div>
-              <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de commande</h3>
-              <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
-            </div>
-          </div>
+          <h2>Facture de commande du ${capitalizedDate}</h2>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${orderDateFr}</p>
+          <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
           <p><strong>Client:</strong> ${buyer.full_name || ''} (${buyer.phone || ''})</p>
           <h3>Détails du produit</h3>
           <table>
@@ -4655,12 +3805,11 @@ app.get('/api/vendor/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
-          <p><strong>Paiement via:</strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre vente !</p>
         </body>
       </html>`;
 
-    const filename = `facture-commande-${orderDateFr.replace(/\s/g, '-')}.html`;
+    const filename = `facture-commande-${capitalizedDate.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -4701,58 +3850,35 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
     }
 
     // Récupérer la commande et vérifier qu'elle appartient à l'acheteur
-    const { data: order } = await db.from('orders').select('*, products(name, price), vendor:profiles!orders_vendor_id_fkey(company_name, full_name, phone, address)').eq('id', orderId).maybeSingle();
+    const { data: order } = await db.from('orders').select('*, products(name, price), vendor:profiles!orders_vendor_id_fkey(full_name, phone, address)').eq('id', orderId).maybeSingle();
     if (!order) return res.status(404).send('order_not_found');
     if (String(order.buyer_id) !== String(buyerId)) return res.status(403).send('forbidden: not your order');
 
     // Générer la facture HTML
     const product = order.products || {};
     const vendor = order.vendor || {};
-    const shopName = vendor.company_name || vendor.full_name || 'Boutique';
-    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const orderDate = new Date(order.created_at);
-    const orderDateFr = orderDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const formattedDate = orderDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const capitalizedDate = formattedDate.replace(/(\d+)\s+(\w)(\w+)(\s+\d+)/, (match, day, firstLetter, restOfMonth, year) => {
+      return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
+    });
 
     // Calculs quantité / prix unitaire / total ligne
-    const rawQty = Number(order.quantity);
-    const fallbackQty = Number(product.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
-    const qty = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
+    const qty = Number(order.quantity) || 1;
     const unitPrice = Number(product.price) || (qty ? Math.round((Number(order.total_amount) || 0) / qty) : (Number(order.total_amount) || 0));
     const lineTotal = unitPrice * qty;
-    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
-    const buyerPaymentMethod = ({
-      wave: 'Wave',
-      orange_money: 'Orange Money',
-      orange: 'Orange Money',
-      card: 'Carte bancaire',
-      cash: 'Paiement cash',
-      wallet: 'Portefeuille'
-    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
 
     const html = `<!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Facture commande du ${orderDateFr}</title>
-          <style>
-            body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
-            .header{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
-            .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
-            table{width:100%; border-collapse:collapse}
-            th,td{border:1px solid #ddd;padding:8px;text-align:left}
-            th{background:#f5f5f5}
-          </style>
+          <title>Facture commande du ${capitalizedDate}</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
         </head>
         <body>
-          <div class="header">
-            <div class="avatar">${shopInitials}</div>
-            <div>
-              <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de commande</h3>
-              <p style="margin:2px 0 0 0"><strong>Boutique:</strong> ${shopName}</p>
-            </div>
-          </div>
+          <h2>Facture de commande du ${capitalizedDate}</h2>
           <p><strong>Commande n°:</strong> ${order.order_code || order.id}</p>
-          <p><strong>Date:</strong> ${orderDateFr}</p>
+          <p><strong>Date:</strong> ${orderDate.toLocaleString('fr-FR')}</p>
           <p><strong>Vendeur:</strong> ${vendor.full_name || ''} (${vendor.phone || ''})</p>
           <h3>Détails du produit</h3>
           <table>
@@ -4762,12 +3888,11 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
             </tbody>
           </table>
           <p><strong>Total payé:</strong> ${order.total_amount ? Number(order.total_amount).toLocaleString() : 0} FCFA</p>
-          <p><strong>Payée avec: </strong> ${buyerPaymentMethod}</p>
           <p>Merci pour votre achat !</p>
         </body>
       </html>`;
 
-    const filename = `facture-commande-${orderDateFr.replace(/\s/g, '-')}.html`;
+    const filename = `facture-commande-${capitalizedDate.replace(/\s/g, '-')}.html`;
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(html);
@@ -4781,28 +3906,6 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
 async function processPayoutBatch(batchId) {
   try {
     if (!batchId) return { success: false, error: 'batch id required' };
-
-    const toNumber = (v, fallback = 0) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : fallback;
-    };
-
-    // Defensive net computation: never trust a single DB field blindly.
-    const deriveItemAmounts = (item, defaultPct = 0) => {
-      const gross = toNumber(item?.amount, 0);
-      const itemPct = toNumber(item?.commission_pct, NaN);
-      const pct = Number.isFinite(itemPct) ? itemPct : toNumber(defaultPct, 0);
-      const commissionFromPct = Math.max(0, gross * pct / 100);
-      const commission = Math.max(0, toNumber(item?.commission_amount, commissionFromPct));
-      const netField = toNumber(item?.net_amount, NaN);
-
-      // Prefer explicit net_amount when valid and coherent, otherwise recompute.
-      let net = Number.isFinite(netField) ? netField : (gross - commission);
-      if (net < 0 || net > gross) net = gross - commission;
-      if (net < 0) net = 0;
-
-      return { gross, commission, net, pct };
-    };
 
     // Use service role client to bypass RLS for payout batch operations
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -4899,21 +4002,9 @@ async function processPayoutBatch(batchId) {
         continue;
       }
 
-      // Compute payout amount from a defensive net calculation (gross - commission).
-      const payoutBreakdown = eligibleItems.map(it => ({ it, amounts: deriveItemAmounts(it, batch?.commission_pct || 0) }));
-      const totalGross = payoutBreakdown.reduce((s, row) => s + row.amounts.gross, 0);
-      const totalCommission = payoutBreakdown.reduce((s, row) => s + row.amounts.commission, 0);
-      const totalNet = payoutBreakdown.reduce((s, row) => s + row.amounts.net, 0);
-      const payoutAmount = Math.max(0, totalNet);
-
-      console.log('[ADMIN] processPayoutBatch: Payout breakdown for vendor', vendorId, {
-        items: eligibleItems.length,
-        totalGross,
-        totalCommission,
-        totalNet,
-        payoutAmount,
-        batchCommissionPct: batch?.commission_pct || 0
-      });
+      // Use net_amount (gross - commission) to compute payout per vendor
+      const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
+      console.log('[ADMIN] processPayoutBatch: Total net amount for vendor', vendorId, ':', totalNet);
 
       const { data: vendor } = await supabaseAdmin.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
       console.log('[ADMIN] processPayoutBatch: Vendor info:', { vendorId, phone: vendor?.phone, wallet_type: vendor?.wallet_type });
@@ -4925,26 +4016,18 @@ async function processPayoutBatch(batchId) {
       }
 
       try {
-        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: payoutAmount, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal', totalGross, totalCommission, totalNet });
-        const payoutRes = await pixpaySendMoney({ amount: payoutAmount, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
+        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: totalNet, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal' });
+        const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
         console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
 
         if (payoutRes && payoutRes.transaction_id) {
-          const normalizedState = String(payoutRes.state || '').toUpperCase();
-          const isImmediateSuccess = normalizedState === 'SUCCESS' || normalizedState === 'SUCCESSFUL' || normalizedState === 'COMPLETED';
-
           // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: payoutAmount, phone: vendor.phone, status: isImmediateSuccess ? 'SUCCESSFUL' : (payoutRes.state || 'PENDING1'), transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
-          await supabaseAdmin.from('payout_batch_items').update({ status: isImmediateSuccess ? 'paid' : 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
+          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
+          // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
+          await supabaseAdmin.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
           const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
-          if (orderIds.length > 0) {
-            if (isImmediateSuccess) {
-              await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-            } else {
-              await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
-            }
-          }
-          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_gross: totalGross, total_commission: totalCommission, total_net: totalNet, payout_amount: payoutAmount, immediate_success: isImmediateSuccess });
+          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
+          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
         } else {
           await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
           results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
@@ -4961,7 +4044,7 @@ async function processPayoutBatch(batchId) {
     // - If all vendor payouts succeeded but items are 'processing' (waiting for webhook) -> 'processing'
     // - If all items are already 'paid' -> 'completed'
     const anyFailed = results.some(r => !r.success && r.message !== 'all_already_paid');
-    const anyProcessing = results.some(r => r.success && r.transaction_id && !r.immediate_success); // Waiting for webhook confirmation only
+    const anyProcessing = results.some(r => r.success && r.transaction_id); // Has transaction_id = sent to Pixpay, waiting for confirmation
     const allAlreadyPaid = results.every(r => r.message === 'all_already_paid');
     
     let finalStatus = 'completed';
@@ -5116,11 +4199,6 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
     
     const results = [];
     let syncedCount = 0;
-
-    const isProviderSuccessState = (value) => {
-      const s = String(value || '').toUpperCase();
-      return s === 'SUCCESS' || s === 'SUCCESSFUL' || s === 'COMPLETED';
-    };
     
     for (const tx of pendingTxs) {
       try {
@@ -5141,11 +4219,9 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
         const txType = tx.transaction_type || '';
         const isPayout = txType === 'payout' || txType === 'vendor_payout' || txType === 'admin_withdrawal';
         
-        // For payout transactions, accept provider SUCCESS states directly.
-        // Keep EFB response fallback for providers that do not return explicit state.
-        const providerState = rawData?.data?.state || rawData?.state || rawData?.status;
-        const hasEfbSuccessMarker = !!(rawData?.data?.response && String(rawData.data.response).startsWith('EFB.'));
-        if (isPayout && (isProviderSuccessState(providerState) || hasEfbSuccessMarker)) {
+        // For payout transactions with PENDING1, check if they were actually processed
+        // Pixpay payouts with a "response" field like "EFB.xxxxx" typically succeeded
+        if (isPayout && rawData?.data?.response && rawData.data.response.startsWith('EFB.')) {
           // This is likely a successful payout - check if the order/batch is already marked as paid
           const orderId = tx.order_id;
           const batchId = tx.batch_id;
@@ -5159,12 +4235,11 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
           }
           const realOrderId = customData.order_id || orderId;
           
-          // If no explicit SUCCESS state exists, keep a safety delay for EFB-only detection.
+          // Check if this is an old transaction (more than 30 minutes) - likely succeeded
           const txAge = Date.now() - new Date(tx.created_at).getTime();
           const isOld = txAge > 30 * 60 * 1000; // 30 minutes
-          const shouldFinalizeNow = isProviderSuccessState(providerState) || isOld;
           
-          if (shouldFinalizeNow) {
+          if (isOld) {
             // Mark as SUCCESSFUL and finalize
             actualStatus = 'SUCCESSFUL';
             
@@ -5243,52 +4318,6 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
           synced: false, 
           error: String(txError) 
         });
-      }
-    }
-
-    // Reconcile payout batch items stuck in processing while provider_response already indicates success.
-    const { data: processingItems, error: processingItemsErr } = await supabaseAdmin
-      .from('payout_batch_items')
-      .select('id, order_id, batch_id, provider_response')
-      .eq('status', 'processing');
-
-    if (processingItemsErr) {
-      console.error('[ADMIN] sync-pending-transactions: processing items fetch error:', processingItemsErr);
-    } else if (processingItems && processingItems.length > 0) {
-      const paidItemIds = [];
-      const paidOrderIds = [];
-      const affectedBatchIds = new Set();
-
-      for (const it of processingItems) {
-        try {
-          const pr = typeof it.provider_response === 'string' ? JSON.parse(it.provider_response) : it.provider_response;
-          const st = pr?.data?.state || pr?.state || pr?.status;
-          if (isProviderSuccessState(st)) {
-            paidItemIds.push(it.id);
-            if (it.order_id) paidOrderIds.push(it.order_id);
-            if (it.batch_id) affectedBatchIds.add(it.batch_id);
-          }
-        } catch (e) {
-          // Ignore malformed provider_response
-        }
-      }
-
-      if (paidItemIds.length > 0) {
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', paidItemIds);
-        if (paidOrderIds.length > 0) {
-          await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', paidOrderIds);
-        }
-
-        for (const batchId of Array.from(affectedBatchIds)) {
-          const { data: batchItems } = await supabaseAdmin.from('payout_batch_items').select('status').eq('batch_id', batchId);
-          const allPaid = batchItems && batchItems.length > 0 && batchItems.every(row => row.status === 'paid');
-          if (allPaid) {
-            await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
-          }
-        }
-
-        results.push({ type: 'batch_item_reconciliation', synced_items: paidItemIds.length, affected_batches: Array.from(affectedBatchIds) });
-        syncedCount += paidItemIds.length;
       }
     }
     
@@ -5534,7 +4563,6 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
           .from('orders')
           .update({
             status: 'cancelled',
-            previous_status: order.status,
             cancelled_at: new Date().toISOString(),
             cancellation_reason: reason || 'Demande de remboursement par le client'
           })
@@ -5564,7 +4592,6 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
         .from('orders')
         .update({
           status: 'cancelled',
-          previous_status: order.status,
           cancelled_at: new Date().toISOString(),
           cancellation_reason: reason || 'Demande de remboursement par le client'
         })
@@ -5631,7 +4658,7 @@ app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
       .from('refund_requests')
       .select(`
         *,
-        order:orders(id, order_code, payment_method, products(name)),
+        order:orders(id, order_code, products(name)),
         buyer:profiles!refund_requests_buyer_id_fkey(id, full_name, phone)
       `)
       .order('requested_at', { ascending: false });
@@ -5694,23 +4721,16 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     }
 
     // 2) Récupérer le téléphone et wallet_type de l'acheteur
-    // IMPORTANT: Le remboursement DOIT être envoyé sur le même canal que le paiement original
-    // On utilise payment_method de la commande en priorité, pas le wallet_type du profil
     const buyerPhone = refundRequest.buyer?.phone;
-    let walletType = null;
-
-    if (refundRequest.order?.payment_method) {
-      // Mapper payment_method de la commande vers wallet_type
+    let walletType = refundRequest.buyer?.wallet_type;
+    
+    if (!walletType && refundRequest.order?.payment_method) {
+      // Mapper payment_method vers wallet_type
       if (refundRequest.order.payment_method === 'wave') {
         walletType = 'wave-senegal';
       } else if (refundRequest.order.payment_method === 'orange_money') {
         walletType = 'orange-senegal';
       }
-    }
-
-    // Fallback sur le wallet_type du profil seulement si la commande n'a pas de payment_method
-    if (!walletType && refundRequest.buyer?.wallet_type) {
-      walletType = refundRequest.buyer.wallet_type;
     }
 
     if (!buyerPhone) {
@@ -5727,7 +4747,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       });
     }
 
-    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, paymentMethod: refundRequest.order?.payment_method, amount: refundRequest.amount });
+    console.log('[REFUND] Traitement remboursement:', { refundId, buyerPhone, walletType, amount: refundRequest.amount });
 
     // 3) Effectuer le remboursement via PixPay
     const result = await pixpaySendMoney({
@@ -5886,7 +4906,7 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
     const refundId = req.params.id;
     const { reason } = req.body;
 
-    if (!reason || !String(reason).trim()) {
+    if (!reason) {
       return res.status(400).json({
         success: false,
         error: 'Raison du rejet requise'
@@ -5896,7 +4916,7 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
     // 1) Récupérer la demande
     const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
-      .select('id, status, order_id')
+      .select('id, status')
       .eq('id', refundId)
       .single();
 
@@ -5920,8 +4940,8 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
       .update({
         status: 'rejected',
         reviewed_at: new Date().toISOString(),
-        reviewed_by: req.adminUser?.id || req.user?.id || 'admin',
-        rejection_reason: String(reason).trim()
+        reviewed_by: req.user?.id || 'admin',
+        rejection_reason: reason
       })
       .eq('id', refundId);
 
@@ -5931,43 +4951,6 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
         success: false,
         error: 'Erreur lors du rejet de la demande'
       });
-    }
-
-    // 3) Restaurer le statut de commande précédent (avant annulation), si possible.
-    if (refundRequest.order_id) {
-      const { data: orderRow, error: orderFetchError } = await supabaseAdmin
-        .from('orders')
-        .select('id, status, previous_status')
-        .eq('id', refundRequest.order_id)
-        .single();
-
-      if (orderFetchError) {
-        console.error('[REFUND] Erreur récupération commande pour restauration:', orderFetchError);
-      } else if (orderRow && orderRow.status === 'cancelled') {
-        const targetStatus = orderRow.previous_status || 'paid';
-        const { error: restoreOrderError } = await supabaseAdmin
-          .from('orders')
-          .update({
-            status: targetStatus,
-            previous_status: null,
-            cancelled_at: null,
-            cancellation_reason: null
-          })
-          .eq('id', refundRequest.order_id);
-
-        if (restoreOrderError) {
-          console.error('[REFUND] Erreur restauration statut commande:', restoreOrderError);
-          return res.status(500).json({
-            success: false,
-            error: 'Demande rejetée, mais impossible de restaurer le statut de la commande'
-          });
-        }
-
-        console.log('[REFUND] Statut commande restauré après rejet:', {
-          order_id: refundRequest.order_id,
-          restored_to: targetStatus
-        });
-      }
     }
 
     console.log('[REFUND] Demande rejetée:', refundId);
@@ -6558,7 +5541,6 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
     const { orderId, deliveredBy } = req.body || {};
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
-    if (!deliveredBy) return res.status(400).json({ success: false, error: 'deliveredBy required' });
 
     console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy });
 
@@ -6572,13 +5554,13 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     }
 
     // Fetch current order
-    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code, qr_code, delivery_person_id').eq('id', orderId).maybeSingle();
+    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
     if (orderErr || !order) {
       console.error('[MARK-DELIVERED] Order not found:', orderErr);
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
-    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status, delivery_person_id: order.delivery_person_id });
+    console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status });
 
     // Update only if status not already delivered
     const updates = { status: 'delivered', delivered_at: new Date().toISOString() };
@@ -6905,7 +5887,7 @@ app.get('/api/buyer/orders', async (req, res) => {
       const { data: order, error } = await sb
         .from('orders')
         .select(`
-          id, order_code, quantity, total_amount, status, payment_method, vendor_id, product_id, created_at, delivery_address,
+          id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
           product:products(id, name, price, description),
           buyer:profiles!orders_buyer_id_fkey(id, address, full_name, phone),
           vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address, full_name),
@@ -6979,7 +5961,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabaseAdmin
           .from('orders')
           .select(`
-            id, order_code, quantity, total_amount, status, payment_method, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
@@ -6995,7 +5977,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabase
           .from('orders')
           .select(`
-            id, order_code, quantity, total_amount, status, payment_method, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
@@ -8031,7 +7013,7 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     // First fetch the order
     const { data: order, error } = await sb
       .from('orders')
-      .select('id, order_code, quantity, total_amount, payment_method, created_at, buyer_id, vendor_id, product_id, delivery_address')
+      .select('id, order_code, quantity, total_amount, created_at, buyer_id, vendor_id, product_id, delivery_address')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -8075,52 +7057,24 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
     // Normalize delivery_address to buyer profile address when available
     const finalAddress = (buyer && buyer.address) ? buyer.address : (order.delivery_address || 'Adresse à définir');
     const vendorName = vendor?.company_name || vendor?.full_name || 'Vendeur inconnu';
-    const shopName = vendor?.company_name || vendor?.full_name || 'Boutique';
-    const shopInitials = shopName.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'BT';
     const buyerName = buyer?.full_name || 'Acheteur inconnu';
     const productName = product?.name || 'Produit';
 
-    const rawQty = Number(order.quantity);
-    const fallbackQty = Number(product?.price) > 0 ? Math.round((Number(order.total_amount) || 0) / Number(product.price)) : 0;
-    const quantity = rawQty > 0 ? rawQty : (fallbackQty > 0 ? fallbackQty : 1);
+    const quantity = Math.max(1, Number(order.quantity) || 1);
     const totalGross = Number(order.total_amount || 0);
     const unitPrice = Number(product?.price) || (quantity ? Math.round(totalGross / quantity) : totalGross);
-    const buyerPaymentMethodRaw = String(order.payment_method || '').trim().toLowerCase();
-    const buyerPaymentMethod = ({
-      wave: 'Wave',
-      orange_money: 'Orange Money',
-      orange: 'Orange Money',
-      card: 'Carte bancaire',
-      cash: 'Paiement cash',
-      wallet: 'Portefeuille'
-    })[buyerPaymentMethodRaw] || (order.payment_method || 'Non renseigné');
     const rows = [{ product_name: productName, unit_price: unitPrice, quantity, gross: unitPrice * quantity }];
-
-    const orderDateFr = new Date(order.created_at || Date.now()).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
     const html = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <title>Facture de la commande</title>
-    <style>
-      body{font-family: Arial, Helvetica, sans-serif; padding:20px;}
-      .header{display:flex; align-items:center; gap:12px; margin-bottom:10px;}
-      .avatar{width:52px; height:52px; border-radius:50%; background:#1e3a5f; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; flex-shrink:0;}
-      table{width:100%; border-collapse:collapse}
-      th,td{border:1px solid #ddd;padding:8px;text-align:left}
-      th{background:#f5f5f5}
-    </style>
+    <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5}</style>
   </head>
   <body>
-    <div class="header">
-      <div class="avatar">${shopInitials}</div>
-      <div>
-        <h3 style="margin:0; white-space:nowrap; font-size:1.15rem;">Facture de la commande</h3>
-        <p style="margin:2px 0 0 0"><strong>Boutique/Entreprise:</strong> ${shopName}</p>
-      </div>
-    </div>
-    <p><strong>Date:</strong> ${orderDateFr}</p>
+    <h2>Facture de la commande</h2>
+    <p><strong>Date:</strong> ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
     <p><strong>Vendeur:</strong> ${vendorName}${vendor?.phone ? ' (' + vendor.phone + ')' : ''}</p>
     <p><strong>Acheteur:</strong> ${buyerName}${buyer?.phone ? ' (' + buyer.phone + ')' : ''}</p>
     <h3>Détails</h3>
@@ -8134,7 +7088,6 @@ app.get('/api/orders/:id/invoice', async (req, res) => {
       </tfoot>
     </table>
     <p><strong>Adresse livraison:</strong> ${finalAddress}</p>
-    <p><strong>Moyen de paiement utilisé par l'acheteur:</strong> ${buyerPaymentMethod}</p>
     <p>Merci pour votre commande.</p>
   </body>
 </html>`;
