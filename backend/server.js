@@ -1606,6 +1606,123 @@ app.post('/api/sms/register', async (req, res) => {
 // ENDPOINTS PIXPAY (ORANGE MONEY)
 // ==========================================
 
+function getPayDunyaApiBase() {
+  return process.env.PAYDUNYA_MODE === 'sandbox'
+    ? 'https://app.paydunya.com/sandbox-api/v1'
+    : 'https://app.paydunya.com/api/v1';
+}
+
+function getPayDunyaCallbackUrl() {
+  if (process.env.PAYDUNYA_CALLBACK_URL) return process.env.PAYDUNYA_CALLBACK_URL;
+  const base = String(process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com').replace(/\/+$/, '');
+  return `${base}/api/paydunya/notification`;
+}
+
+async function createPayDunyaFallbackLink({ amount, orderId, customData = {}, paymentMethod = 'wave' }) {
+  if (!process.env.PAYDUNYA_MASTER_KEY || !process.env.PAYDUNYA_PRIVATE_KEY || !process.env.PAYDUNYA_TOKEN) {
+    throw new Error('Configuration PayDunya manquante');
+  }
+
+  const amountNumber = Number(amount);
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+    throw new Error('Montant invalide pour fallback PayDunya');
+  }
+
+  const safeCustomData = (customData && typeof customData === 'object') ? customData : {};
+  const description = safeCustomData.description ? String(safeCustomData.description) : `Commande ${orderId}`;
+  const storeName = safeCustomData.storeName ? String(safeCustomData.storeName) : 'Validel';
+
+  const basePublicUrl = String(process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com').replace(/\/+$/, '');
+  const returnUrlBase = String(process.env.PAYDUNYA_RETURN_URL || `${basePublicUrl}/payment-success`);
+  const returnUrl = returnUrlBase.includes('order_id=')
+    ? returnUrlBase
+    : `${returnUrlBase}${returnUrlBase.includes('?') ? '&' : '?'}order_id=${encodeURIComponent(orderId)}`;
+
+  const payload = {
+    invoice: {
+      total_amount: amountNumber,
+      description,
+      custom_data: {
+        order_id: orderId,
+        payment_method: paymentMethod,
+        fallback_source: 'pixpay',
+        fallback_reason: 'pixpay_missing_sms_link'
+      }
+    },
+    store: {
+      name: storeName
+    },
+    actions: {
+      cancel_url: process.env.PAYDUNYA_CANCEL_URL || `${basePublicUrl}/payment-error`,
+      return_url: returnUrl,
+      callback_url: getPayDunyaCallbackUrl()
+    }
+  };
+
+  console.warn('[PAYDUNYA-FALLBACK] PixPay sans sms_link, creation facture checkout:', {
+    orderId,
+    amount: amountNumber,
+    paymentMethod
+  });
+
+  const response = await axios.post(
+    `${getPayDunyaApiBase()}/checkout-invoice/create`,
+    payload,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'PAYDUNYA-MASTER-KEY': process.env.PAYDUNYA_MASTER_KEY,
+        'PAYDUNYA-PRIVATE-KEY': process.env.PAYDUNYA_PRIVATE_KEY,
+        'PAYDUNYA-TOKEN': process.env.PAYDUNYA_TOKEN,
+      },
+      timeout: 30000
+    }
+  );
+
+  const invoiceData = response?.data || {};
+  const invoiceToken = invoiceData.token;
+  const checkoutLink = invoiceData.response_text || invoiceData.url || invoiceData.redirect_url;
+
+  if (invoiceData.response_code !== '00' || !invoiceToken || !checkoutLink) {
+    throw new Error(invoiceData.response_text || invoiceData.description || 'Fallback PayDunya indisponible');
+  }
+
+  // Lier la commande au token PayDunya pour le webhook de confirmation.
+  try {
+    const dbClient = (SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL)
+      ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+      : supabase;
+
+    if (dbClient) {
+      const { error: orderUpdateError } = await dbClient
+        .from('orders')
+        .update({ token: invoiceToken })
+        .eq('id', orderId);
+
+      if (orderUpdateError) {
+        console.warn('[PAYDUNYA-FALLBACK] Impossible de stocker le token commande:', orderUpdateError);
+      }
+    }
+  } catch (orderUpdateErr) {
+    console.warn('[PAYDUNYA-FALLBACK] Erreur update token commande:', orderUpdateErr?.message || orderUpdateErr);
+  }
+
+  return {
+    success: true,
+    transaction_id: invoiceToken,
+    provider_id: invoiceToken,
+    state: 'PENDING',
+    message: 'PixPay indisponible, bascule automatique vers PayDunya.',
+    sms_link: checkoutLink,
+    amount: amountNumber,
+    fee: null,
+    raw: {
+      paydunya: invoiceData,
+      fallback_reason: 'pixpay_missing_sms_link'
+    }
+  };
+}
+
 // Initier un paiement (collecte)
 app.post('/api/payment/pixpay/initiate', async (req, res) => {
   try {
@@ -1627,19 +1744,48 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
       customData
     });
 
+    let finalResult = result;
+    let provider = 'pixpay';
+    let fallbackUsed = false;
+    let fallbackReason = null;
+
+    if (result?.success && !result?.sms_link) {
+      fallbackReason = 'pixpay_missing_sms_link';
+      try {
+        finalResult = await createPayDunyaFallbackLink({
+          amount,
+          orderId,
+          customData,
+          paymentMethod: 'orange_money'
+        });
+        provider = 'paydunya';
+        fallbackUsed = true;
+      } catch (fallbackError) {
+        console.error('[PAYDUNYA-FALLBACK] Echec fallback Orange:', fallbackError?.response?.data || fallbackError?.message || fallbackError);
+      }
+    }
+
+    if (finalResult?.success && !finalResult?.sms_link) {
+      return res.status(502).json({
+        success: false,
+        error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
+        fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
+      });
+    }
+
     // Sauvegarder la transaction dans Supabase
-    if (result.success && result.transaction_id) {
+    if (finalResult.success && finalResult.transaction_id) {
       const { error: dbError } = await supabase
         .from('payment_transactions')
         .insert({
-          transaction_id: result.transaction_id,
-          provider: 'pixpay',
-          provider_transaction_id: result.provider_id,
+          transaction_id: finalResult.transaction_id,
+          provider,
+          provider_transaction_id: finalResult.provider_id,
           order_id: orderId,
           amount,
           phone,
-          status: result.state || 'PENDING1',
-          raw_response: normalizeJsonField(result.raw)
+          status: finalResult.state || 'PENDING1',
+          raw_response: normalizeJsonField(finalResult.raw)
         });
 
       if (dbError) {
@@ -1648,13 +1794,16 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
     }
 
     return res.json({
-      success: result.success,
-      transaction_id: result.transaction_id,
-      provider_id: result.provider_id,
-      message: result.message,
-      sms_link: result.sms_link,
-      amount: result.amount,
-      fee: result.fee
+      success: finalResult.success,
+      transaction_id: finalResult.transaction_id,
+      provider_id: finalResult.provider_id,
+      provider,
+      fallback_used: fallbackUsed,
+      fallback_reason: fallbackReason,
+      message: finalResult.message,
+      sms_link: finalResult.sms_link,
+      amount: finalResult.amount,
+      fee: finalResult.fee
     });
 
   } catch (error) {
@@ -1696,19 +1845,48 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       customData
     });
 
+    let finalResult = result;
+    let provider = 'pixpay_wave';
+    let fallbackUsed = false;
+    let fallbackReason = null;
+
+    if (result?.success && !result?.sms_link) {
+      fallbackReason = 'pixpay_missing_sms_link';
+      try {
+        finalResult = await createPayDunyaFallbackLink({
+          amount,
+          orderId,
+          customData,
+          paymentMethod: 'wave'
+        });
+        provider = 'paydunya_wave';
+        fallbackUsed = true;
+      } catch (fallbackError) {
+        console.error('[PAYDUNYA-FALLBACK] Echec fallback Wave:', fallbackError?.response?.data || fallbackError?.message || fallbackError);
+      }
+    }
+
+    if (finalResult?.success && !finalResult?.sms_link) {
+      return res.status(502).json({
+        success: false,
+        error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
+        fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
+      });
+    }
+
     // Sauvegarder la transaction dans Supabase
-    if (result.success && result.transaction_id) {
+    if (finalResult.success && finalResult.transaction_id) {
       const { error: dbError } = await supabase
         .from('payment_transactions')
         .insert({
-          transaction_id: result.transaction_id,
-          provider: 'pixpay_wave',
-          provider_transaction_id: result.provider_id,
+          transaction_id: finalResult.transaction_id,
+          provider,
+          provider_transaction_id: finalResult.provider_id,
           order_id: orderId,
           amount,
           phone,
-          status: result.state || 'PENDING1',
-          raw_response: normalizeJsonField(result.raw)
+          status: finalResult.state || 'PENDING1',
+          raw_response: normalizeJsonField(finalResult.raw)
         });
 
       if (dbError) {
@@ -1717,13 +1895,16 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     }
 
     return res.json({
-      success: result.success,
-      transaction_id: result.transaction_id,
-      provider_id: result.provider_id,
-      message: result.message,
-      sms_link: result.sms_link,  // IMPORTANT: retourner le lien Wave
-      amount: result.amount,
-      fee: result.fee
+      success: finalResult.success,
+      transaction_id: finalResult.transaction_id,
+      provider_id: finalResult.provider_id,
+      provider,
+      fallback_used: fallbackUsed,
+      fallback_reason: fallbackReason,
+      message: finalResult.message,
+      sms_link: finalResult.sms_link,  // IMPORTANT: retourner le lien Wave
+      amount: finalResult.amount,
+      fee: finalResult.fee
     });
 
   } catch (error) {
