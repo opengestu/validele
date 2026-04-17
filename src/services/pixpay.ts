@@ -15,10 +15,14 @@ export interface PixPayInitiateResponse {
   transaction_id?: string;
   provider_id?: string;
   message?: string;
-  sms_link?: string;
+  sms_link?: string | null;
   amount?: number;
   fee?: number;
   error?: string;
+  provider?: string;
+  fallback_used?: boolean;
+  fallback_reason?: string | null;
+  requires_external_validation?: boolean;
 }
 
 export interface PixPayPayoutRequest {

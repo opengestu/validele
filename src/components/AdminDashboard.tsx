@@ -584,6 +584,56 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Télécharger une facture batch en fichier (PDF/XLSX)
+  const downloadInvoiceFile = async (url: string, fallbackFilename: string) => {
+    try {
+      const authHeaders = getAuthHeader();
+      const headers: Record<string,string> = {
+        'Accept': 'application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, */*'
+      };
+      if (authHeaders && typeof authHeaders === 'object') Object.assign(headers, authHeaders);
+
+      const full = url.startsWith('http') ? url : apiUrl(url);
+      const resp = await fetch(full, { method: 'GET', headers, credentials: 'include' });
+
+      if (!resp.ok) {
+        if (resp.status === 403 || resp.status === 401) {
+          toast({ title: 'Non autorisé', description: 'Session admin expirée. Veuillez vous reconnecter.', variant: 'destructive' });
+          setIsAuthenticated(false);
+          setShowAdminLogin(true);
+          return;
+        }
+        throw new Error(`Erreur ${resp.status}`);
+      }
+
+      const blob = await resp.blob();
+      if (!blob || blob.size === 0) throw new Error('Fichier vide');
+
+      let filename = fallbackFilename;
+      const cd = resp.headers.get('content-disposition') || '';
+      const m = /filename\s*=\s*"?([^;"]+)"?/i.exec(cd);
+      if (m && m[1]) filename = m[1];
+
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+
+      toast({ title: 'Téléchargé', description: `Fichier ${filename} sauvegardé` });
+    } catch (err) {
+      console.error('[AdminDashboard] downloadInvoiceFile error', err);
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de télécharger la facture',
+        variant: 'destructive'
+      });
+    }
+  };
+
   // Télécharger la facture visible dans la modal
   const downloadVisibleInvoice = () => {
     try {
@@ -1908,7 +1958,17 @@ const AdminDashboard: React.FC = () => {
           </Card>
         )}
       </div>
-    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={(vendorId) => openInvoiceInModal(`/api/admin/payout-batches/${selectedBatch?.id}/invoice?vendorId=${encodeURIComponent(vendorId)}`, `Facture Batch ${selectedBatch?.id?.slice(0, 8)} - Vendeur`)} onRetryItem={async (it) => {
+    {batchDetailsOpen && <BatchDetailsModal batch={selectedBatch} items={selectedBatchItems} onClose={() => setBatchDetailsOpen(false)} onOpenInvoice={async (vendorId, format = 'html') => {
+      const batchId = selectedBatch?.id || '';
+      const baseUrl = `/api/admin/payout-batches/${batchId}/invoice?vendorId=${encodeURIComponent(vendorId)}&format=${encodeURIComponent(format)}`;
+      if (format === 'html') {
+        await openInvoiceInModal(baseUrl, `Facture Batch ${selectedBatch?.id?.slice(0, 8)} - Vendeur`);
+        return;
+      }
+
+      const fallbackName = `facture-batch-${String(batchId).slice(0, 8)}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+      await downloadInvoiceFile(baseUrl, fallbackName);
+    }} onRetryItem={async (it) => {
       setProcessing(true);
       try {
         if (!confirm('Confirmer la relance du payout pour cette commande ?')) return;
@@ -1963,7 +2023,7 @@ const AdminDashboard: React.FC = () => {
 
 // Batch details modal
 { /* Render a printable details modal when open */ }
-function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string) => void; onRetryItem?: (item: PayoutBatchItem) => void }){
+function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string, format?: 'html' | 'pdf' | 'xlsx') => void | Promise<void>; onRetryItem?: (item: PayoutBatchItem) => void }){
   if (!batch) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6">
@@ -2004,8 +2064,10 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }
                     <TableCell>{(it.net_amount||0).toLocaleString()} FCFA</TableCell>
                     <TableCell>{it.status}</TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={() => onOpenInvoice(it.vendor_id || '')}>Invoice</Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => onOpenInvoice(it.vendor_id || '', 'html')}>Voir</Button>
+                        <Button size="sm" onClick={() => onOpenInvoice(it.vendor_id || '', 'pdf')}>PDF</Button>
+                        <Button size="sm" variant="secondary" onClick={() => onOpenInvoice(it.vendor_id || '', 'xlsx')}>Excel</Button>
                         {onRetryItem && it.status !== 'paid' && (
                           <Button size="sm" variant="secondary" onClick={() => onRetryItem(it)}>Relancer</Button>
                         )}

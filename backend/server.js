@@ -1623,6 +1623,8 @@ function formatPhoneForPayDunyaWave(phone) {
   return String(phone).replace(/[\s\-\(\)]/g, '');
 }
 
+const PAYDUNYA_MIN_CHECKOUT_AMOUNT = 200;
+
 async function createPayDunyaFallbackLink({ amount, orderId, phone, customData = {}, paymentMethod = 'wave' }) {
   if (!process.env.PAYDUNYA_MASTER_KEY || !process.env.PAYDUNYA_PRIVATE_KEY || !process.env.PAYDUNYA_TOKEN) {
     throw new Error('Configuration PayDunya manquante');
@@ -1631,6 +1633,13 @@ async function createPayDunyaFallbackLink({ amount, orderId, phone, customData =
   const amountNumber = Number(amount);
   if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
     throw new Error('Montant invalide pour fallback PayDunya');
+  }
+  if (amountNumber < PAYDUNYA_MIN_CHECKOUT_AMOUNT) {
+    const minAmountError = new Error(`Fallback PayDunya indisponible pour ${amountNumber} FCFA. Le montant minimum checkout est de ${PAYDUNYA_MIN_CHECKOUT_AMOUNT} FCFA.`);
+    minAmountError.code = 'PAYDUNYA_MIN_CHECKOUT_AMOUNT';
+    minAmountError.minimum_amount = PAYDUNYA_MIN_CHECKOUT_AMOUNT;
+    minAmountError.amount = amountNumber;
+    throw minAmountError;
   }
 
   const safeCustomData = (customData && typeof customData === 'object') ? customData : {};
@@ -1944,6 +1953,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     let provider = 'pixpay_wave';
     let fallbackUsed = false;
     let fallbackReason = null;
+    let requiresExternalValidation = false;
 
     if (result?.success && !result?.sms_link) {
       fallbackReason = 'pixpay_missing_sms_link';
@@ -1963,11 +1973,26 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     }
 
     if (finalResult?.success && !finalResult?.sms_link) {
-      return res.status(502).json({
-        success: false,
-        error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
-        fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
-      });
+      if (provider === 'pixpay_wave') {
+        requiresExternalValidation = true;
+        console.warn('[PIXPAY-WAVE] Paiement initie sans lien de redirection, attente validation externe:', {
+          orderId,
+          transaction_id: finalResult.transaction_id,
+          state: finalResult.state,
+          fallbackReason: fallbackReason || 'pixpay_missing_sms_link'
+        });
+        finalResult = {
+          ...finalResult,
+          sms_link: null,
+          message: 'Demande de paiement Wave creee. Si aucun lien ne s\'ouvre, ouvrez Wave ou consultez vos SMS pour valider. La commande se mettra a jour automatiquement apres confirmation.'
+        };
+      } else {
+        return res.status(502).json({
+          success: false,
+          error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
+          fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
+        });
+      }
     }
 
     // Sauvegarder la transaction dans Supabase
@@ -1997,6 +2022,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       provider,
       fallback_used: fallbackUsed,
       fallback_reason: fallbackReason,
+      requires_external_validation: requiresExternalValidation,
       message: finalResult.message,
       sms_link: finalResult.sms_link,  // IMPORTANT: retourner le lien Wave
       amount: finalResult.amount,
@@ -3695,6 +3721,10 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
   try {
     let batchId = req.params.id;
     const vendorId = req.query.vendorId || req.query.vendor_id || req.query.vendor;
+    const formatRaw = String(req.query.format || req.query.type || 'html').toLowerCase();
+    const outputFormat = (formatRaw === 'pdf')
+      ? 'pdf'
+      : ((formatRaw === 'excel' || formatRaw === 'xlsx') ? 'xlsx' : 'html');
     if (!batchId || !vendorId) return res.status(400).send('batch id and vendorId required');
 
     console.log('[ADMIN] invoice request for batch:', batchId, 'vendorId:', vendorId);
@@ -3791,6 +3821,107 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       return `${day} ${firstLetter.toUpperCase()}${restOfMonth}${year}`;
     });
 
+    const safeDate = batchDate.toISOString().slice(0, 10);
+    const safeBatch = String(batchId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12) || 'batch';
+    const baseFilename = `facture-batch-${safeBatch}-${safeDate}`;
+
+    if (outputFormat === 'xlsx') {
+      const XLSX = require('xlsx');
+      const exportRows = groupedRows.map((r) => ({
+        Produit: r.product_name,
+        Ventes: r.count,
+        'Brut (FCFA)': r.gross,
+        'Commission (FCFA)': r.commission,
+        'Net (FCFA)': r.net
+      }));
+
+      exportRows.push({
+        Produit: 'TOTAL',
+        Ventes: totalQty,
+        'Brut (FCFA)': totalGross,
+        'Commission (FCFA)': totalCommission,
+        'Net (FCFA)': totalNet
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      worksheet['!cols'] = [
+        { wch: 34 },
+        { wch: 10 },
+        { wch: 16 },
+        { wch: 20 },
+        { wch: 16 }
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Facture');
+      const xlsxBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${baseFilename}.xlsx"`);
+      return res.send(xlsxBuffer);
+    }
+
+    if (outputFormat === 'pdf') {
+      const PDFDocument = require('pdfkit');
+      const filename = `${baseFilename}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      const doc = new PDFDocument({ size: 'A4', margin: 40 });
+      doc.pipe(res);
+
+      doc.font('Helvetica-Bold').fontSize(16).text(`Facture de paiement du ${capitalizedDate}`);
+      doc.moveDown(0.5);
+      doc.font('Helvetica').fontSize(10).text(`Vendeur: ${vendor.full_name || ''} (${vendor.phone || ''})`);
+      doc.text(`Date: ${batchDate.toLocaleString('fr-FR')}`);
+      doc.text(`Batch: ${batchId}`);
+      doc.moveDown(0.8);
+
+      const colX = {
+        product: 40,
+        qty: 255,
+        gross: 305,
+        commission: 380,
+        net: 470
+      };
+      const rowHeight = 18;
+      const rightEdge = 555;
+      let y = doc.y;
+
+      const ensureSpace = () => {
+        if (y <= doc.page.height - doc.page.margins.bottom - rowHeight) return;
+        doc.addPage();
+        y = doc.page.margins.top;
+      };
+
+      const drawRow = (row, isHeader = false) => {
+        ensureSpace();
+        doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
+        doc.text(String(row.product_name || ''), colX.product, y, { width: colX.qty - colX.product - 8, ellipsis: true });
+        doc.text(String(row.count || 0), colX.qty, y, { width: 42, align: 'right' });
+        doc.text(Number(row.gross || 0).toLocaleString('fr-FR'), colX.gross, y, { width: 70, align: 'right' });
+        doc.text(Number(row.commission || 0).toLocaleString('fr-FR'), colX.commission, y, { width: 82, align: 'right' });
+        doc.text(Number(row.net || 0).toLocaleString('fr-FR'), colX.net, y, { width: 70, align: 'right' });
+        y += rowHeight;
+      };
+
+      drawRow({ product_name: 'Produit', count: 'Ventes', gross: 'Brut', commission: 'Commission', net: 'Net' }, true);
+      doc.moveTo(colX.product, y - 3).lineTo(rightEdge, y - 3).strokeColor('#999').stroke();
+
+      for (const r of groupedRows) {
+        drawRow(r, false);
+      }
+
+      doc.moveTo(colX.product, y - 3).lineTo(rightEdge, y - 3).strokeColor('#999').stroke();
+      drawRow({ product_name: 'TOTAL', count: totalQty, gross: totalGross, commission: totalCommission, net: totalNet }, true);
+
+      y += 10;
+      ensureSpace();
+      doc.font('Helvetica-Bold').fontSize(11).text(`Montant versé: ${Number(totalNet || 0).toLocaleString('fr-FR')} FCFA`, colX.product, y);
+      doc.end();
+      return;
+    }
+
     // Simple HTML invoice (grouped by product with sales count)
     const html = `<!doctype html>
       <html>
@@ -3819,6 +3950,7 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
       </html>`;
 
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `inline; filename="${baseFilename}.html"`);
     res.send(html);
   } catch (err) {
     console.error('[ADMIN] invoice error:', err);

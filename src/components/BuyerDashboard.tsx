@@ -1215,6 +1215,21 @@ const BuyerDashboard = () => {
           setPurchaseQuantity(1);
           setPaymentMethod('wave');
           setSearchCode('');
+        } else if (waveResult.success && waveResult.requires_external_validation) {
+          toast({
+            title: 'Validation Wave requise',
+            description: waveResult.message || 'Ouvrez Wave ou consultez vos SMS pour valider le paiement. Votre commande sera confirmée automatiquement après validation.',
+            duration: 12000,
+          });
+
+          // Même sans lien, PixPay a déjà créé la transaction: on surveille la confirmation.
+          pollOrderStatus(createdOrderId);
+
+          setSearchModalOpen(false);
+          setSearchResult(null);
+          setPurchaseQuantity(1);
+          setPaymentMethod('wave');
+          setSearchCode('');
         } else {
           throw new Error(waveResult.error || waveResult.message || 'Erreur paiement Wave');
         }
