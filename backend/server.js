@@ -3958,6 +3958,175 @@ app.get('/api/admin/payout-batches/:id/invoice', requireAdmin, async (req, res) 
   }
 });
 
+// Render a vendor net payout list for a batch (name + net amount to send)
+app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, res) => {
+  try {
+    const batchId = req.params.id;
+    const formatRaw = String(req.query.format || req.query.type || 'html').toLowerCase();
+    const outputFormat = (formatRaw === 'pdf')
+      ? 'pdf'
+      : ((formatRaw === 'excel' || formatRaw === 'xlsx') ? 'xlsx' : 'html');
+
+    if (!batchId) return res.status(400).send('batch id required');
+
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let db = supabase;
+    if (serviceRoleKey) {
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      } catch (e) {
+        console.warn('[ADMIN] vendors-net - failed to create service role client, fallback to RLS client:', e?.message || e);
+      }
+    }
+
+    const { data: batch } = await db.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
+    if (!batch) return res.status(404).send('Batch not found');
+
+    const { data: items, error: itemsErr } = await db
+      .from('payout_batch_items')
+      .select('vendor_id, amount, commission_amount, net_amount, vendor:profiles(id, full_name, phone)')
+      .eq('batch_id', batchId);
+
+    if (itemsErr) throw itemsErr;
+    if (!items || items.length === 0) return res.status(404).send('No payout items found for this batch');
+
+    const vendorsMap = {};
+    for (const item of items) {
+      const vendorId = String(item.vendor_id || 'unknown');
+      const inferredNet = Number(item.amount || 0) - Number(item.commission_amount || 0);
+      const netAmount = Number(item.net_amount || inferredNet || 0);
+      const vendorName = (item.vendor && (item.vendor.full_name || item.vendor.phone)) || vendorId;
+
+      if (!vendorsMap[vendorId]) {
+        vendorsMap[vendorId] = {
+          vendor_id: vendorId,
+          vendor_name: String(vendorName || '-'),
+          vendor_phone: String((item.vendor && item.vendor.phone) || '-'),
+          net_amount: 0
+        };
+      }
+
+      vendorsMap[vendorId].net_amount += Number.isFinite(netAmount) ? netAmount : 0;
+    }
+
+    const vendorRows = Object.values(vendorsMap)
+      .sort((a, b) => String(a.vendor_name || '').localeCompare(String(b.vendor_name || ''), 'fr'));
+    const totalNet = vendorRows.reduce((sum, row) => sum + Number(row.net_amount || 0), 0);
+
+    const batchDate = new Date(batch.created_at || batch.scheduled_at || Date.now());
+    const safeDate = batchDate.toISOString().slice(0, 10);
+    const safeBatch = String(batchId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12) || 'batch';
+    const baseFilename = `vendeurs-net-batch-${safeBatch}-${safeDate}`;
+
+    if (outputFormat === 'xlsx') {
+      const XLSX = require('xlsx');
+      const exportRows = vendorRows.map((row) => ({
+        Vendeur: row.vendor_name,
+        'Montant net a envoyer (FCFA)': Number(row.net_amount || 0)
+      }));
+
+      exportRows.push({
+        Vendeur: 'TOTAL',
+        'Montant net a envoyer (FCFA)': Number(totalNet || 0)
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      worksheet['!cols'] = [
+        { wch: 34 },
+        { wch: 30 }
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'VendeursNet');
+      const xlsxBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${baseFilename}.xlsx"`);
+      return res.send(xlsxBuffer);
+    }
+
+    if (outputFormat === 'pdf') {
+      const PDFDocument = require('pdfkit');
+      const filename = `${baseFilename}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      const doc = new PDFDocument({ size: 'A4', margin: 40 });
+      doc.pipe(res);
+
+      doc.font('Helvetica-Bold').fontSize(16).text('Liste vendeurs - montant net a envoyer');
+      doc.moveDown(0.4);
+      doc.font('Helvetica').fontSize(10).text(`Batch: ${batchId}`);
+      doc.text(`Date: ${batchDate.toLocaleString('fr-FR')}`);
+      doc.moveDown(0.8);
+
+      const colVendor = 40;
+      const colNet = 390;
+      const rowHeight = 18;
+      const rightEdge = 555;
+      let y = doc.y;
+
+      const ensureSpace = () => {
+        if (y <= doc.page.height - doc.page.margins.bottom - rowHeight) return;
+        doc.addPage();
+        y = doc.page.margins.top;
+      };
+
+      const drawRow = (name, net, isHeader = false) => {
+        ensureSpace();
+        doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
+        doc.text(String(name || ''), colVendor, y, { width: 320, ellipsis: true });
+        doc.text(Number(net || 0).toLocaleString('fr-FR'), colNet, y, { width: 150, align: 'right' });
+        y += rowHeight;
+      };
+
+      drawRow('Vendeur', 'Montant net (FCFA)', true);
+      doc.moveTo(colVendor, y - 3).lineTo(rightEdge, y - 3).strokeColor('#999').stroke();
+
+      for (const row of vendorRows) {
+        drawRow(row.vendor_name, row.net_amount, false);
+      }
+
+      doc.moveTo(colVendor, y - 3).lineTo(rightEdge, y - 3).strokeColor('#999').stroke();
+      drawRow('TOTAL', totalNet, true);
+
+      doc.end();
+      return;
+    }
+
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Liste vendeurs - montant net a envoyer</title>
+          <style>body{font-family: Arial, Helvetica, sans-serif; padding:20px;} table{width:100%; border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left} th{background:#f5f5f5} td.net, th.net{text-align:right}</style>
+        </head>
+        <body>
+          <h2>Liste vendeurs - montant net a envoyer</h2>
+          <p><strong>Batch:</strong> ${batchId}</p>
+          <p><strong>Date:</strong> ${batchDate.toLocaleString('fr-FR')}</p>
+          <table>
+            <thead><tr><th>Vendeur</th><th class="net">Montant net a envoyer (FCFA)</th></tr></thead>
+            <tbody>
+              ${vendorRows.map((row) => `<tr><td>${row.vendor_name}</td><td class="net">${Number(row.net_amount || 0).toLocaleString('fr-FR')}</td></tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr><th>TOTAL</th><th class="net">${Number(totalNet || 0).toLocaleString('fr-FR')}</th></tr>
+            </tfoot>
+          </table>
+        </body>
+      </html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `inline; filename="${baseFilename}.html"`);
+    return res.send(html);
+  } catch (err) {
+    console.error('[ADMIN] vendors-net error:', err);
+    return res.status(500).send(String(err));
+  }
+});
+
 // Vendor endpoint: list payout batches that include items for the authenticated vendor
 app.get('/api/vendor/payout-batches', async (req, res) => {
   try {

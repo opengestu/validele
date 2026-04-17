@@ -1968,6 +1968,16 @@ const AdminDashboard: React.FC = () => {
 
       const fallbackName = `facture-batch-${String(batchId).slice(0, 8)}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
       await downloadInvoiceFile(baseUrl, fallbackName);
+    }} onOpenVendorsNetFile={async (format = 'html') => {
+      const batchId = selectedBatch?.id || '';
+      const baseUrl = `/api/admin/payout-batches/${batchId}/vendors-net?format=${encodeURIComponent(format)}`;
+      if (format === 'html') {
+        await openInvoiceInModal(baseUrl, `Liste vendeurs - net a envoyer (${String(batchId).slice(0, 8)})`);
+        return;
+      }
+
+      const fallbackName = `vendeurs-net-batch-${String(batchId).slice(0, 8)}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+      await downloadInvoiceFile(baseUrl, fallbackName);
     }} onRetryItem={async (it) => {
       setProcessing(true);
       try {
@@ -2023,14 +2033,21 @@ const AdminDashboard: React.FC = () => {
 
 // Batch details modal
 { /* Render a printable details modal when open */ }
-function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string, format?: 'html' | 'pdf' | 'xlsx') => void | Promise<void>; onRetryItem?: (item: PayoutBatchItem) => void }){
+function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onOpenVendorsNetFile, onRetryItem }:{ batch: PayoutBatch | null; items: PayoutBatchItem[]; onClose: () => void; onOpenInvoice: (vendorId: string, format?: 'html' | 'pdf' | 'xlsx') => void | Promise<void>; onOpenVendorsNetFile?: (format?: 'html' | 'pdf' | 'xlsx') => void | Promise<void>; onRetryItem?: (item: PayoutBatchItem) => void }){
   if (!batch) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6">
       <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl bg-white shadow-lg">
         <div className="p-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">Détails Batch {batch.id}</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {onOpenVendorsNetFile && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => onOpenVendorsNetFile('html')}>Vendeurs (voir)</Button>
+                <Button size="sm" onClick={() => onOpenVendorsNetFile('pdf')}>Vendeurs PDF</Button>
+                <Button size="sm" variant="secondary" onClick={() => onOpenVendorsNetFile('xlsx')}>Vendeurs Excel</Button>
+              </>
+            )}
             <Button variant="ghost" onClick={onClose}>Fermer</Button>
           </div>
         </div>
