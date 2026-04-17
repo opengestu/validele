@@ -3985,7 +3985,7 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
 
     const { data: items, error: itemsErr } = await db
       .from('payout_batch_items')
-      .select('vendor_id, amount, commission_amount, net_amount, vendor:profiles(id, full_name, phone)')
+      .select('vendor_id, amount, commission_amount, net_amount, vendor:profiles(id, full_name, phone, email, wallet_type)')
       .eq('batch_id', batchId);
 
     if (itemsErr) throw itemsErr;
@@ -4003,8 +4003,18 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
           vendor_id: vendorId,
           vendor_name: String(vendorName || '-'),
           vendor_phone: String((item.vendor && item.vendor.phone) || '-'),
+          vendor_email: String((item.vendor && item.vendor.email) || '-'),
+          vendor_payment_method: String((item.vendor && item.vendor.wallet_type) || 'wave-senegal'),
           net_amount: 0
         };
+      }
+
+      if (!vendorsMap[vendorId].vendor_email || vendorsMap[vendorId].vendor_email === '-') {
+        vendorsMap[vendorId].vendor_email = String((item.vendor && item.vendor.email) || '-');
+      }
+
+      if (!vendorsMap[vendorId].vendor_payment_method || vendorsMap[vendorId].vendor_payment_method === '-') {
+        vendorsMap[vendorId].vendor_payment_method = String((item.vendor && item.vendor.wallet_type) || 'wave-senegal');
       }
 
       vendorsMap[vendorId].net_amount += Number.isFinite(netAmount) ? netAmount : 0;
@@ -4022,19 +4032,20 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
     if (outputFormat === 'xlsx') {
       const XLSX = require('xlsx');
       const exportRows = vendorRows.map((row) => ({
-        Vendeur: row.vendor_name,
-        'Montant net a envoyer (FCFA)': Number(row.net_amount || 0)
+        'Nom complet': row.vendor_name,
+        'Téléphone': row.vendor_phone,
+        Email: row.vendor_email || '-',
+        Montant: Number(row.net_amount || 0),
+        'Moyen de paiement': row.vendor_payment_method || 'wave-senegal'
       }));
-
-      exportRows.push({
-        Vendeur: 'TOTAL',
-        'Montant net a envoyer (FCFA)': Number(totalNet || 0)
-      });
 
       const worksheet = XLSX.utils.json_to_sheet(exportRows);
       worksheet['!cols'] = [
         { wch: 34 },
-        { wch: 30 }
+        { wch: 18 },
+        { wch: 28 },
+        { wch: 14 },
+        { wch: 22 }
       ];
 
       const workbook = XLSX.utils.book_new();
