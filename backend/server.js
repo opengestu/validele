@@ -3985,7 +3985,7 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
 
     const { data: items, error: itemsErr } = await db
       .from('payout_batch_items')
-      .select('vendor_id, amount, commission_amount, net_amount, vendor:profiles(id, full_name, phone, email, wallet_type)')
+      .select('vendor_id, amount, commission_amount, net_amount, vendor:profiles(id, full_name, phone, wallet_type)')
       .eq('batch_id', batchId);
 
     if (itemsErr) throw itemsErr;
@@ -4003,14 +4003,9 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
           vendor_id: vendorId,
           vendor_name: String(vendorName || '-'),
           vendor_phone: String((item.vendor && item.vendor.phone) || '-'),
-          vendor_email: String((item.vendor && item.vendor.email) || '-'),
           vendor_payment_method: String((item.vendor && item.vendor.wallet_type) || 'wave-senegal'),
           net_amount: 0
         };
-      }
-
-      if (!vendorsMap[vendorId].vendor_email || vendorsMap[vendorId].vendor_email === '-') {
-        vendorsMap[vendorId].vendor_email = String((item.vendor && item.vendor.email) || '-');
       }
 
       if (!vendorsMap[vendorId].vendor_payment_method || vendorsMap[vendorId].vendor_payment_method === '-') {
@@ -4031,10 +4026,15 @@ app.get('/api/admin/payout-batches/:id/vendors-net', requireAdmin, async (req, r
 
     if (outputFormat === 'xlsx') {
       const XLSX = require('xlsx');
+      const toSmsAddress = (phone) => {
+        const digitsOnly = String(phone || '').replace(/\D+/g, '');
+        return digitsOnly ? `${digitsOnly}@sms.validele.app` : '-';
+      };
+
       const exportRows = vendorRows.map((row) => ({
         'Nom complet': row.vendor_name,
         'Téléphone': row.vendor_phone,
-        Email: row.vendor_email || '-',
+        Email: toSmsAddress(row.vendor_phone),
         Montant: Number(row.net_amount || 0),
         'Moyen de paiement': row.vendor_payment_method || 'wave-senegal'
       }));
