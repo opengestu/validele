@@ -327,6 +327,11 @@ async function initiateWavePayment(params) {
   const sanitizedPayload = { ...payload };
   delete sanitizedPayload.api_key; // Ne pas logger la clé API en clair
 
+  // Some hosted log UIs mark lines as errors when they contain the token "error".
+  // Avoid logging redirect_error_url verbatim to prevent false red/error highlighting.
+  const logPayload = { ...sanitizedPayload };
+  delete logPayload.redirect_error_url;
+
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,
     destination: formattedPhone,
@@ -335,7 +340,15 @@ async function initiateWavePayment(params) {
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     redirect_url: payload.redirect_url || 'N/A',
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
-    payload: JSON.stringify(sanitizedPayload)
+    payload_preview: {
+      amount: logPayload.amount,
+      destination: logPayload.destination,
+      service_id: logPayload.service_id,
+      business_name_id: logPayload.business_name_id,
+      has_redirect_url: Boolean(logPayload.redirect_url),
+      has_custom_data: Boolean(logPayload.custom_data)
+    },
+    ...(process.env.DEBUG_PIXPAY === 'true' ? { debug_payload: logPayload } : {})
   });
 
   try {
