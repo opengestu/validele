@@ -30,6 +30,8 @@ interface PhoneAuthFormProps {
   showContinue?: boolean;
   /** When true and an initialPhone is provided, immediately start the "forgot PIN" flow (send OTP and go to OTP step). */
   startResetPin?: boolean;
+  /** When true, force display of the phone entry step and ignore any restored auth progress. */
+  forcePhoneStep?: boolean;
 }
 
 type UserRole = 'buyer' | 'vendor' | 'delivery';
@@ -38,8 +40,10 @@ type SelectableRole = UserRole | '__role_unselected__';
 const ROLE_UNSELECTED: SelectableRole = '__role_unselected__';
 const ADDRESS_UNSELECTED = '__address_unselected__';
 const TRANSPORT_UNSELECTED = '__transport_unselected__';
+const AUTH_RETURN_PATH_KEY = 'auth_return_path';
+const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
-export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false }) => {
+export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false, forcePhoneStep = false }) => {
   const FORGOT_PIN_CLICKS_KEY = 'pin_forgot_clicks_v1';
   const MAX_FORGOT_PIN_CLICKS = 1;
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
@@ -77,6 +81,26 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const [forgotPinClicks, setForgotPinClicks] = useState(0);
   // Store OTP code used for reset so we can re-verify server-side when saving the new PIN
   const [resetOtpCode, setResetOtpCode] = useState('');
+
+  const consumePostLoginRedirectPath = (role: 'buyer' | 'vendor' | 'delivery') => {
+    if (role !== 'buyer') return role === 'vendor' ? '/vendor' : '/delivery';
+
+    const rawReturnPath = localStorage.getItem(AUTH_RETURN_PATH_KEY);
+    if (rawReturnPath) {
+      localStorage.removeItem(AUTH_RETURN_PATH_KEY);
+      const safe = String(rawReturnPath || '').trim();
+      if (safe.startsWith('/buyer')) {
+        return safe;
+      }
+    }
+
+    const pendingCode = String(localStorage.getItem(SHARED_PRODUCT_PENDING_CODE_KEY) || '').trim();
+    if (pendingCode) {
+      return `/buyer?productCode=${encodeURIComponent(pendingCode)}`;
+    }
+
+    return '/buyer';
+  };
  
   // Refs stables pour les inputs
   const otpRef0 = useRef<HTMLInputElement>(null);
@@ -252,6 +276,26 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // lose progress if the app reloads while backgrounded on mobile. We avoid
   // reusing sensitive data (PIN/OTP) automatically.
   useEffect(() => {
+    if (forcePhoneStep) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+      setStep('phone');
+      setIsResetPin(false);
+      setExistingProfile(null);
+      setHasCheckedProfile(false);
+      setOtpDigits(['', '', '', '']);
+      setPinDigits(['', '', '', '']);
+      setConfirmPinDigits(['', '', '', '']);
+      setLoginPinDigits(['', '', '', '']);
+      setFormData(prev => ({
+        ...prev,
+        phone: '',
+        otp: '',
+        pin: '',
+        confirmPin: '',
+      }));
+      return;
+    }
+
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -276,7 +320,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     } catch (e) {
       // ignore
     }
-  }, []);
+  }, [forcePhoneStep]);
 
   // Persist minimal state on important changes so the user can resume the flow
   // if the OS kills the app while backgrounded.
@@ -757,7 +801,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Si c'est un vendeur, générer le JWT backend pour session SMS
       if (existingProfile.role === 'vendor') {
         try {
-          const jwtResp = await fetch('https://validele.onrender.com/api/vendor/generate-jwt', {
+          const jwtResp = await fetch(apiUrl('/api/vendor/generate-jwt'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ vendor_id: existingProfile.id, phone: formData.phone })
@@ -794,8 +838,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                           existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+      const redirectPath = consumePostLoginRedirectPath(existingProfile.role);
      
       // Utiliser window.location pour forcer le rechargement et détecter la session
       window.location.href = redirectPath;
@@ -908,8 +951,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
      
       // Réinitialiser le mode reset
       setIsResetPin(false);
-      const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                         existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
+      const redirectPath = consumePostLoginRedirectPath(existingProfile.role);
      
       // Rafraîchir pour charger la session
       window.location.href = redirectPath;
@@ -1048,8 +1090,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      const redirectPath = selectedRole === 'vendor' ? '/vendor' :
-             selectedRole === 'delivery' ? '/delivery' : '/buyer';
+      const redirectPath = consumePostLoginRedirectPath(selectedRole);
      
       // Utiliser window.location pour forcer le rechargement et détecter la session
       window.location.href = redirectPath;
@@ -1341,16 +1382,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     return (
       <div className="flex flex-col items-center mt-6">
         {/* Keypad container */}
-        <div
-          className="flex flex-col items-center gap-4 px-5 pt-5 pb-6 rounded-[28px]"
-          style={{
-            background: 'transparent',
-            backdropFilter: 'none',
-            WebkitBackdropFilter: 'none',
-            boxShadow: 'none',
-            border: 'none',
-          }}
-        >
+        <div className="flex flex-col items-center gap-4 px-5 pt-5 pb-6 rounded-[28px] bg-transparent backdrop-blur-0 shadow-none border-none">
           {/* Key grid */}
           <div className="grid grid-cols-3 gap-[14px]">
             {[1,2,3,4,5,6,7,8,9].map(n => (
@@ -1361,14 +1393,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 onPointerDown={provideHaptic}
                 onClick={() => handleKeypadDigit(String(n))}
                 onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
-                style={{
-                  background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
-                  color: 'hsl(var(--primary))',
-                  boxShadow: 'none',
-                  border: 'none',
-                  letterSpacing: '-0.5px',
-                }}
+                className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-white to-slate-50 text-primary shadow-none border-none tracking-[-0.5px]`}
               >{n}</button>
             ))}
             {/* Empty bottom-left cell */}
@@ -1380,13 +1405,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               onPointerDown={provideHaptic}
               onClick={() => handleKeypadDigit('0')}
               onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-              className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
-              style={{
-                background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
-                color: 'hsl(var(--primary))',
-                boxShadow: 'none',
-                border: 'none',
-              }}
+              className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-white to-slate-50 text-primary shadow-none border-none`}
             >0</button>
             {/* Backspace */}
             <button
@@ -1396,13 +1415,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               onPointerDown={provideHaptic}
               onClick={handleKeypadBackspace}
               onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-              className={`${btnSize} rounded-[18px] flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none`}
-              style={{
-                background: 'linear-gradient(160deg, #fff1f2 0%, #ffe4e6 100%)',
-                color: '#ef4444',
-                boxShadow: 'none',
-                border: 'none',
-              }}
+              className={`${btnSize} rounded-[18px] flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-rose-50 to-rose-100 text-red-500 shadow-none border-none`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
@@ -1419,14 +1432,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               onPointerDown={provideHaptic}
               onClick={() => { if (step === 'phone') handleSendOTP(); }}
               disabled={!canContinue || loading}
-              className="w-full h-12 rounded-[16px] flex items-center justify-center font-bold text-[17px] tracking-wide transition-all duration-100 active:scale-[0.97] disabled:opacity-40"
-              style={{
-                background: 'hsl(var(--primary))',
-                color: 'hsl(var(--primary-foreground))',
-                boxShadow: canContinue ? '0 6px 20px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)' : 'none',
-                border: 'none',
-                letterSpacing: '0.3px',
-              }}
+              className={`w-full h-12 rounded-[16px] flex items-center justify-center font-bold text-[17px] transition-all duration-100 active:scale-[0.97] disabled:opacity-40 bg-primary text-primary-foreground border-none tracking-[0.3px] ${canContinue ? 'shadow-[0_6px_20px_rgba(0,0,0,0.18),0_2px_6px_rgba(0,0,0,0.10)]' : 'shadow-none'}`}
             >
               Continuer →
             </button>
@@ -1434,19 +1440,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
           {/* PIN oublié + Changer de compte — côte à côte */}
           {step === 'login-pin' && (
-            <div style={{ display: 'flex', gap: 14, justifyContent: 'center', alignItems: 'center', marginTop: 6, marginBottom: 8 }}>
+            <div className="flex gap-[14px] justify-center items-center mt-1.5 mb-2">
               {pinLockoutDetected && (
                 <>
                   <button
                     type="button"
                     onClick={() => handleForgotPin()}
                     disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
-                    className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
-                    style={{ color: '#111827', background: 'transparent' }}
+                    className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40 text-gray-900 bg-transparent"
                   >
                     PIN oublié ?
                   </button>
-                  <span style={{ color: '#d1d5db', fontSize: 14 }}>|</span>
+                  <span className="text-gray-300 text-sm">|</span>
                 </>
               )}
               <button
@@ -1457,8 +1462,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   setExistingProfile(null);
                 }}
                 disabled={loading}
-                className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40"
-                style={{ color: '#111827', background: 'transparent' }}
+                className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40 text-gray-900 bg-transparent"
               >
                 Changer de compte
               </button>
@@ -1487,7 +1491,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
 
       <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 pt-0 transform translate-y-12 md:translate-y-16 pb-8 ${className ?? ''}`}>
-      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none space-y-3 sm:pb-4" style={{ boxShadow: 'none', border: 'none' }}>
+      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none shadow-none space-y-3 sm:pb-4">
 
 
         {/* Étape : téléphone */}
@@ -1573,9 +1577,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
+              aria-label="Code OTP automatique"
+              title="Code OTP automatique"
+              placeholder="Code OTP"
               aria-hidden
               tabIndex={-1}
-              style={{ position: 'absolute', left: -9999, width: 1, height: 1, opacity: 0 }}
+              className="absolute -left-[9999px] w-px h-px opacity-0"
             />
                 <div className="mt-6 mb-16 sm:mb-4">
               {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}

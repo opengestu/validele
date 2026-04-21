@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { LEGAL_FEATURE_ENABLED, PRIVACY_POLICY_ROUTE, TERMS_OF_USE_ROUTE } from '@/lib/legalConsent';
 import { 
   Menu, 
   Bell, 
   User, 
   LogOut, 
   Settings,
-  ChevronDown
+  ChevronDown,
+  Shield,
+  FileText
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -113,6 +117,24 @@ const Header: React.FC<HeaderProps> = ({ user, onSignOut, onMenuClick, config })
                 <Settings className="mr-2 h-4 w-4" />
                 <span>Paramètres</span>
               </DropdownMenuItem>
+
+              {LEGAL_FEATURE_ENABLED && (
+                <>
+                  <DropdownMenuItem asChild>
+                    <Link to={PRIVACY_POLICY_ROUTE} className="cursor-pointer">
+                      <Shield className="mr-2 h-4 w-4" />
+                      <span>Confidentialité</span>
+                    </Link>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem asChild>
+                    <Link to={TERMS_OF_USE_ROUTE} className="cursor-pointer">
+                      <FileText className="mr-2 h-4 w-4" />
+                      <span>Conditions</span>
+                    </Link>
+                  </DropdownMenuItem>
+                </>
+              )}
               
               <DropdownMenuSeparator />
               

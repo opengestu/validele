@@ -34,19 +34,32 @@ const SessionTimeoutManager: React.FC = () => {
 
   // Pages qui ne doivent pas déclencher la re-auth
   const isExcludedPage = useCallback((path: string) => {
-    return path === '/auth' || path === '/pin-reauth' || path === '/' || path === '/admin' || path === '/admin-login' || path.startsWith('/admin/');
+    return path === '/auth'
+      || path === '/pin-reauth'
+      || path === '/'
+      || path === '/admin'
+      || path === '/admin-login'
+      || path.startsWith('/admin/')
+      || path === '/product'
+      || path.startsWith('/product/');
+  }, []);
+
+  const getCurrentPathWithQuery = useCallback(() => {
+    if (typeof window === 'undefined') return '/';
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
   }, []);
 
   // Rediriger vers la page PIN
   const redirectToPinReauth = useCallback(() => {
     const currentPath = window.location.pathname;
+    const currentFullPath = getCurrentPathWithQuery();
     if (isExcludedPage(currentPath)) return;
 
     localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
-    localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentPath);
+    localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentFullPath);
     localStorage.removeItem('app_backgrounded_at'); // clean up background timestamp
     navigate('/pin-reauth', { replace: true });
-  }, [navigate, isExcludedPage]);
+  }, [navigate, isExcludedPage, getCurrentPathWithQuery]);
 
   // ---------- Suivre l'état d'authentification ----------
   useEffect(() => {
@@ -164,10 +177,11 @@ const SessionTimeoutManager: React.FC = () => {
 
       if (response.status === 401 && isAuthenticatedRef.current) {
         const currentPath = window.location.pathname;
+        const currentFullPath = getCurrentPathWithQuery();
         if (!isExcludedPage(currentPath)) {
           console.warn('[SessionTimeout] 401 détecté, redirection vers PIN re-auth');
           localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
-          localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentPath);
+          localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentFullPath);
           setTimeout(() => {
             navigate('/pin-reauth', { replace: true });
           }, 100);
@@ -180,7 +194,7 @@ const SessionTimeoutManager: React.FC = () => {
     return () => {
       window.fetch = originalFetch;
     };
-  }, [navigate, isExcludedPage]);
+  }, [navigate, isExcludedPage, getCurrentPathWithQuery]);
 
   return null;
 };

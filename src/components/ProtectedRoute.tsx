@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 import { LAST_ACTIVITY_KEY, REAUTH_REQUIRED_KEY, REAUTH_RETURN_PATH_KEY } from '@/components/SessionTimeoutManager';
 
+const AUTH_RETURN_PATH_KEY = 'auth_return_path';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -17,6 +18,9 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { toast } = useToast();
   const [retrying, setRetrying] = React.useState(false);
   const REAUTH_BACKGROUND_THRESHOLD_MS = 2 * 60 * 1000;
+  const hasSmsSession = typeof window !== 'undefined' ? !!localStorage.getItem('sms_auth_session') : false;
+  const hasAuthenticatedContext = !!user || hasSmsSession;
+  const getCurrentPathWithQuery = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
   async function handleRetry() {
     try {
@@ -63,6 +67,12 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // Verrou PIN prioritaire: vérifier AVANT le bypass loading pour empêcher
   // toute apparition du dashboard pendant l'initialisation quand le PIN est requis.
   if (typeof window !== 'undefined') {
+    if (!hasAuthenticatedContext && localStorage.getItem(REAUTH_REQUIRED_KEY) === '1') {
+      // Evite une boucle /auth <-> /pin-reauth avec des clés reauth devenues obsolètes.
+      localStorage.removeItem(REAUTH_REQUIRED_KEY);
+      localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+    }
+
     const currentPath = window.location.pathname;
     const isAdminPath = currentPath === '/admin' || currentPath.startsWith('/admin/');
     const lockAlreadyRequired = localStorage.getItem(REAUTH_REQUIRED_KEY) === '1';
@@ -70,23 +80,23 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
       const now = Date.now();
       const bgAtRaw = localStorage.getItem('app_backgrounded_at') || localStorage.getItem(LAST_ACTIVITY_KEY);
       const bgAt = Number(bgAtRaw);
-      const hasSmsSession = !!localStorage.getItem('sms_auth_session');
-      const hasAuthenticatedContext = !!user || hasSmsSession;
 
       if (hasAuthenticatedContext && Number.isFinite(bgAt) && now - bgAt >= REAUTH_BACKGROUND_THRESHOLD_MS) {
         localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
-        localStorage.setItem(REAUTH_RETURN_PATH_KEY, window.location.pathname);
+        localStorage.setItem(REAUTH_RETURN_PATH_KEY, getCurrentPathWithQuery());
       }
     }
   }
 
   if (
     typeof window !== 'undefined' &&
+    hasAuthenticatedContext &&
     requiredRole !== 'admin' &&
     window.location.pathname !== '/admin' &&
     !window.location.pathname.startsWith('/admin/') &&
     localStorage.getItem(REAUTH_REQUIRED_KEY) === '1'
   ) {
+    localStorage.setItem(REAUTH_RETURN_PATH_KEY, getCurrentPathWithQuery());
     return <Navigate to="/pin-reauth" replace />;
   }
 
@@ -153,6 +163,11 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     // cookies and shows login when needed.
     if (requiredRole === 'admin') {
       return <>{children}</>;
+    }
+    if (typeof window !== 'undefined' && !hasSmsSession) {
+      localStorage.removeItem(REAUTH_REQUIRED_KEY);
+      localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+      localStorage.setItem(AUTH_RETURN_PATH_KEY, getCurrentPathWithQuery());
     }
     return <Navigate to="/auth" replace />;
   }

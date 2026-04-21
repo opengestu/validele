@@ -42,7 +42,8 @@ import {
   Users,
   LogOut,
   User,
-  QrCode
+  QrCode,
+  Copy
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -216,10 +217,17 @@ const VendorDashboard = () => {
   // Open an invoice URL and render it inside an in-app modal (supports auth for vendor endpoints)
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
     let triedRefresh = false;
+    const caller = smsUser || user;
     async function fetchInvoiceWithToken(token: string | null) {
       const headers: Record<string, string> = { 'Accept': 'text/html, */*' };
       if (requiresAuth && token) headers['Authorization'] = `Bearer ${token}`;
-      const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+      const fullUrl = (() => {
+        const baseUrl = url.startsWith('http') ? url : apiUrl(url);
+        if (requiresAuth && caller?.id && baseUrl.includes('/api/vendor/payout-batches/') && !baseUrl.includes('vendor_id=')) {
+          return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}vendor_id=${encodeURIComponent(caller.id)}`;
+        }
+        return baseUrl;
+      })();
       return fetch(fullUrl, { method: 'GET', headers });
     }
     async function resolveToken() {
@@ -311,11 +319,17 @@ const VendorDashboard = () => {
       setBatchesLoading(true);
 
       const token = await resolveAuthToken();
+      const caller = smsUser || user;
 
       const headers: Record<string,string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const resp = await fetch(apiUrl('/api/vendor/payout-batches'), { method: 'GET', headers });
+      const resp = await fetch(
+        caller?.id
+          ? apiUrl(`/api/vendor/payout-batches?vendor_id=${encodeURIComponent(caller.id)}`)
+          : apiUrl('/api/vendor/payout-batches'),
+        { method: 'GET', headers }
+      );
 
       // If unauthorized, warn but do NOT delete sms_auth_session (token may just need refresh)
       if (resp.status === 401) {
@@ -418,7 +432,7 @@ const VendorDashboard = () => {
     const isDevVendor = String(caller.id || '').startsWith('dev-') || isDevTestNumber(String(caller.phone || ''));
     if (isDevVendor) {
       // 1) Prefer explicit cached_buyer_orders_<buyerId> (set during fake payment)
-      let devOrders: Order[] = [];
+      const devOrders: Order[] = [];
       try {
         // Aggregate all dev_order_* for this vendor
         for (let i = 0; i < localStorage.length; i++) {
@@ -686,7 +700,7 @@ const VendorDashboard = () => {
     const caller = smsUser || user;
     if (!caller?.id) return;
 
-    const nextAvailability = !Boolean(product.is_available);
+    const nextAvailability = !product.is_available;
     setTogglingProductId(product.id);
 
     try {
@@ -876,9 +890,15 @@ const VendorDashboard = () => {
   async function handleDownloadLatestBatchInvoice() {
     try {
       const token = await resolveAuthToken();
+      const caller = smsUser || user;
       const headers: Record<string,string> = { 'Accept': '*/*' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const resp = await fetch(apiUrl('/api/vendor/payout-batches/latest-invoice'), { method: 'GET', headers });
+      const resp = await fetch(
+        caller?.id
+          ? apiUrl(`/api/vendor/payout-batches/latest-invoice?vendor_id=${encodeURIComponent(caller.id)}`)
+          : apiUrl('/api/vendor/payout-batches/latest-invoice'),
+        { method: 'GET', headers }
+      );
 
       if (resp.status === 404) {
         toast({ title: 'Aucune facture', description: 'Il n\'y a pas de facture de batch pour le moment', variant: 'default' });
@@ -1186,7 +1206,47 @@ const VendorDashboard = () => {
 
       // Non-dev flows: call backend (smsUser) or Supabase
       if (smsUser) {
-        const token = (smsUser as any).access_token || '';
+        const refreshVendorToken = async () => {
+          const existingToken = await resolveAuthToken();
+          if (existingToken) return existingToken;
+
+          const phone = String((smsUser as any)?.phone || (effectiveUser as any)?.phone || '').trim();
+          const resp = await fetch(apiUrl('/api/vendor/generate-jwt'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vendor_id: vendorId, phone })
+          });
+
+          if (resp.status === 404) {
+            throw new Error('Endpoint /api/vendor/generate-jwt indisponible sur ce backend');
+          }
+
+          const json = await resp.json().catch(() => null);
+          const nextToken = json?.success && json?.token ? String(json.token) : '';
+          if (!resp.ok || !nextToken) {
+            throw new Error(json?.error || 'Impossible de renouveler la session vendeur');
+          }
+
+          try {
+            const raw = localStorage.getItem('sms_auth_session');
+            const parsed = raw ? JSON.parse(raw) : {};
+            parsed.access_token = nextToken;
+            parsed.loginTime = new Date().toISOString();
+            localStorage.setItem('sms_auth_session', JSON.stringify(parsed));
+            localStorage.setItem('auth_token', nextToken);
+          } catch {
+            // ignore localStorage failures
+          }
+
+          return nextToken;
+        };
+
+        let token = await resolveAuthToken();
+        if (!token) token = (smsUser as any).access_token || '';
+        if (!token) {
+          token = await refreshVendorToken();
+        }
+
         // Préparer le payload sans champs vides/undefined
         const rawPayload = {
           vendor_id: vendorId,
@@ -1212,11 +1272,21 @@ const VendorDashboard = () => {
         });
         // Log pour debug
         console.log('[handleAddProduct] payload envoyé:', payload);
-        const resp = await fetch(apiUrl('/api/vendor/add-product'), {
+        let resp = await fetch(apiUrl('/api/vendor/add-product'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(payload)
         });
+
+        if (resp.status === 401) {
+          token = await refreshVendorToken();
+          resp = await fetch(apiUrl('/api/vendor/add-product'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify(payload)
+          });
+        }
+
         const json = await resp.json().catch(() => null);
         if (!resp.ok || !json || !json.success) throw new Error((json && json.error) ? String(json.error) : 'Erreur backend');
 
@@ -1228,7 +1298,7 @@ const VendorDashboard = () => {
       }
 
       // Supabase session
-      const { data, error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty, code: productCode, is_available: true, stock_quantity: 0 });
+      const { error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty ?? null, code: productCode, is_available: true, stock_quantity: 0 } as any);
       if (error) throw error;
 
       toast({ title: 'Succès', description: 'Produit ajouté' });
@@ -1282,8 +1352,8 @@ const VendorDashboard = () => {
             name: editProduct.name,
             price: parseInt(String(editProduct.price)),
             description: editProduct.description,
-            warranty: editProduct.warranty
-          })
+            warranty: editProduct.warranty ?? null
+          } as any)
           .eq('id', editProduct.id)
           .select();
         if (error) throw error;
@@ -1460,6 +1530,79 @@ const VendorDashboard = () => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 1200);
+  };
+
+  const getProductShareCode = (product: Product) => {
+    const rawCode = String(product.code || `PROD-${product.id}`).trim();
+    return rawCode || `PROD-${product.id}`;
+  };
+
+  const getPublicWebBaseUrl = () => {
+    const cloudflareDefault = 'https://validele.pages.dev';
+    const candidates = [
+      import.meta.env.VITE_PUBLIC_WEB_URL,
+      import.meta.env.VITE_SITE_URL,
+      import.meta.env.VITE_WEB_APP_URL,
+      import.meta.env.VITE_FRONTEND_URL
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = new URL(candidate);
+        return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '');
+      } catch {
+        const normalized = candidate.replace(/\/+$/, '');
+        if (/^https?:\/\//i.test(normalized)) return normalized;
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      const hostname = String(window.location.hostname || '').toLowerCase();
+      const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+      if (isLocal) return cloudflareDefault;
+
+      const origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
+      if (origin) return origin;
+    }
+
+    return cloudflareDefault;
+  };
+
+  const getAndroidPackageName = () => import.meta.env.VITE_ANDROID_APP_PACKAGE || 'com.validele.app';
+
+  const getAndroidAppScheme = () => import.meta.env.VITE_ANDROID_APP_SCHEME || 'validel';
+
+  const getProductFallbackUrl = () => {
+    return `https://play.google.com/store/apps/details?id=${encodeURIComponent(getAndroidPackageName())}`;
+  };
+
+  const getProductDeepLink = (shareCode: string) => {
+    const encodedCode = encodeURIComponent(shareCode);
+    return `${getAndroidAppScheme()}://product/${encodedCode}`;
+  };
+
+  const getProductPublicUrl = (product: Product) => {
+    const shareCode = getProductShareCode(product);
+    const encodedCode = encodeURIComponent(shareCode);
+    return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
+  };
+
+  const handleCopyProductLink = async (product: Product) => {
+    const webLink = getProductPublicUrl(product);
+    if (!webLink) {
+      toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard indisponible');
+      await navigator.clipboard.writeText(webLink);
+      toast({ title: 'Lien copié', description: 'Lien produit copié.' });
+    } catch (error) {
+      toast({ title: 'Erreur', description: 'Impossible de copier le lien', variant: 'destructive' });
+    }
   };
 
   // Appeler le client : si le numéro n'est pas présent dans order.profiles,
@@ -1658,6 +1801,24 @@ const VendorDashboard = () => {
                       Code : {product.code || `PROD-${product.id}`}
                     </span>
                     {/* Bouton Copier supprimé */}
+                  </div>
+
+                  <div className="mb-3 w-full rounded-md border border-dashed border-gray-200 bg-gray-50 p-2">
+                    <div className="flex w-full items-start gap-2">
+                      <p className="min-w-0 flex-1 text-[11px] text-gray-600 break-all leading-snug" title={getProductPublicUrl(product)}>
+                        <span className="font-semibold text-gray-700">Lien:</span>{' '}
+                        {getProductPublicUrl(product)}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 px-2 text-xs"
+                        onClick={() => handleCopyProductLink(product)}
+                      >
+                        <Copy className="h-3.5 w-3.5 mr-1" />
+                        Copier lien
+                      </Button>
+                    </div>
                   </div>
                 
                   <div className="space-y-2 mb-3">
@@ -2171,6 +2332,7 @@ const VendorDashboard = () => {
                                 Code : {product.code || `PROD-${product.id}`}
                               </span>
                             </div>
+
                             <div className="mt-2">
                               <span className="text-sm font-medium text-black whitespace-nowrap">{product.price} CFA</span>
                             </div>
@@ -2206,6 +2368,23 @@ const VendorDashboard = () => {
                               </>
                             )}
                           </Button>
+                        </div>
+                        <div className="mb-2 w-full rounded-md border border-dashed border-gray-200 bg-gray-50 p-2">
+                          <div className="flex w-full items-start gap-2">
+                            <p className="min-w-0 flex-1 text-[11px] text-gray-600 break-all leading-snug" title={getProductPublicUrl(product)}>
+                              {/* <span className="font-semibold text-gray-700">Lien:</span>{' '} */}
+                              {getProductPublicUrl(product)}
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 shrink-0 px-2 text-[11px]"
+                              onClick={() => handleCopyProductLink(product)}
+                            >
+                              <Copy className="h-3.5 w-3.5 mr-1" />
+                              Copier lien
+                            </Button>
+                          </div>
                         </div>
                         {/* Boutons actions mobile */}
                         <div className="mt-4 flex gap-2">

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
@@ -29,6 +29,7 @@ import.meta.env;
 // Temporary placeholders for payment logos — replace with real imports if available
 const waveLogo = '/images/wave.png';
 const orangeMoneyLogo = '/images/orange_money.png';
+const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
 
 // Fonction utilitaire pour fetch avec timeout (générique TypeScript)
@@ -92,6 +93,7 @@ const BuyerDashboard = () => {
   const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Sécurité: si l'utilisateur n'est pas connecté ou profil incomplet, rediriger immédiatement
   useEffect(() => {
@@ -106,6 +108,7 @@ const BuyerDashboard = () => {
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const autoSharedCodeRef = React.useRef<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -143,6 +146,33 @@ const BuyerDashboard = () => {
   const [invoiceViewerTitle, setInvoiceViewerTitle] = useState<string>('Facture');
   const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
   const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
+
+  const clearSharedProductContext = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(SHARED_PRODUCT_PENDING_CODE_KEY);
+    }
+
+    const params = new URLSearchParams(location.search);
+    const hadSharedParams = params.has('productCode') || params.has('code');
+    if (!hadSharedParams) return;
+
+    params.delete('productCode');
+    params.delete('code');
+    const nextSearch = params.toString();
+    const nextUrl = `${location.pathname}${nextSearch ? `?${nextSearch}` : ''}${location.hash || ''}`;
+    navigate(nextUrl, { replace: true });
+  }, [location.pathname, location.search, location.hash, navigate]);
+
+  const closeSearchModal = useCallback((opts?: { clearSharedContext?: boolean }) => {
+    setSearchModalOpen(false);
+    setSearchResult(null);
+    setPurchaseQuantity(1);
+    setPaymentMethod('wave');
+    setSearchCode('');
+    if (opts?.clearSharedContext !== false) {
+      clearSharedProductContext();
+    }
+  }, [clearSharedProductContext]);
 
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
     try {
@@ -704,8 +734,9 @@ const BuyerDashboard = () => {
     };
   }, [fetchOrders, fetchTransactions, user]);
 
-  const handleSearch = async () => {
-    if (!searchCode.trim()) {
+  const handleSearch = useCallback(async (overrideCode?: string) => {
+    const codeToSearch = String(overrideCode ?? searchCode).trim();
+    if (!codeToSearch) {
       toast({
         title: "Erreur",
         description: "Veuillez entrer un code produit",
@@ -720,7 +751,7 @@ const BuyerDashboard = () => {
       const isDevSession = smsRaw ? (() => { try { return JSON.parse(smsRaw).profileId?.startsWith('dev-'); } catch { return false; } })() : false;
       if (isDevSession) {
         // 1) special built-in demo product
-        if (searchCode.trim().toUpperCase() === 'PD-DEV-1') {
+        if (codeToSearch.toUpperCase() === 'PD-DEV-1') {
           const demoProduct: Product = {
             id: 'dev-prod-1',
             vendor_id: 'dev-vendor-777693020',
@@ -747,7 +778,7 @@ const BuyerDashboard = () => {
           const raw = localStorage.getItem('dev_products');
           if (raw) {
             const arr = JSON.parse(raw) as Product[];
-            const found = (arr || []).find(p => String(p.code || '').toLowerCase() === searchCode.trim().toLowerCase());
+            const found = (arr || []).find(p => String(p.code || '').toLowerCase() === codeToSearch.toLowerCase());
             if (found) {
               setSearchResult(found as Product);
               setSearchModalOpen(true);
@@ -771,7 +802,7 @@ const BuyerDashboard = () => {
           *,
           profiles(full_name, company_name)
         `)
-        .ilike('code', searchCode.trim())
+        .ilike('code', codeToSearch)
         .single();
 
       if (error) throw error;
@@ -814,7 +845,40 @@ const BuyerDashboard = () => {
     } finally {
       setSearchLoading(false);
     }
-  };
+  }, [searchCode, toast]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const queryCode = (params.get('productCode') || params.get('code') || '').trim();
+    const storedCode = typeof window !== 'undefined'
+      ? String(localStorage.getItem(SHARED_PRODUCT_PENDING_CODE_KEY) || '').trim()
+      : '';
+
+    if (!queryCode && !storedCode) {
+      autoSharedCodeRef.current = null;
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const queryCode = (params.get('productCode') || params.get('code') || '').trim();
+    const storedCode = typeof window !== 'undefined'
+      ? String(localStorage.getItem(SHARED_PRODUCT_PENDING_CODE_KEY) || '').trim()
+      : '';
+    const codeFromShare = queryCode || storedCode;
+
+    if (!codeFromShare) return;
+
+    const marker = codeFromShare.toLowerCase();
+    if (autoSharedCodeRef.current === marker) return;
+
+    autoSharedCodeRef.current = marker;
+    setSearchCode(codeFromShare);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(SHARED_PRODUCT_PENDING_CODE_KEY);
+    }
+    void handleSearch(codeFromShare);
+  }, [location.search, handleSearch]);
 
   // Les codes de commande sont maintenant générés côté serveur pour garantir l'unicité et l'atomicité.
   // La génération côté client a été supprimée pour éviter les collisions et les conditions de concurrence.
@@ -1015,11 +1079,7 @@ const BuyerDashboard = () => {
           }
         } catch (e) { /* ignore */ }
         toast({ title: 'Paiement fictif', description: 'Commande marquée comme payée (mode test).' });
-        setSearchModalOpen(false);
-        setSearchResult(null);
-        setPurchaseQuantity(1);
-        setPaymentMethod('wave');
-        setSearchCode('');
+        closeSearchModal();
 
         // navigate to success page to mimic full flow in E2E
         try { navigate(`/payment-success?order_id=${fakeOrderId}`); } catch (_) { /* ignore in unit */ }
@@ -1104,11 +1164,7 @@ const BuyerDashboard = () => {
           pollOrderStatus(createdOrderId);
           
           // Fermer le modal et retourner à la recherche
-          setSearchModalOpen(false);
-          setSearchResult(null);
-          setPurchaseQuantity(1);
-          setPaymentMethod('wave');
-          setSearchCode('');
+          closeSearchModal();
         } else {
           throw new Error(orangeResult.error || orangeResult.message || 'Erreur paiement Orange Money');
         }
@@ -1210,11 +1266,7 @@ const BuyerDashboard = () => {
           pollOrderStatus(createdOrderId);
           
           // Fermer le modal et retourner à la recherche
-          setSearchModalOpen(false);
-          setSearchResult(null);
-          setPurchaseQuantity(1);
-          setPaymentMethod('wave');
-          setSearchCode('');
+          closeSearchModal();
         } else if (waveResult.success && waveResult.requires_external_validation) {
           toast({
             title: 'Validation Wave requise',
@@ -1225,11 +1277,7 @@ const BuyerDashboard = () => {
           // Même sans lien, PixPay a déjà créé la transaction: on surveille la confirmation.
           pollOrderStatus(createdOrderId);
 
-          setSearchModalOpen(false);
-          setSearchResult(null);
-          setPurchaseQuantity(1);
-          setPaymentMethod('wave');
-          setSearchCode('');
+          closeSearchModal();
         } else {
           throw new Error(waveResult.error || waveResult.message || 'Erreur paiement Wave');
         }
@@ -2474,13 +2522,7 @@ const BuyerDashboard = () => {
                 Produit trouvé
               </h3>
               <button
-                onClick={() => {
-                  setSearchModalOpen(false);
-                  setSearchResult(null);
-                  setPurchaseQuantity(1);
-                  setPaymentMethod('wave');
-                  setSearchCode('');
-                }}
+                onClick={() => closeSearchModal()}
                 className="text-gray-400 hover:text-gray-600"
                 aria-label="Fermer la fenêtre"
                 title="Fermer"
@@ -2626,13 +2668,7 @@ const BuyerDashboard = () => {
               <div className="flex gap-3">
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setSearchModalOpen(false);
-                    setSearchResult(null);
-                    setPurchaseQuantity(1);
-                    setPaymentMethod('wave');
-                    setSearchCode('');
-                  }}
+                  onClick={() => closeSearchModal()}
                   className="flex-1"
                 >
                   Annuler

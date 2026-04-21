@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.validele.app",
+      "sha256_cert_fingerprints": [
+        "62:81:5A:E4:BB:DD:A7:5B:BE:E8:1D:8E:31:D1:F8:42:46:50:95:27:64:B0:19:8A:8E:95:87:F8:7E:39:41:A3"
+      ]
+    }
+  }
+]

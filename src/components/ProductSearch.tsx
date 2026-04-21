@@ -1,21 +1,68 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Shield } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
-import { Product } from '@/types/database';
+import { useAuth } from '@/hooks/useAuth';
+
+const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
 const ProductSearch = () => {
+  const { code: codeFromUrl } = useParams<{ code?: string }>();
+  const navigate = useNavigate();
+  const { userProfile, loading: authLoading } = useAuth();
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
 
-  const handleSearch = async () => {
-    if (!searchCode.trim()) return;
+  const isNonBuyerSession = Boolean(userProfile?.role && userProfile.role !== 'buyer');
+  const roleLabel = userProfile?.role === 'vendor'
+    ? 'vendeur(se)'
+    : userProfile?.role === 'delivery'
+      ? 'livreur(se)'
+      : userProfile?.role === 'admin'
+        ? 'admin'
+        : 'utilisateur';
+  const dashboardPath = userProfile?.role === 'vendor'
+    ? '/vendor'
+    : userProfile?.role === 'delivery'
+      ? '/delivery'
+      : userProfile?.role === 'admin'
+        ? '/admin'
+        : '/';
+  const hasShareCodeInUrl = Boolean((codeFromUrl || '').trim());
+  const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
+
+  const persistPendingProductCode = useCallback((rawCode?: string | null) => {
+    const code = String(rawCode || '').trim();
+    if (typeof window === 'undefined') return;
+    if (!code) {
+      localStorage.removeItem(SHARED_PRODUCT_PENDING_CODE_KEY);
+      return;
+    }
+    localStorage.setItem(SHARED_PRODUCT_PENDING_CODE_KEY, code);
+  }, []);
+
+  const prepareBuyerAuthEntry = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    // Repartir sur une saisie de numéro propre.
+    localStorage.removeItem('phone_auth_state_v1');
+    localStorage.removeItem(SHARED_PRODUCT_PENDING_CODE_KEY);
+  }, []);
+
+  const searchProductByCode = useCallback(async (rawCode: string) => {
+    const normalizedCode = rawCode.trim();
+    if (!normalizedCode) {
+      setSearchResult(null);
+      setHasSearched(false);
+      return;
+    }
 
     setLoading(true);
+    setHasSearched(true);
     try {
       const { data, error } = await supabase
         .from('products')
@@ -23,17 +70,91 @@ const ProductSearch = () => {
           *,
           profiles(full_name, company_name)
         `)
-        .eq('code', searchCode.toLowerCase())
-        .single();
+        .ilike('code', normalizedCode)
+        .limit(1)
+        .maybeSingle();
 
       if (error) throw error;
-      setSearchResult(data);
+      setSearchResult(data || null);
     } catch (error) {
       setSearchResult(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const handleSearch = useCallback(async () => {
+    await searchProductByCode(searchCode);
+  }, [searchCode, searchProductByCode]);
+
+  useEffect(() => {
+    if (!codeFromUrl) return;
+    const decodedCode = decodeURIComponent(codeFromUrl).trim();
+    if (!decodedCode) return;
+
+    if (authLoading) return;
+
+    if (isNonBuyerSession) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(SHARED_PRODUCT_PENDING_CODE_KEY);
+      }
+      return;
+    }
+
+    // Si l'utilisateur est déjà connecté en tant qu'acheteur, aller directement au flow achat.
+    // Sinon, rester sur la page produit pour permettre la consultation du lien sans passer par /auth.
+    if (userProfile?.role === 'buyer') {
+      persistPendingProductCode(decodedCode);
+      navigate(`/buyer?productCode=${encodeURIComponent(decodedCode)}`, { replace: true });
+      return;
+    }
+
+    setSearchCode(decodedCode);
+    void searchProductByCode(decodedCode);
+  }, [
+    codeFromUrl,
+    authLoading,
+    isNonBuyerSession,
+    navigate,
+    persistPendingProductCode,
+    searchProductByCode,
+    userProfile?.role,
+  ]);
+
+  if (showNonBuyerLinkNotice) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <Card className="w-full max-w-md border-amber-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-amber-800">
+              <AlertTriangle className="h-5 w-5" />
+              Lien réserve à l'achat
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-amber-900 leading-relaxed">
+              Vous êtes connecté(e) en tant que {roleLabel}. Ce lien ouvre un parcours d'achat réservé aux acheteurs.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Link to={dashboardPath}>
+                <Button className="w-full" variant="outline">
+                  Retour à mon espace
+                </Button>
+              </Link>
+              <Link
+                to="/auth?entry=phone&switchAccount=1"
+                onClick={prepareBuyerAuthEntry}
+              >
+                <Button className="w-full">
+                  Compte acheteur
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -61,9 +182,16 @@ const ProductSearch = () => {
               <Input
                 placeholder="Entrez le code produit"
                 value={searchCode}
-                onChange={(e) => setSearchCode(e.target.value)}
+                onChange={(e) => {
+                  const nextCode = e.target.value;
+                  setSearchCode(nextCode);
+                  if (!nextCode.trim()) {
+                    setSearchResult(null);
+                    setHasSearched(false);
+                  }
+                }}
                 className="flex-1"
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
               />
               <Button 
                 onClick={handleSearch}
@@ -123,22 +251,37 @@ const ProductSearch = () => {
                     <p className="text-4xl font-bold text-green-600 mb-6">
                       {searchResult.price.toLocaleString()} FCFA
                     </p>
-                    
-                    <Link to="/buyer">
-                      <Button
-                        className="w-full btn-buyer text-lg py-3"
-                        disabled={!searchResult.is_available}
+
+                    {isNonBuyerSession ? (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        Vous êtes connecté(e) en tant que {roleLabel}. Pour acheter ce produit, connectez-vous avec un compte acheteur.
+                      </div>
+                    ) : (
+                      <Link
+                        to={(() => {
+                          const rawCode = String(searchResult?.code || searchCode || '').trim();
+                          return rawCode ? `/buyer?productCode=${encodeURIComponent(rawCode)}` : '/buyer';
+                        })()}
+                        onClick={() => {
+                          const rawCode = String(searchResult?.code || searchCode || '').trim();
+                          persistPendingProductCode(rawCode);
+                        }}
                       >
-                        <ShoppingCart className="h-5 w-5 mr-2" />
-                        {searchResult.is_available ? 'Acheter maintenant' : 'Produit inactif'}
-                      </Button>
-                    </Link>
+                        <Button
+                          className="w-full btn-buyer text-lg py-3"
+                          disabled={!searchResult.is_available}
+                        >
+                          <ShoppingCart className="h-5 w-5 mr-2" />
+                          {searchResult.is_available ? 'Acheter maintenant' : 'Produit inactif'}
+                        </Button>
+                      </Link>
+                    )}
                   </div>
                 </div>
               </div>
             </CardContent>
           </Card>
-        ) : searchCode && !loading && (
+        ) : hasSearched && !loading && (
           <Card className="border-red-200 bg-red-50">
             <CardContent className="p-8 text-center">
               <div className="text-red-600">

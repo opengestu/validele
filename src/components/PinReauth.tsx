@@ -96,10 +96,16 @@ const PinReauth: React.FC = () => {
         }
       } catch {
         // Pas de session valide, rediriger vers /auth
+        localStorage.removeItem(REAUTH_REQUIRED_KEY);
+        localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+        localStorage.removeItem('app_backgrounded_at');
         navigate('/auth', { replace: true });
       }
     } else {
       // Pas de session SMS, rediriger vers la page d'authentification
+      localStorage.removeItem(REAUTH_REQUIRED_KEY);
+      localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+      localStorage.removeItem('app_backgrounded_at');
       navigate('/auth', { replace: true });
     }
   }, [navigate]);
@@ -156,8 +162,23 @@ const PinReauth: React.FC = () => {
         const returnPath = localStorage.getItem(REAUTH_RETURN_PATH_KEY);
         localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
 
-        if (returnPath && returnPath !== '/pin-reauth' && returnPath !== '/auth') {
-          navigate(returnPath, { replace: true });
+        const resolveSafeReturnPath = (rawPath: string | null) => {
+          if (!rawPath) return null;
+          try {
+            const parsed = new URL(rawPath, window.location.origin);
+            const pathname = parsed.pathname;
+            if (pathname === '/pin-reauth' || pathname === '/auth') return null;
+            return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+          } catch {
+            if (rawPath.startsWith('/pin-reauth') || rawPath.startsWith('/auth')) return null;
+            return rawPath;
+          }
+        };
+
+        const safeReturnPath = resolveSafeReturnPath(returnPath);
+
+        if (safeReturnPath) {
+          navigate(safeReturnPath, { replace: true });
         } else {
           // Redirection par défaut selon le rôle
           const smsStr = localStorage.getItem('sms_auth_session');

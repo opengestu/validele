@@ -33,7 +33,7 @@ try {
   // fail gracefully - some routes create a client on demand using createClient
   console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
 }
-const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
@@ -47,14 +47,36 @@ const app = express();
 
 // CORS global, avant toute route
 const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
+const EXTRA_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://validele.pages.dev',
+];
+
+const ALLOWED_ORIGINS = Array.from(new Set([
+  ...(FRONTEND_ORIGIN ? [FRONTEND_ORIGIN] : []),
+  ...EXTRA_ALLOWED_ORIGINS,
+  ...DEFAULT_ALLOWED_ORIGINS,
+]));
+
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser (curl) or same-origin server requests
     if (!origin) return callback(null, true);
-    // Allow explicit VITE_DEV_ORIGIN
-    if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return callback(null, true);
+
+    // Allow explicit and configured origins
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+
+    // Allow Cloudflare preview URLs for this project (optional convenience)
+    if (/^https:\/\/.*\.pages\.dev$/i.test(origin)) return callback(null, true);
+
     // Allow any localhost or 127.0.0.1 on any port (dev convenience)
     if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return callback(null, true);
+
+    console.warn('[CORS] blocked origin:', origin, '| allowed:', ALLOWED_ORIGINS);
     return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true,
@@ -1383,7 +1405,18 @@ app.post('/api/otp/verify', async (req, res) => {
     const result = await verifyOTP(formattedPhone, code);
 
     // New endpoint support: /api/auth/reset-pin will re-call verifyOTP server-side; no changes here
-    
+
+    if (result.valid) {
+      res.json({ success: true, valid: true });
+    } else {
+      res.status(400).json({ success: false, valid: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('[OTP] Erreur vérification:', error);
+    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
+    res.status(500).json({ success: false, error: message });
+  }
+});
 
 // Génération de JWT pour vendeur SMS après login (à appeler côté frontend après login PIN ou OTP validé)
 app.post('/api/vendor/generate-jwt', async (req, res) => {
@@ -1393,7 +1426,7 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
       return res.status(400).json({ success: false, error: 'vendor_id et phone requis' });
     }
     const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+    const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
     const payload = {
       sub: vendor_id,
       phone: phone,
@@ -1408,18 +1441,6 @@ app.post('/api/vendor/generate-jwt', async (req, res) => {
   } catch (err) {
     console.error('[API] /api/vendor/generate-jwt error:', err);
     res.status(500).json({ success: false, error: 'Erreur génération JWT' });
-  }
-});
-
-    if (result.valid) {
-      res.json({ success: true, valid: true });
-    } else {
-      res.status(400).json({ success: false, valid: false, error: result.error });
-    }
-  } catch (error) {
-    console.error('[OTP] Erreur vérification:', error);
-    const message = (error && error.message) ? String(error.message) : 'Erreur lors de la vérification du code';
-    res.status(500).json({ success: false, error: message });
   }
 });
 

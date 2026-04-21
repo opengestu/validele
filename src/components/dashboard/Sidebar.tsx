@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { LEGAL_FEATURE_ENABLED, PRIVACY_POLICY_ROUTE, TERMS_OF_USE_ROUTE } from '@/lib/legalConsent';
 import { 
   Package, 
   ShoppingCart, 
@@ -11,7 +12,9 @@ import {
   Truck,
   QrCode,
   CheckCircle,
-  Home
+  Home,
+  Shield,
+  FileText
 } from 'lucide-react';
 import validelLogo from '@/assets/validel-logo.png';
 
@@ -108,14 +111,34 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-100">
+      <div className="p-4 border-t border-gray-100 space-y-1">
         <Link 
           to="/"
-          className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors"
+          className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
         >
           <Home className="h-5 w-5" />
           {isOpen && <span className="ml-3 text-sm font-medium">Retour accueil</span>}
         </Link>
+
+        {LEGAL_FEATURE_ENABLED && (
+          <>
+            <Link
+              to={PRIVACY_POLICY_ROUTE}
+              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
+            >
+              <Shield className="h-5 w-5" />
+              {isOpen && <span className="ml-3 text-sm font-medium">Confidentialité</span>}
+            </Link>
+
+            <Link
+              to={TERMS_OF_USE_ROUTE}
+              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
+            >
+              <FileText className="h-5 w-5" />
+              {isOpen && <span className="ml-3 text-sm font-medium">Conditions</span>}
+            </Link>
+          </>
+        )}
       </div>
     </div>
   );

@@ -5,13 +5,23 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { App as CapacitorApp } from "@capacitor/app";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import {
+  LEGAL_FEATURE_ENABLED,
+  LEGAL_CONSENT_ROUTE,
+  PRIVACY_POLICY_ROUTE,
+  TERMS_OF_USE_ROUTE,
+  hasAcceptedLegal,
+} from "@/lib/legalConsent";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
 import AppResumeRefresher from "@/components/AppResumeRefresher";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
 import SessionTimeoutManager from "@/components/SessionTimeoutManager";
+import LegalQuickLinks from "@/components/LegalQuickLinks";
 import PinReauth from "@/components/PinReauth";
+import { Spinner } from "@/components/ui/spinner";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
 import UpdateModal from "@/components/updates/UpdateModal";
@@ -19,9 +29,22 @@ import useAppUpdateChecker from "@/hooks/useAppUpdateChecker";
 
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
+  const location = useLocation();
+  const forcePhoneEntry = React.useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('entry') === 'phone' || params.get('switchAccount') === '1';
+  }, [location.search]);
 
   if (loading) {
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Spinner size="sm" />
+      </div>
+    );
+  }
+
+  if (forcePhoneEntry) {
+    return <AuthPage />;
   }
 
   if (user && userProfile?.full_name && userProfile.full_name.trim() !== '') {
@@ -50,12 +73,16 @@ const AuthReadySignal: React.FC = () => {
 import VendorDashboard from "@/components/VendorDashboard";
 import BuyerDashboard from "@/components/BuyerDashboard";
 import DeliveryDashboard from "@/components/DeliveryDashboard";
+import ProductSearch from "@/components/ProductSearch";
 import OrderDetails from "@/components/OrderDetails";
 import QRScanner from "@/components/QRScanner";
 import AdminDashboard from "@/components/AdminDashboard";
 import NotFound from "./pages/NotFound";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import ColorDemo from "./components/ColorDemo";
+import LegalConsentPage from "./pages/LegalConsentPage";
+import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
+import TermsOfUsePage from "./pages/TermsOfUsePage";
 
 const queryClient = new QueryClient();
 const paydunyaMode = import.meta.env.VITE_PAYDUNYA_MODE || 'prod';
@@ -65,6 +92,31 @@ const hostLooksLikeAdmin =
   && /(^admin[.-]|admin)/i.test(window.location.hostname || '');
 const adminOnlyMode = envAdminOnlyMode === 'true' || (envAdminOnlyMode !== 'false' && hostLooksLikeAdmin);
 
+const legalRoutes = new Set([
+  LEGAL_CONSENT_ROUTE,
+  PRIVACY_POLICY_ROUTE,
+  TERMS_OF_USE_ROUTE,
+]);
+
+const FirstLaunchLegalGate: React.FC = () => {
+  if (!LEGAL_FEATURE_ENABLED) {
+    return null;
+  }
+
+  const location = useLocation();
+  const accepted = React.useMemo(() => hasAcceptedLegal(), [location.pathname]);
+
+  if (accepted) {
+    return null;
+  }
+
+  if (legalRoutes.has(location.pathname)) {
+    return null;
+  }
+
+  return <Navigate to={LEGAL_CONSENT_ROUTE} replace state={{ from: location.pathname }} />;
+};
+
 // Wrapper interne qui déclenche l'animation CSS à chaque changement de route
 const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
@@ -73,6 +125,77 @@ const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) =
       {children}
     </div>
   );
+};
+
+const DeepLinkHandler: React.FC = () => {
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const routeFromUrl = (rawUrl?: string | null) => {
+      const incoming = String(rawUrl || '').trim();
+      if (!incoming || typeof window === 'undefined') return;
+
+      try {
+        const parsed = new URL(incoming);
+        const protocol = (parsed.protocol || '').toLowerCase();
+        const host = (parsed.host || '').toLowerCase();
+        const path = String(parsed.pathname || '').replace(/^\/+/, '');
+
+        if (protocol === 'validel:' && host === 'product' && path) {
+          const decoded = decodeURIComponent(path);
+          const target = `/product/${encodeURIComponent(decoded)}`;
+          if (location.pathname !== target) {
+            window.history.replaceState({}, '', target);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+          return;
+        }
+
+        if ((protocol === 'https:' || protocol === 'http:') && host === 'validele.pages.dev') {
+          const normalizedPath = `/${path}`;
+          if (normalizedPath.startsWith('/product/')) {
+            const target = `${normalizedPath}${parsed.search || ''}${parsed.hash || ''}`;
+            if (`${location.pathname}${location.search}${location.hash}` !== target) {
+              window.history.replaceState({}, '', target);
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }
+          }
+        }
+      } catch {
+        // ignore malformed urls
+      }
+    };
+
+    let disposed = false;
+    let listenerHandle: { remove: () => Promise<void> | void } | null = null;
+
+    void CapacitorApp.getLaunchUrl()
+      .then((res) => {
+        if (!disposed) routeFromUrl(res?.url);
+      })
+      .catch(() => {});
+
+    void CapacitorApp.addListener('appUrlOpen', (event) => {
+      routeFromUrl(event?.url);
+    })
+      .then((handle) => {
+        if (disposed) {
+          void handle.remove();
+          return;
+        }
+        listenerHandle = handle;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      if (listenerHandle) {
+        void listenerHandle.remove();
+      }
+    };
+  }, [location.pathname]);
+
+  return null;
 };
 
 const App = () => {
@@ -104,18 +227,30 @@ const App = () => {
                 v7_relativeSplatPath: true,
               }}
             >
+              <DeepLinkHandler />
+              <FirstLaunchLegalGate />
               <AppResumeRefresher />
               <ExitConfirmHandler />
               <PushNotificationSetup />
               <SessionTimeoutManager />
               <AnimatedRoutes>
               <Routes>
+                {LEGAL_FEATURE_ENABLED && (
+                  <>
+                    <Route path={LEGAL_CONSENT_ROUTE} element={<LegalConsentPage />} />
+                    <Route path={PRIVACY_POLICY_ROUTE} element={<PrivacyPolicyPage />} />
+                    <Route path={TERMS_OF_USE_ROUTE} element={<TermsOfUsePage />} />
+                  </>
+                )}
+
                 {adminOnlyMode && <Route path="/" element={<Navigate to="/admin" replace />} />}
 
                 {!adminOnlyMode && <Route path="/" element={<HomePage />} />}
                 {!adminOnlyMode && <Route path="/auth" element={<AuthRoute />} />}
                 {!adminOnlyMode && <Route path="/pin-reauth" element={<PinReauth />} />}
                 {!adminOnlyMode && <Route path="/colors" element={<ColorDemo />} />}
+                {!adminOnlyMode && <Route path="/product" element={<ProductSearch />} />}
+                {!adminOnlyMode && <Route path="/product/:code" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}
                 {!adminOnlyMode && (
@@ -205,6 +340,7 @@ const App = () => {
                 <Route path="*" element={adminOnlyMode ? <Navigate to="/admin" replace /> : <NotFound />} />
               </Routes>
               </AnimatedRoutes>
+              {LEGAL_FEATURE_ENABLED && <LegalQuickLinks />}
 
               {updateInfo && (
                 <UpdateModal
