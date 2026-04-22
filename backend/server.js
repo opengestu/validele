@@ -329,6 +329,49 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is running!' });
 });
 
+const parseBooleanEnv = (value, fallback = false) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+};
+
+const getVersionPayload = () => {
+  const latestVersionRaw =
+    process.env.APP_LATEST_VERSION ||
+    process.env.LATEST_APP_VERSION ||
+    process.env.ANDROID_LATEST_VERSION ||
+    process.env.LATEST_VERSION ||
+    '';
+
+  const latestVersion = String(latestVersionRaw).trim();
+  const forceUpdate = parseBooleanEnv(
+    process.env.FORCE_UPDATE ?? process.env.FORCE_APP_UPDATE,
+    true
+  );
+
+  return {
+    latestVersion,
+    forceUpdate,
+    message:
+      process.env.UPDATE_MESSAGE ||
+      process.env.APP_UPDATE_MESSAGE ||
+      'Une nouvelle version est disponible. Veuillez mettre a jour l\'application.',
+  };
+};
+
+// Version endpoints consumed by the mobile update checker.
+app.get('/api/version', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  return res.json(getVersionPayload());
+});
+
+app.get('/version', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  return res.json(getVersionPayload());
+});
+
 // Admin: test SMS sending (POST JSON { to, text }) or GET with query params
 app.all('/api/admin/test-sms', async (req, res) => {
   try {
