@@ -19,6 +19,7 @@ if (SUPABASE_ANON_KEY_SOURCE) {
   console.warn('[ADMIN] Supabase anon key not found in environment (SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY)');
 }
 const fs = require('fs');
+const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -337,19 +338,51 @@ const parseBooleanEnv = (value, fallback = false) => {
   return fallback;
 };
 
-const getVersionPayload = () => {
+const normalizeVersion = (value) => String(value || '').trim().replace(/^v/i, '');
+
+const compareVersions = (current, latest) => {
+  const left = normalizeVersion(current).split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const right = normalizeVersion(latest).split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(left.length, right.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l < r) return -1;
+    if (l > r) return 1;
+  }
+
+  return 0;
+};
+
+const getAndroidVersionFromGradle = () => {
+  try {
+    const gradlePath = path.resolve(__dirname, '../android/app/build.gradle');
+    const content = fs.readFileSync(gradlePath, 'utf8');
+    const match = content.match(/versionName\s+"([^"]+)"/);
+    if (!match || !match[1]) return '';
+    return normalizeVersion(match[1]);
+  } catch {
+    return '';
+  }
+};
+
+const getVersionPayload = (req) => {
   const latestVersionRaw =
     process.env.APP_LATEST_VERSION ||
     process.env.LATEST_APP_VERSION ||
     process.env.ANDROID_LATEST_VERSION ||
     process.env.LATEST_VERSION ||
-    '';
+    getAndroidVersionFromGradle();
 
-  const latestVersion = String(latestVersionRaw).trim();
+  const latestVersion = normalizeVersion(latestVersionRaw);
   let forceUpdate = parseBooleanEnv(
     process.env.FORCE_UPDATE ?? process.env.FORCE_APP_UPDATE,
     false
   );
+
+  const currentVersion = normalizeVersion(req?.query?.currentVersion || req?.headers?.['x-app-version'] || '');
+  const updateAvailable = Boolean(latestVersion && currentVersion && compareVersions(currentVersion, latestVersion) < 0);
 
   // Guardrail: never force updates when latestVersion is missing.
   if (!latestVersion) {
@@ -358,6 +391,8 @@ const getVersionPayload = () => {
 
   return {
     latestVersion,
+    currentVersion,
+    updateAvailable,
     forceUpdate,
     message:
       process.env.UPDATE_MESSAGE ||
@@ -369,12 +404,12 @@ const getVersionPayload = () => {
 // Version endpoints consumed by the mobile update checker.
 app.get('/api/version', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  return res.json(getVersionPayload());
+  return res.json(getVersionPayload(req));
 });
 
 app.get('/version', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  return res.json(getVersionPayload());
+  return res.json(getVersionPayload(req));
 });
 
 // Admin: test SMS sending (POST JSON { to, text }) or GET with query params

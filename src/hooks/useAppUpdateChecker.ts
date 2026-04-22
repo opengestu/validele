@@ -6,6 +6,7 @@ import { apiUrl } from '@/lib/api';
 
 type VersionApiResponse = {
   latestVersion: string;
+  updateAvailable?: boolean;
   forceUpdate: boolean;
   message: string;
 };
@@ -108,6 +109,10 @@ export default function useAppUpdateChecker() {
   const nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
   const checkForUpdate = useCallback(async () => {
+    if (nativeAndroid) {
+      return;
+    }
+
     if (isCheckingRef.current) return;
     isCheckingRef.current = true;
 
@@ -117,9 +122,14 @@ export default function useAppUpdateChecker() {
 
       const versionEndpointCandidates = ['/api/version', '/version'];
       let json: Partial<VersionApiResponse> | null = null;
+      const platform = Capacitor.isNativePlatform() ? Capacitor.getPlatform() : 'web';
 
       for (const endpoint of versionEndpointCandidates) {
-        const response = await fetch(apiUrl(endpoint), {
+        const baseUrl = apiUrl(endpoint);
+        const sep = baseUrl.includes('?') ? '&' : '?';
+        const url = `${baseUrl}${sep}platform=${encodeURIComponent(platform)}&currentVersion=${encodeURIComponent(appVersion)}`;
+
+        const response = await fetch(url, {
           method: 'GET',
           headers: { Accept: 'application/json' },
         }).catch(() => null);
@@ -152,13 +162,19 @@ export default function useAppUpdateChecker() {
         return;
       }
 
-      // Defensive guard: do not trigger update prompts if app version cannot be resolved.
-      if (appVersion === '0.0.0') {
-        console.warn('[UpdateChecker] version locale invalide (0.0.0), verification ignoree');
+      // Ignore only fully invalid payloads where both sides are unresolved.
+      if (appVersion === '0.0.0' && latestVersion === '0.0.0') {
+        setUpdateInfo(null);
+        setIsOpen(false);
+        console.warn('[UpdateChecker] verification ignoree (0.0.0 -> 0.0.0)');
         return;
       }
 
-      if (compareVersions(appVersion, latestVersion) < 0) {
+      const updateAvailable = typeof json.updateAvailable === 'boolean'
+        ? json.updateAvailable
+        : compareVersions(appVersion, latestVersion) < 0;
+
+      if (updateAvailable) {
         // Emergency behavior: on Android, always re-show update prompt until user updates.
         if (!nativeAndroid && !forceUpdate && hasActiveSnooze(latestVersion)) return;
 
@@ -177,6 +193,10 @@ export default function useAppUpdateChecker() {
   }, [nativeAndroid]);
 
   useEffect(() => {
+    if (nativeAndroid) {
+      return;
+    }
+
     let cleanedUp = false;
     let appStateListener: PluginListenerHandle | null = null;
 
@@ -211,7 +231,7 @@ export default function useAppUpdateChecker() {
         void appStateListener.remove();
       }
     };
-  }, [checkForUpdate]);
+  }, [checkForUpdate, nativeAndroid]);
 
   const handleUpdateNow = useCallback(async () => {
     const appId = getPlayStoreAppId();
