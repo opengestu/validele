@@ -34,9 +34,9 @@ const UpdateModal: React.FC<UpdateModalProps> = ({
   return (
     <Drawer
       open={open}
-      dismissible={!forceUpdate}
+      dismissible
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !forceUpdate) onLater();
+        if (!nextOpen) onLater();
       }}
     >
       <DrawerContent className="z-[12000] border-none bg-slate-950 text-white rounded-t-[28px]">
@@ -84,16 +84,14 @@ const UpdateModal: React.FC<UpdateModalProps> = ({
             </span>
           </Button>
 
-          {!forceUpdate && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onLater}
-              className="h-11 w-full rounded-xl border-slate-600 bg-transparent text-slate-200 hover:bg-slate-900 hover:text-white"
-            >
-              Plus tard
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onLater}
+            className="h-11 w-full rounded-xl border-slate-600 bg-transparent text-slate-200 hover:bg-slate-900 hover:text-white"
+          >
+            {forceUpdate ? 'Continuer sans mettre a jour' : 'Plus tard'}
+          </Button>
         </DrawerFooter>
       </DrawerContent>
     </Drawer>

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { App as CapacitorApp } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import {
   LEGAL_FEATURE_ENABLED,
@@ -18,7 +19,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import ExitConfirmHandler from "@/components/ExitConfirmHandler";
 import AppResumeRefresher from "@/components/AppResumeRefresher";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
-import SessionTimeoutManager from "@/components/SessionTimeoutManager";
+import SessionTimeoutManager, { REAUTH_REQUIRED_KEY, REAUTH_RETURN_PATH_KEY } from "@/components/SessionTimeoutManager";
 import LegalQuickLinks from "@/components/LegalQuickLinks";
 import PinReauth from "@/components/PinReauth";
 import { Spinner } from "@/components/ui/spinner";
@@ -30,6 +31,10 @@ import useAppUpdateChecker from "@/hooks/useAppUpdateChecker";
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
   const location = useLocation();
+  const pendingSharedProductCode = React.useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return String(localStorage.getItem(SHARED_PRODUCT_PENDING_CODE_KEY) || '').trim();
+  }, [location.pathname, location.search]);
   const forcePhoneEntry = React.useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get('entry') === 'phone' || params.get('switchAccount') === '1';
@@ -41,6 +46,10 @@ const AuthRoute: React.FC = () => {
         <Spinner size="sm" />
       </div>
     );
+  }
+
+  if (user && userProfile?.full_name && pendingSharedProductCode && userProfile.role === 'buyer') {
+    return <Navigate to={`/buyer?productCode=${encodeURIComponent(pendingSharedProductCode)}`} replace />;
   }
 
   if (forcePhoneEntry) {
@@ -86,6 +95,8 @@ import TermsOfUsePage from "./pages/TermsOfUsePage";
 
 const queryClient = new QueryClient();
 const paydunyaMode = import.meta.env.VITE_PAYDUNYA_MODE || 'prod';
+const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
+const AUTH_RETURN_PATH_KEY = 'auth_return_path';
 const envAdminOnlyMode = String(import.meta.env.VITE_ADMIN_ONLY_MODE || '').toLowerCase();
 const hostLooksLikeAdmin =
   typeof window !== 'undefined'
@@ -128,12 +139,75 @@ const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) =
 };
 
 const DeepLinkHandler: React.FC = () => {
-  const location = useLocation();
+  const lastHandledUrlRef = React.useRef<string>('');
 
   React.useEffect(() => {
+    const routeNativeProductLink = (productCode: string) => {
+      const safeCode = String(productCode || '').trim();
+      if (!safeCode || typeof window === 'undefined') return;
+
+      const buyerTarget = `/buyer?productCode=${encodeURIComponent(safeCode)}`;
+      const productTarget = `/product/${encodeURIComponent(safeCode)}`;
+      localStorage.setItem(SHARED_PRODUCT_PENDING_CODE_KEY, safeCode);
+      localStorage.setItem(AUTH_RETURN_PATH_KEY, buyerTarget);
+
+      const reauthRequired = localStorage.getItem(REAUTH_REQUIRED_KEY) === '1';
+      const hasSmsSession = !!localStorage.getItem('sms_auth_session');
+      const hasSupabaseSession = !!localStorage.getItem('supabase_persisted_session');
+
+      let activeRole = '';
+      try {
+        const smsRaw = localStorage.getItem('sms_auth_session');
+        if (smsRaw) {
+          const sms = JSON.parse(smsRaw) as { role?: string };
+          if (typeof sms?.role === 'string') {
+            activeRole = sms.role;
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
+
+      if (!activeRole) {
+        try {
+          const profileRaw = localStorage.getItem('auth_cached_profile_v1');
+          if (profileRaw) {
+            const profile = JSON.parse(profileRaw) as { role?: string };
+            if (typeof profile?.role === 'string') {
+              activeRole = profile.role;
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+
+      const isNonBuyerSession = !!activeRole && activeRole !== 'buyer';
+
+      let target = '/auth?entry=phone';
+
+      if (reauthRequired && hasSmsSession) {
+        localStorage.setItem(REAUTH_RETURN_PATH_KEY, isNonBuyerSession ? productTarget : buyerTarget);
+        target = '/pin-reauth';
+      } else if (isNonBuyerSession) {
+        // For vendor/delivery/admin sessions, keep user in the product link context
+        // so ProductSearch can show the dedicated account-switch notice.
+        target = productTarget;
+      } else if (activeRole === 'buyer' || hasSmsSession || hasSupabaseSession) {
+        target = buyerTarget;
+      }
+
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (currentPath !== target) {
+        window.history.replaceState({}, '', target);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
+    };
+
     const routeFromUrl = (rawUrl?: string | null) => {
       const incoming = String(rawUrl || '').trim();
       if (!incoming || typeof window === 'undefined') return;
+      if (incoming === lastHandledUrlRef.current) return;
 
       try {
         const parsed = new URL(incoming);
@@ -143,8 +217,14 @@ const DeepLinkHandler: React.FC = () => {
 
         if (protocol === 'validel:' && host === 'product' && path) {
           const decoded = decodeURIComponent(path);
+          if (Capacitor.isNativePlatform()) {
+            lastHandledUrlRef.current = incoming;
+            routeNativeProductLink(decoded);
+            return;
+          }
           const target = `/product/${encodeURIComponent(decoded)}`;
-          if (location.pathname !== target) {
+          if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) {
+            lastHandledUrlRef.current = incoming;
             window.history.replaceState({}, '', target);
             window.dispatchEvent(new PopStateEvent('popstate'));
           }
@@ -154,8 +234,16 @@ const DeepLinkHandler: React.FC = () => {
         if ((protocol === 'https:' || protocol === 'http:') && host === 'validele.pages.dev') {
           const normalizedPath = `/${path}`;
           if (normalizedPath.startsWith('/product/')) {
+            const productCode = decodeURIComponent(normalizedPath.replace(/^\/product\//, '')).trim();
+            if (Capacitor.isNativePlatform() && productCode) {
+              lastHandledUrlRef.current = incoming;
+              routeNativeProductLink(productCode);
+              return;
+            }
+
             const target = `${normalizedPath}${parsed.search || ''}${parsed.hash || ''}`;
-            if (`${location.pathname}${location.search}${location.hash}` !== target) {
+            if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) {
+              lastHandledUrlRef.current = incoming;
               window.history.replaceState({}, '', target);
               window.dispatchEvent(new PopStateEvent('popstate'));
             }
@@ -193,7 +281,7 @@ const DeepLinkHandler: React.FC = () => {
         void listenerHandle.remove();
       }
     };
-  }, [location.pathname]);
+  }, []);
 
   return null;
 };

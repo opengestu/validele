@@ -1,18 +1,20 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
 
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
-
 const ProductSearch = () => {
   const { code: codeFromUrl } = useParams<{ code?: string }>();
   const navigate = useNavigate();
-  const { userProfile, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
+  const { toast } = useToast();
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +37,17 @@ const ProductSearch = () => {
         : '/';
   const hasShareCodeInUrl = Boolean((codeFromUrl || '').trim());
   const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
+  const isWebContext = !Capacitor.isNativePlatform();
+  const isNativeProductLink = Capacitor.isNativePlatform() && hasShareCodeInUrl;
+  const isMobileWeb = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator.userAgent);
+  }, []);
+  const shouldAutoOpenNativeApp = isWebContext && isMobileWeb && hasShareCodeInUrl;
+  const androidPackageName = import.meta.env.VITE_ANDROID_APP_PACKAGE || 'com.validele.app';
+  const playStoreUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(androidPackageName)}`;
+  const iosStoreUrl = import.meta.env.VITE_IOS_APP_STORE_URL || '';
+  const [showInstallFallback, setShowInstallFallback] = useState(false);
 
   const persistPendingProductCode = useCallback((rawCode?: string | null) => {
     const code = String(rawCode || '').trim();
@@ -45,6 +58,72 @@ const ProductSearch = () => {
     }
     localStorage.setItem(SHARED_PRODUCT_PENDING_CODE_KEY, code);
   }, []);
+
+  useEffect(() => {
+    setShowInstallFallback(false);
+  }, [shouldAutoOpenNativeApp, codeFromUrl]);
+
+  useEffect(() => {
+    if (!isNativeProductLink) return;
+    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
+    if (!rawCode || typeof window === 'undefined') return;
+    persistPendingProductCode(rawCode);
+  }, [codeFromUrl, isNativeProductLink, persistPendingProductCode]);
+
+  const handleInstallAndroid = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.open(playStoreUrl, '_blank', 'noopener,noreferrer');
+  }, [playStoreUrl]);
+
+  const handleInstallIos = useCallback(() => {
+    if (typeof window !== 'undefined' && iosStoreUrl) {
+      window.open(iosStoreUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    toast({
+      title: 'Bientot disponible',
+      description: 'La version iOS n\'est pas encore disponible sur l\'App Store.',
+    });
+  }, [iosStoreUrl, toast]);
+
+  const handleOpenAppNow = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
+    if (!rawCode) return;
+    const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
+    window.location.href = deeplinkUrl;
+  }, [codeFromUrl]);
+
+  useEffect(() => {
+    if (!shouldAutoOpenNativeApp) return;
+    if (typeof window === 'undefined') return;
+
+    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
+    if (!rawCode) return;
+
+    const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
+    let hasOpenedApp = false;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        hasOpenedApp = true;
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.location.href = deeplinkUrl;
+
+    const fallbackTimer = window.setTimeout(() => {
+      if (!hasOpenedApp) {
+        setShowInstallFallback(true);
+      }
+    }, 1800);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearTimeout(fallbackTimer);
+    };
+  }, [codeFromUrl, shouldAutoOpenNativeApp]);
 
   const prepareBuyerAuthEntry = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -150,6 +229,54 @@ const ProductSearch = () => {
                 </Button>
               </Link>
             </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isNativeProductLink && !authLoading && !user) {
+    return <Navigate to="/auth?entry=phone" replace />;
+  }
+
+  if (isNativeProductLink && !authLoading && userProfile?.role === 'buyer') {
+    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
+    if (rawCode) {
+      return <Navigate to={`/buyer?productCode=${encodeURIComponent(rawCode)}`} replace />;
+    }
+  }
+
+  if (shouldAutoOpenNativeApp) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <Card className="w-full max-w-xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Ouverture de l'application</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-slate-700 leading-relaxed">
+              Le lien essaie d'ouvrir automatiquement l'application mobile pour continuer en toute securite.
+            </p>
+
+            <Button type="button" className="w-full" onClick={handleOpenAppNow}>
+              Reessayer d'ouvrir l'application
+            </Button>
+
+            {showInstallFallback && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <p className="text-sm text-slate-700">
+                  Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Button type="button" variant="outline" onClick={handleInstallAndroid}>
+                    Telecharger Android
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleInstallIos}>
+                    Telecharger iPhone
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -276,6 +403,7 @@ const ProductSearch = () => {
                         </Button>
                       </Link>
                     )}
+
                   </div>
                 </div>
               </div>

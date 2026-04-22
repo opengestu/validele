@@ -145,12 +145,16 @@ export default function useAppUpdateChecker() {
         : 'Une nouvelle version est disponible avec des améliorations importantes.';
 
       if (!latestVersion) {
-        if (forceUpdate) {
-          // Emergency path: let backend force update even if latestVersion is misconfigured.
-          setUpdateInfo({ latestVersion: appVersion, forceUpdate: true, message });
-          setIsOpen(true);
-        }
+        // Ignore misconfigured payloads to prevent false blocking loops.
+        setUpdateInfo(null);
+        setIsOpen(false);
         console.warn('[UpdateChecker] latestVersion manquant depuis /api/version');
+        return;
+      }
+
+      // Defensive guard: do not trigger update prompts if app version cannot be resolved.
+      if (appVersion === '0.0.0') {
+        console.warn('[UpdateChecker] version locale invalide (0.0.0), verification ignoree');
         return;
       }
 
@@ -160,6 +164,10 @@ export default function useAppUpdateChecker() {
 
         setUpdateInfo({ latestVersion, forceUpdate, message });
         setIsOpen(true);
+      } else {
+        // Close stale modal when the installed version is already up to date.
+        setUpdateInfo(null);
+        setIsOpen(false);
       }
     } catch (error) {
       console.warn('[UpdateChecker] Impossible de vérifier les mises à jour:', error);
@@ -251,7 +259,8 @@ export default function useAppUpdateChecker() {
   }, [nativeAndroid, updateInfo?.forceUpdate]);
 
   const handleLater = useCallback(() => {
-    if (!updateInfo || updateInfo.forceUpdate) return;
+    if (!updateInfo) return;
+    // Allow continuing without update to avoid blocking access during Play Store review windows.
     saveSnooze(updateInfo.latestVersion);
     setIsOpen(false);
   }, [updateInfo]);

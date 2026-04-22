@@ -346,10 +346,15 @@ const getVersionPayload = () => {
     '';
 
   const latestVersion = String(latestVersionRaw).trim();
-  const forceUpdate = parseBooleanEnv(
+  let forceUpdate = parseBooleanEnv(
     process.env.FORCE_UPDATE ?? process.env.FORCE_APP_UPDATE,
-    true
+    false
   );
+
+  // Guardrail: never force updates when latestVersion is missing.
+  if (!latestVersion) {
+    forceUpdate = false;
+  }
 
   return {
     latestVersion,
