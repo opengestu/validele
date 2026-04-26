@@ -99,14 +99,23 @@ async function getUserPresence(userId) {
 
 async function isUserActiveRecently(userId, thresholdMs = DELIVERY_STARTED_ACTIVE_THRESHOLD_MS) {
   const presence = await getUserPresence(userId);
-  if (!presence?.lastSeenAtMs) return false;
-  return (Date.now() - presence.lastSeenAtMs) <= thresholdMs;
+  if (!presence?.lastSeenAtMs) {
+    return { known: false, active: false, ageMs: null };
+  }
+  const ageMs = Date.now() - presence.lastSeenAtMs;
+  return { known: true, active: ageMs <= thresholdMs, ageMs };
 }
 
 async function sendDeliveryStartedSmsIfNeeded(buyerId, orderDetails, phoneOverride = null) {
-  const recent = await isUserActiveRecently(buyerId, DELIVERY_STARTED_ACTIVE_THRESHOLD_MS);
-  if (recent) {
-    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (actif récemment)`);
+  const activity = await isUserActiveRecently(buyerId, DELIVERY_STARTED_ACTIVE_THRESHOLD_MS);
+  if (!activity.known) {
+    // Safety-first: without reliable activity timestamp, do not send fallback SMS.
+    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (activité inconnue: last_seen_at absent)`);
+    return { sent: false, reason: 'unknown_activity' };
+  }
+
+  if (activity.active) {
+    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (actif récemment, age=${activity.ageMs}ms)`);
     return { sent: false, reason: 'active_recently' };
   }
 
