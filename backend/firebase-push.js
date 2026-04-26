@@ -129,10 +129,25 @@ async function sendPushToMultiple(tokens, title, body, data = {}) {
   const results = await Promise.allSettled(
     tokens.map(token => sendPushNotification(token, title, body, data))
   );
+
+  const invalidTokens = [];
+  for (let i = 0; i < results.length; i += 1) {
+    const r = results[i];
+    if (r.status !== 'rejected') continue;
+
+    const msg = String(r.reason?.message || r.reason || '');
+    // FCM permanent token errors: cleanup local token to avoid repeated failures.
+    const isUnregistered = msg.includes('"errorCode":"UNREGISTERED"');
+    const isInvalidToken = msg.includes('"errorCode":"INVALID_ARGUMENT"') || msg.includes('registration token is not a valid FCM registration token');
+    if (isUnregistered || isInvalidToken) {
+      invalidTokens.push(tokens[i]);
+    }
+  }
   
   return {
     success: results.filter(r => r.status === 'fulfilled').length,
     failed: results.filter(r => r.status === 'rejected').length,
+    invalidTokens,
     details: results,
   };
 }

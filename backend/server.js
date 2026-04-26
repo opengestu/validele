@@ -3338,9 +3338,22 @@ app.post('/api/admin/notify-all-vendors', requireAdmin, async (req, res) => {
     });
 
     // Clean up invalid tokens (those that failed permanently)
-    if (result.failed && result.failed > 0) {
-      console.log(`[ADMIN] Cleaning up ${result.failed} invalid tokens`);
-      // Optional: mark invalid tokens for cleanup
+    const invalidTokens = Array.isArray(result.invalidTokens) ? [...new Set(result.invalidTokens.filter(Boolean))] : [];
+    let cleanedTokens = 0;
+    if (invalidTokens.length > 0) {
+      console.log(`[ADMIN] Cleaning up ${invalidTokens.length} invalid tokens`);
+      const { data: cleanedRows, error: cleanErr } = await supabase
+        .from('profiles')
+        .update({ push_token: null })
+        .in('push_token', invalidTokens)
+        .eq('role', 'vendor')
+        .select('id');
+
+      if (cleanErr) {
+        console.error('[ADMIN] Error cleaning invalid vendor tokens:', cleanErr);
+      } else {
+        cleanedTokens = Array.isArray(cleanedRows) ? cleanedRows.length : 0;
+      }
     }
 
     res.json({ 
@@ -3348,6 +3361,7 @@ app.post('/api/admin/notify-all-vendors', requireAdmin, async (req, res) => {
       sent: result.success || 0,
       failed: result.failed || 0,
       total: tokens.length,
+      cleaned_tokens: cleanedTokens,
       message: `Notification sent to ${result.success || 0}/${tokens.length} vendors`
     });
   } catch (error) {
