@@ -46,6 +46,12 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 
 const app = express();
 
+// Verbose admin logs are disabled by default to avoid log flooding under polling traffic.
+const ADMIN_VERBOSE_LOGS = String(process.env.ADMIN_VERBOSE_LOGS || '').toLowerCase() === 'true';
+const adminVerboseLog = (...args) => {
+  if (ADMIN_VERBOSE_LOGS) console.log(...args);
+};
+
 // CORS global, avant toute route
 const FRONTEND_ORIGIN = process.env.VITE_DEV_ORIGIN || null;
 const EXTRA_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
@@ -543,6 +549,65 @@ app.post('/api/me/push-token', async (req, res) => {
   }
 });
 
+// Endpoint: enregistrer une activité récente de l'utilisateur pour les règles push/SMS
+app.post('/api/me/heartbeat', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let userId = null;
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.sub) userId = decoded.sub;
+    } catch {
+      // ignore - may be a Supabase JWT
+    }
+
+    if (!userId) {
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        if (authErr || !user) {
+          return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+        }
+        userId = user.id;
+      } catch (e) {
+        console.error('[ME HEARTBEAT] supabase.getUser error:', e);
+        return res.status(500).json({ success: false, error: 'server_error' });
+      }
+    }
+
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceRoleKey) {
+      return res.status(500).json({ success: false, error: 'Server misconfiguration' });
+    }
+
+    const { createClient: createAdminClient } = require('@supabase/supabase-js');
+    const supabaseAdmin = createAdminClient(SUPABASE_URL, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from('profiles')
+      .update({ last_seen_at: now })
+      .eq('id', userId);
+
+    if (error) {
+      console.error('[ME HEARTBEAT] update error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
+    }
+
+    return res.json({ success: true, userId, last_seen_at: now });
+  } catch (err) {
+    console.error('[ME HEARTBEAT] handler error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+});
+
 // Endpoint sécurisé pour suppression produit par un vendeur (bypass RLS pour session SMS)
 async function deleteProductHandler(req, res) {
   try {
@@ -646,6 +711,10 @@ app.post('/api/vendor/update-product', async (req, res) => {
     const { vendor_id, product_id, updates } = req.body || {};
     if (!vendor_id || !product_id || !updates) return res.status(400).json({ success: false, error: 'vendor_id, product_id et updates requis' });
 
+    // Hard guard: this deployment does not rely on demo_video_url column.
+    const sanitizedUpdates = { ...(updates || {}) };
+    delete sanitizedUpdates.demo_video_url;
+
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, error: 'Authentification requise (Bearer token manquant)' });
@@ -709,7 +778,7 @@ app.post('/api/vendor/update-product', async (req, res) => {
         // Protect: ensure we only update products belonging to this vendor
         ({ data, error } = await supabaseAdmin
           .from('products')
-          .update(updates)
+          .update(sanitizedUpdates)
           .eq('id', product_id)
           .eq('vendor_id', vendor_id)
           .select());
@@ -720,7 +789,7 @@ app.post('/api/vendor/update-product', async (req, res) => {
         });
         ({ data, error } = await supaClient
           .from('products')
-          .update(updates)
+          .update(sanitizedUpdates)
           .eq('id', product_id)
           .select());
       }
@@ -2249,17 +2318,23 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         console.log('[PIXPAY-WEBHOOK] ⚠️ Commande déjà livrée, status non modifié');
       } else {
         // IMPORTANT: Utiliser supabaseAdmin pour bypass RLS policies
-        const { error: orderError } = await dbClient
+        const { data: updatedOrderRows, error: orderError } = await dbClient
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
             payment_confirmed_at: new Date().toISOString(),
             qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
           })
-          .eq('id', orderId);
+          .eq('id', orderId)
+          .neq('status', 'paid')
+          .neq('status', 'in_delivery')
+          .neq('status', 'delivered')
+          .select('id');
 
         if (orderError) {
           console.error('[PIXPAY-WEBHOOK] ❌ Erreur update order:', orderError);
+        } else if (!updatedOrderRows || updatedOrderRows.length === 0) {
+          console.log('[PIXPAY-WEBHOOK] ℹ️ Statut déjà confirmé, notifications non renvoyées');
         } else {
           console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
           
@@ -2296,7 +2371,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               });
 
               if (buyerTokens && buyerTokens.length > 0) {
-                for (const { token } of buyerTokens) {
+                const uniqueBuyerTokens = [...new Set(buyerTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+                for (const token of uniqueBuyerTokens) {
                   await sendPushNotification(token, buyerNotif.title, buyerNotif.body, buyerNotif.data);
                 }
                 console.log('[PIXPAY] Notification paiement confirmé envoyée à l\'acheteur (push_tokens)');
@@ -2327,7 +2403,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
               });
 
               if (vendorTokens && vendorTokens.length > 0) {
-                for (const { token } of vendorTokens) {
+                const uniqueVendorTokens = [...new Set(vendorTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+                for (const token of uniqueVendorTokens) {
                   await sendPushNotification(token, vendorNotif.title, vendorNotif.body, vendorNotif.data);
                 }
                 console.log('[PIXPAY] Notification paiement reçu envoyée au vendeur (push_tokens)');
@@ -2542,7 +2619,8 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
           productName
         });
 
-        for (const { token } of buyerTokens) {
+        const uniqueBuyerTokens = [...new Set(buyerTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+        for (const token of uniqueBuyerTokens) {
           await sendPushNotification(token, notif.title, notif.body, notif.data);
         }
         console.log('[ADMIN] Notification sent to buyer');
@@ -2564,7 +2642,8 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
           productName: typeof productName !== 'undefined' ? productName : null
         });
 
-        for (const { token } of vendorTokens) {
+        const uniqueVendorTokens = [...new Set(vendorTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+        for (const token of uniqueVendorTokens) {
           await sendPushNotification(token, notif.title, notif.body, notif.data);
         }
         console.log('[ADMIN] Notification sent to vendor');
@@ -2696,8 +2775,8 @@ async function requireAdmin(req, res, next) {
     try {
       const { data, error } = await supabase.auth.getUser(token);
       if (!error && data?.user) {
-        // Log detected user id for debugging
-        console.log('[ADMIN] requireAdmin: detected supabase user id ->', data.user.id);
+        // Verbose-only trace
+        adminVerboseLog('[ADMIN] requireAdmin: detected supabase user id ->', data.user.id);
 
         if (adminUserId && data.user.id === adminUserId) {
           req.adminUser = data.user;
@@ -2707,13 +2786,13 @@ async function requireAdmin(req, res, next) {
         // Also accept users who have role='admin' in profiles table
         try {
           const { data: profRow, error: profErr } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
-          console.log('[ADMIN] requireAdmin: profile lookup for', data.user.id, '-> role:', profRow?.role);
+          adminVerboseLog('[ADMIN] requireAdmin: profile lookup for', data.user.id, '-> role:', profRow?.role);
           if (!profErr && profRow && profRow.role === 'admin') {
-            console.log('[ADMIN] requireAdmin: profile role=admin, granting access for', data.user.id);
+            adminVerboseLog('[ADMIN] requireAdmin: profile role=admin, granting access for', data.user.id);
             req.adminUser = data.user;
             return next();
           } else {
-            console.log('[ADMIN] requireAdmin: profile role is not admin, role=', profRow?.role);
+            adminVerboseLog('[ADMIN] requireAdmin: profile role is not admin, role=', profRow?.role);
           }
         } catch (e) {
           console.warn('[ADMIN] requireAdmin: error checking profile role:', e?.message || e);
@@ -2729,7 +2808,7 @@ async function requireAdmin(req, res, next) {
           console.error('[ADMIN] Error checking admin_users:', adminErr);
           return res.status(500).json({ success: false, error: 'Server error checking admin users' });
         }
-        console.log('[ADMIN] requireAdmin: admin_users lookup result ->', adminRow);
+        adminVerboseLog('[ADMIN] requireAdmin: admin_users lookup result ->', adminRow);
         if (adminRow && adminRow.id) {
           req.adminUser = data.user;
           return next();
@@ -3081,8 +3160,8 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
       };
     });
 
-    console.log('[ADMIN] /api/admin/orders fetched:', enrichedOrders.length, 'orders with profile data');
-    console.log('[ADMIN] Sample order:', JSON.stringify(enrichedOrders[0] || {}));
+    adminVerboseLog('[ADMIN] /api/admin/orders fetched:', enrichedOrders.length, 'orders with profile data');
+    adminVerboseLog('[ADMIN] Sample order:', JSON.stringify(enrichedOrders[0] || {}));
 
     return res.json({ success: true, orders: enrichedOrders });
   } catch (error) {
@@ -3220,6 +3299,59 @@ app.post('/api/admin/notify', requireAdmin, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     console.error('[ADMIN] notify error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Send notification to all vendors
+app.post('/api/admin/notify-all-vendors', requireAdmin, async (req, res) => {
+  try {
+    const { title, body } = req.body || {};
+    if (!title || !body) return res.status(400).json({ success: false, error: 'title and body required' });
+
+    // Fetch all vendors with push_token
+    const { data: vendors, error: vendorErr } = await supabase
+      .from('profiles')
+      .select('id, push_token, full_name')
+      .eq('role', 'vendor')
+      .not('push_token', 'is', null)
+      .gt('push_token', '');
+
+    if (vendorErr) {
+      console.error('[ADMIN] Error fetching vendors:', vendorErr);
+      return res.status(500).json({ success: false, error: 'Failed to fetch vendors' });
+    }
+
+    if (!vendors || vendors.length === 0) {
+      return res.json({ success: true, sent: 0, failed: 0, message: 'No vendors with push tokens found' });
+    }
+
+    // Extract unique tokens
+    const tokens = [...new Set(vendors.map(v => v.push_token).filter(t => t && typeof t === 'string'))];
+    console.log(`[ADMIN] Sending notification to ${tokens.length} vendors`);
+
+    // Send notifications using sendPushToMultiple
+    const { sendPushToMultiple } = require('./firebase-push');
+    const result = await sendPushToMultiple(tokens, title, body, { 
+      sentByAdmin: 'true',
+      broadcastType: 'vendors'
+    });
+
+    // Clean up invalid tokens (those that failed permanently)
+    if (result.failed && result.failed > 0) {
+      console.log(`[ADMIN] Cleaning up ${result.failed} invalid tokens`);
+      // Optional: mark invalid tokens for cleanup
+    }
+
+    res.json({ 
+      success: true, 
+      sent: result.success || 0,
+      failed: result.failed || 0,
+      total: tokens.length,
+      message: `Notification sent to ${result.success || 0}/${tokens.length} vendors`
+    });
+  } catch (error) {
+    console.error('[ADMIN] notify-all-vendors error:', error);
     res.status(500).json({ success: false, error: String(error) });
   }
 });
@@ -7379,13 +7511,17 @@ app.post('/api/payment/webhook', async (req, res) => {
     const orderId = orders[0].id;
     console.log('Commande trouvée pour ce token:', orderId);
 
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from('orders')
       .update({
         status: status === 'completed' || status === 'success' ? 'paid' : 'failed',
         payment_confirmed_at: new Date().toISOString()
       })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .neq('status', 'paid')
+      .neq('status', 'in_delivery')
+      .neq('status', 'delivered')
+      .select('id');
 
     console.log('Résultat update Supabase:', { error, orderId });
 
@@ -7395,7 +7531,8 @@ app.post('/api/payment/webhook', async (req, res) => {
     }
 
     // Notifications push (acheteur + vendeur) quand le paiement est confirmé
-    if (status === 'completed' || status === 'success') {
+    // et seulement si cette requête a réellement changé le statut.
+    if ((status === 'completed' || status === 'success') && updatedRows && updatedRows.length > 0) {
       try {
         const { data: orderDetails } = await supabase
           .from('orders')
@@ -7417,7 +7554,8 @@ app.post('/api/payment/webhook', async (req, res) => {
               orderId
             });
 
-            for (const { token } of buyerTokens) {
+            const uniqueBuyerTokens = [...new Set(buyerTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+            for (const token of uniqueBuyerTokens) {
               await sendPushNotification(token, notif.title, notif.body, notif.data);
             }
             console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
@@ -7436,7 +7574,8 @@ app.post('/api/payment/webhook', async (req, res) => {
               orderId
             });
 
-            for (const { token } of vendorTokens) {
+            const uniqueVendorTokens = [...new Set(vendorTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+            for (const token of uniqueVendorTokens) {
               await sendPushNotification(token, notif.title, notif.body, notif.data);
             }
             console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');
@@ -7515,13 +7654,17 @@ app.post('/api/paydunya/notification', async (req, res) => {
     const orderId = orders[0].id;
     console.log('Commande trouvée pour ce token ou order_id:', orderId);
 
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from('orders')
       .update({
         status: status === 'completed' || status === 'success' ? 'paid' : 'failed',
         payment_confirmed_at: new Date().toISOString()
       })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .neq('status', 'paid')
+      .neq('status', 'in_delivery')
+      .neq('status', 'delivered')
+      .select('id');
 
     console.log('Résultat update Supabase:', { error, orderId });
 
@@ -7531,7 +7674,8 @@ app.post('/api/paydunya/notification', async (req, res) => {
     }
 
     // Notifications push (acheteur + vendeur) quand le paiement est confirmé
-    if (status === 'completed' || status === 'success') {
+    // et seulement si cette requête a réellement changé le statut.
+    if ((status === 'completed' || status === 'success') && updatedRows && updatedRows.length > 0) {
       try {
         const { data: orderDetails } = await supabase
           .from('orders')
@@ -7560,7 +7704,8 @@ app.post('/api/paydunya/notification', async (req, res) => {
               orderId
             });
 
-            for (const { token } of buyerTokens) {
+            const uniqueBuyerTokens = [...new Set(buyerTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+            for (const token of uniqueBuyerTokens) {
               await sendPushNotification(token, notif.title, notif.body, notif.data);
             }
             console.log('[PAYDUNYA] Notification paiement confirmé envoyée à l\'acheteur');
@@ -7579,7 +7724,8 @@ app.post('/api/paydunya/notification', async (req, res) => {
               orderId
             });
 
-            for (const { token } of vendorTokens) {
+            const uniqueVendorTokens = [...new Set(vendorTokens.map((row) => row.token).filter((token) => typeof token === 'string' && token.length > 0))];
+            for (const token of uniqueVendorTokens) {
               await sendPushNotification(token, notif.title, notif.body, notif.data);
             }
             console.log('[PAYDUNYA] Notification paiement reçu envoyée au vendeur');

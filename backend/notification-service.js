@@ -54,6 +54,10 @@ const supabase = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey)
   : null;
 
+const DELIVERY_STARTED_SMS_DELAY_MS = 2 * 60 * 1000;
+const DELIVERY_STARTED_ACTIVE_THRESHOLD_MS = 2 * 60 * 1000;
+const deliveryStartedSmsTimers = new Map();
+
 /**
  * Récupérer le token push d'un utilisateur
  */
@@ -72,6 +76,52 @@ async function getUserPushToken(userId) {
   }
 
   return { token: data.push_token, name: data.full_name };
+}
+
+async function getUserPresence(userId) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('phone, full_name, last_seen_at')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) return null;
+
+  const lastSeenAtMs = Date.parse(data.last_seen_at || '');
+  return {
+    phone: data.phone || null,
+    fullName: data.full_name || null,
+    lastSeenAtMs: Number.isFinite(lastSeenAtMs) ? lastSeenAtMs : null
+  };
+}
+
+async function isUserActiveRecently(userId, thresholdMs = DELIVERY_STARTED_ACTIVE_THRESHOLD_MS) {
+  const presence = await getUserPresence(userId);
+  if (!presence?.lastSeenAtMs) return false;
+  return (Date.now() - presence.lastSeenAtMs) <= thresholdMs;
+}
+
+async function sendDeliveryStartedSmsIfNeeded(buyerId, orderDetails, phoneOverride = null) {
+  const recent = await isUserActiveRecently(buyerId, DELIVERY_STARTED_ACTIVE_THRESHOLD_MS);
+  if (recent) {
+    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (actif récemment)`);
+    return { sent: false, reason: 'active_recently' };
+  }
+
+  const presence = await getUserPresence(buyerId);
+  const phone = phoneOverride || orderDetails.buyerPhone || presence?.phone;
+  if (!phone) {
+    console.warn(`[NOTIF] Pas de numéro pour user ${buyerId}, SMS livraison en cours non envoyé.`);
+    return { sent: false, reason: 'no_phone' };
+  }
+
+  const productName = orderDetails.productName || 'votre produit';
+  const smsText = `Votre Produit "${productName}" sur Validel est en cours de livraison.`;
+  const smsResult = await sendD7SMSNotify(phone, smsText);
+  console.log(`[NOTIF] Acheteur ${buyerId} notifié (SMS différé) - livraison en cours`, smsResult);
+  return { sent: true, smsResult };
 }
 
 // Utility to send a push to a user id with a simple interface
@@ -221,7 +271,6 @@ async function notifyDeliveryPersonAssigned(deliveryPersonId, orderDetails) {
 async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
   const user = await getUserPushToken(buyerId);
   let pushResult = null;
-  let smsResult = null;
   // Prefer buyerPhone provided in orderDetails, else try to fetch from profiles
   let phone = orderDetails.buyerPhone || null;
   if (!phone && supabase) {
@@ -253,20 +302,26 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
       console.error(`[NOTIF] Erreur notification push acheteur:`, error.message);
     }
   }
-  // Envoi SMS
-  if (phone) {
-    try {
-      // SMS format: Votre commande [nom du produit] sur VALIDEL est en cours de livraison. Numero livreur : [numéro]
-      const smsText = `Votre commande ${orderDetails.productName || ''} sur VALIDEL est en cours de livraison. Numero livreur : ${orderDetails.deliveryPersonPhone || 'non disponible'}`;
-      smsResult = await sendD7SMSNotify(phone, smsText);
-      console.log(`[NOTIF] Acheteur ${buyerId} notifié (SMS) - livraison en cours`, smsResult);
-    } catch (error) {
-      console.error(`[NOTIF] Erreur SMS livraison acheteur:`, error.message);
-    }
-  } else {
-    console.warn(`[NOTIF] Pas de numéro pour user ${buyerId}, SMS non envoyé.`);
+
+  const timerKey = String(orderDetails.orderId || buyerId);
+  const previousTimer = deliveryStartedSmsTimers.get(timerKey);
+  if (previousTimer) {
+    clearTimeout(previousTimer);
   }
-  return { sent: !!(pushResult || smsResult), pushResult, smsResult };
+
+  const timer = setTimeout(async () => {
+    try {
+      await sendDeliveryStartedSmsIfNeeded(buyerId, orderDetails, phone);
+    } catch (error) {
+      console.error(`[NOTIF] Erreur SMS différé livraison acheteur:`, error?.message || error);
+    } finally {
+      deliveryStartedSmsTimers.delete(timerKey);
+    }
+  }, DELIVERY_STARTED_SMS_DELAY_MS);
+
+  deliveryStartedSmsTimers.set(timerKey, timer);
+
+  return { sent: !!pushResult, pushResult, smsScheduled: true, smsDelayMs: DELIVERY_STARTED_SMS_DELAY_MS };
 }
 
 /**

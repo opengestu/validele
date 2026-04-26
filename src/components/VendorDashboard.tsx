@@ -27,6 +27,8 @@ const getStatusBadgeColor = (status: string): string => {
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
 import { Spinner } from '@/components/ui/spinner';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -43,7 +45,8 @@ import {
   LogOut,
   User,
   QrCode,
-  Copy
+  Share2,
+  MessageCircle
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -73,6 +76,32 @@ type ProfileRow = {
   phone: string | null;
   wallet_type?: string | null;
 };
+
+type SellDemoVideo = {
+  id: string;
+  title: string;
+  description: string;
+  src: string;
+  playerTitle: string;
+};
+
+const SELL_DEMO_VIDEOS: SellDemoVideo[] = [
+  {
+    id: 'share-product',
+    title: 'Partage de produit',
+    description: 'Comment partager un produit depuis Mes Produits.',
+    src: 'https://player.vimeo.com/video/1186697545?badge=0&autopause=0&player_id=0&app_id=58479',
+    playerTitle: 'Video_bien_partager'
+  },
+  {
+    id: 'assign-order',
+    title: 'Remettre une commande au livreur',
+    description: 'Le parcours pour affecter une commande au livreur.',
+    src: 'https://player.vimeo.com/video/1186595671?title=0&byline=0&portrait=0&badge=0&autopause=0&player_id=0&app_id=58479',
+    playerTitle: 'Comment remettre une commande Pro'
+  }
+];
+
 const VendorDashboard = () => {
     const { toast } = useToast();
   const { user, signOut, userProfile: authUserProfile, loading } = useAuth();
@@ -202,6 +231,11 @@ const VendorDashboard = () => {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [sellDemoModalOpen, setSellDemoModalOpen] = useState(false);
+  const [selectedSellDemoVideoId, setSelectedSellDemoVideoId] = useState<string>('share-product');
+  const [sellDemoVideoPlayModalOpen, setSellDemoVideoPlayModalOpen] = useState(false);
+  const [selectedVideoToPlay, setSelectedVideoToPlay] = useState<SellDemoVideo | null>(null);
+  const [watchedSellDemoVideoIds, setWatchedSellDemoVideoIds] = useState<string[]>([]);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callTarget, setCallTarget] = useState<{ phone: string; name?: string } | null>(null);
   const [vendorQRModalOpen, setVendorQRModalOpen] = useState(false);
@@ -369,6 +403,7 @@ const VendorDashboard = () => {
     price: '',
     description: '',
     warranty: '',
+    demo_video_url: '',
     // optional dev-only code field (visible only in dev sessions)
     code: '',
     category: ''
@@ -393,6 +428,7 @@ const VendorDashboard = () => {
     wallet_type: ''
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
 
   // (Global spinner overlay and body class logic removed)
 
@@ -669,6 +705,7 @@ const VendorDashboard = () => {
         description: (p as any).description ?? undefined,
         category: (p as any).category ?? undefined,
         image_url: (p as any).image_url ?? undefined,
+        demo_video_url: (p as any).demo_video_url ?? undefined,
         stock_quantity: (p as any).stock_quantity ?? undefined,
         is_available: (p as any).is_available ?? true
       })) as Product[];
@@ -752,6 +789,11 @@ const VendorDashboard = () => {
         });
 
         const json = await resp.json().catch(() => null);
+        if (resp.status === 401) {
+          // Token SMS expiré: ne pas déclencher la redirection globale, juste afficher l'erreur
+          localStorage.removeItem('sms_auth_session');
+          throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+        }
         if (!resp.ok || !json || !json.success) {
           throw new Error(json?.error || 'Erreur lors du changement de statut produit');
         }
@@ -1145,7 +1187,7 @@ const VendorDashboard = () => {
       isMounted = false;
       try { supabase.removeChannel(channel); } catch (e) { /* ignore */ }
     };
-  }, [(smsUser as any)?.id || user?.id, fetchOrders]);
+  }, [(smsUser as any)?.id || user?.id]);
   // Suppression de l'effet ensureWalletType
   const generateProductCode = async () => {
     // Générer un code produit unique: PD + 4 chiffres aléatoires
@@ -1155,6 +1197,109 @@ const VendorDashboard = () => {
   // Détection session SMS
   const isSMSAuth = () => {
     return !!(typeof window !== 'undefined' && localStorage.getItem('sms_auth_session'));
+  };
+
+  const normalizeVideoUrl = (value?: string | null) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+      return parsed.toString();
+    } catch {
+      return '';
+    }
+  };
+
+  const isPlayableVideoUrl = (value?: string | null) => {
+    const normalized = normalizeVideoUrl(value);
+    if (!normalized) return false;
+    try {
+      const pathname = new URL(normalized).pathname.toLowerCase();
+      return /\.(mp4|webm|ogg|m3u8)$/.test(pathname);
+    } catch {
+      return false;
+    }
+  };
+
+  const getVimeoEmbedUrl = (value?: string | null) => {
+    const normalized = normalizeVideoUrl(value);
+    if (!normalized) return '';
+
+    try {
+      const parsed = new URL(normalized);
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      const segments = parsed.pathname.split('/').filter(Boolean);
+
+      if (host !== 'vimeo.com' && host !== 'player.vimeo.com') return '';
+
+      if (host === 'player.vimeo.com' && segments[0] === 'video' && /^\d+$/.test(segments[1] || '')) {
+        return `https://player.vimeo.com/video/${segments[1]}${parsed.search || ''}`;
+      }
+
+      const idIndex = segments.findIndex((segment) => /^\d+$/.test(segment));
+      if (idIndex < 0) return '';
+
+      const videoId = segments[idIndex];
+      const maybeHash = segments[idIndex + 1];
+      const searchParams = new URLSearchParams(parsed.search);
+
+      // Vimeo unlisted links can contain a hash in the path, e.g. /123456789/abcdef12
+      if (maybeHash && /^[a-zA-Z0-9]+$/.test(maybeHash) && !searchParams.get('h')) {
+        searchParams.set('h', maybeHash);
+      }
+
+      const query = searchParams.toString();
+      return `https://player.vimeo.com/video/${videoId}${query ? `?${query}` : ''}`;
+    } catch {
+      return '';
+    }
+  };
+
+  const renderProductDemoVideo = (product: Product, compact = false) => {
+    const demoVideoUrl = normalizeVideoUrl(product.demo_video_url);
+    if (!demoVideoUrl) return null;
+    const vimeoEmbedUrl = getVimeoEmbedUrl(demoVideoUrl);
+
+    return (
+      <div className={compact ? 'mb-2' : 'mb-3'}>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Video demo</span>
+          <a
+            href={demoVideoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+          >
+            Ouvrir
+          </a>
+        </div>
+        {vimeoEmbedUrl ? (
+          <iframe
+            className="aspect-video w-full rounded-lg border border-gray-200 bg-black"
+            src={vimeoEmbedUrl}
+            title={`Demo ${product.name}`}
+            allow="autoplay; fullscreen; picture-in-picture"
+            allowFullScreen
+            loading="lazy"
+          />
+        ) : isPlayableVideoUrl(demoVideoUrl) ? (
+          <video
+            className="w-full rounded-lg border border-gray-200 bg-black"
+            controls
+            preload="none"
+            playsInline
+            src={demoVideoUrl}
+          />
+        ) : (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            Ce lien video n'est pas lisible directement ici. Utilisez Ouvrir.
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleAddProduct = async () => {
@@ -1175,7 +1320,6 @@ const VendorDashboard = () => {
         const randomNumber = Math.floor(1000 + Math.random() * 9000);
         productCode = `PD${randomNumber}`;
       }
-
       // DEV shortcut: persist locally for dev vendor sessions
       const isDevVendor = Boolean(smsUser && String(vendorId).startsWith('dev-'));
       if (isDevVendor) {
@@ -1199,7 +1343,7 @@ const VendorDashboard = () => {
 
         setProducts(prev => [devProd, ...(prev || [])]);
         toast({ title: 'Succès', description: 'Produit ajouté (dev)' });
-        setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
         setAddModalOpen(false);
         return;
       }
@@ -1291,7 +1435,7 @@ const VendorDashboard = () => {
         if (!resp.ok || !json || !json.success) throw new Error((json && json.error) ? String(json.error) : 'Erreur backend');
 
         toast({ title: 'Succès', description: 'Produit ajouté' });
-        setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
         setAddModalOpen(false);
         fetchProducts();
         return;
@@ -1302,7 +1446,7 @@ const VendorDashboard = () => {
       if (error) throw error;
 
       toast({ title: 'Succès', description: 'Produit ajouté' });
-      setNewProduct({ name: '', price: '', description: '', warranty: '', code: '', category: '' });
+      setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
       setAddModalOpen(false);
       fetchProducts();
     } catch (err) {
@@ -1589,7 +1733,7 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  const handleCopyProductLink = async (product: Product) => {
+  const handleShareProduct = async (product: Product) => {
     const webLink = getProductPublicUrl(product);
     if (!webLink) {
       toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
@@ -1597,11 +1741,137 @@ const VendorDashboard = () => {
     }
 
     try {
-      if (!navigator.clipboard) throw new Error('Clipboard indisponible');
-      await navigator.clipboard.writeText(webLink);
-      toast({ title: 'Lien copié', description: 'Lien produit copié.' });
+      const payload = {
+        title: product.name,
+        url: webLink,
+        dialogTitle: 'Partager le produit'
+      };
+
+      // Sur Android/iOS Capacitor, utiliser la feuille de partage native.
+      if (Capacitor.isNativePlatform()) {
+        await Share.share(payload);
+        return;
+      }
+
+      // Utiliser l'API Web Share si disponible
+      if (navigator.share) {
+        await navigator.share(payload);
+      } else {
+        // Fallback: copier le lien
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(webLink);
+          toast({ title: 'Lien copié', description: 'Lien produit copié en presse-papiers.' });
+        } else {
+          throw new Error('Share API et clipboard non disponibles');
+        }
+      }
+    } catch (error: any) {
+      // Ignorer l'erreur si l'utilisateur annule le partage
+      const errorMessage = String(error?.message || '');
+      const isCancelled = error?.name === 'AbortError' || /cancel/i.test(errorMessage);
+      if (!isCancelled) {
+        console.error('[VendorDashboard] handleShareProduct error', error);
+        toast({ title: 'Erreur', description: 'Impossible de partager le produit', variant: 'destructive' });
+      }
+    }
+  };
+
+  const handleWhatsAppProduct = (product: Product) => {
+    const webLink = getProductPublicUrl(product);
+    if (!webLink) {
+      toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const text = `${product.name}\n${product.description || ''}\n${webLink}`.trim();
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) {
+        window.location.href = whatsappUrl;
+      }
     } catch (error) {
-      toast({ title: 'Erreur', description: 'Impossible de copier le lien', variant: 'destructive' });
+      console.error('[VendorDashboard] handleWhatsAppProduct error', error);
+      toast({ title: 'Erreur', description: 'Impossible d\'ouvrir WhatsApp', variant: 'destructive' });
+    }
+  };
+
+  const handleSellDemoClick = () => {
+    setSelectedSellDemoVideoId('share-product');
+    setSellDemoModalOpen(true);
+  };
+
+  const sellDemoVideos: SellDemoVideo[] = SELL_DEMO_VIDEOS;
+
+  const selectedSellDemoVideo =
+    sellDemoVideos.find((video) => video.id === selectedSellDemoVideoId) || sellDemoVideos[0];
+
+  const sellDemoStorageKey = React.useMemo(() => {
+    return `vendor_sell_demo_watched_${effectiveUser?.id || 'guest'}`;
+  }, [effectiveUser?.id]);
+
+  const sellDemoVideoIds = React.useMemo(() => sellDemoVideos.map((video) => video.id), []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const rawValue = localStorage.getItem(sellDemoStorageKey);
+      if (!rawValue) {
+        setWatchedSellDemoVideoIds([]);
+        return;
+      }
+      const parsed = JSON.parse(rawValue);
+      if (!Array.isArray(parsed)) {
+        setWatchedSellDemoVideoIds([]);
+        return;
+      }
+
+      const sanitized = parsed.filter((id): id is string => (
+        typeof id === 'string' && sellDemoVideoIds.includes(id)
+      ));
+      const next = Array.from(new Set(sanitized));
+      setWatchedSellDemoVideoIds((prev) => {
+        if (prev.length === next.length && prev.every((value, index) => value === next[index])) {
+          return prev;
+        }
+        return next;
+      });
+    } catch {
+      setWatchedSellDemoVideoIds([]);
+    }
+  }, [sellDemoStorageKey, sellDemoVideoIds]);
+
+  const markSellDemoVideoAsWatched = React.useCallback((videoId: string) => {
+    setWatchedSellDemoVideoIds((previous) => {
+      if (previous.includes(videoId)) return previous;
+      const next = [...previous, videoId];
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(sellDemoStorageKey, JSON.stringify(next));
+        } catch {
+          // ignore storage write failure
+        }
+      }
+      return next;
+    });
+  }, [sellDemoStorageKey]);
+
+  const openSellDemoVideo = React.useCallback((video: SellDemoVideo) => {
+    setSelectedVideoToPlay(video);
+    setSellDemoVideoPlayModalOpen(true);
+    markSellDemoVideoAsWatched(video.id);
+  }, [markSellDemoVideoAsWatched]);
+
+  const allSellDemoVideosWatched = sellDemoVideos.length > 0 && watchedSellDemoVideoIds.length === sellDemoVideos.length;
+
+  const getSellDemoPlayerSrc = (src: string, shouldAutoplay = false) => {
+    try {
+      const parsed = new URL(src);
+      if (shouldAutoplay) parsed.searchParams.set('autoplay', '1');
+      parsed.searchParams.set('autopause', '0');
+      return parsed.toString();
+    } catch {
+      return src;
     }
   };
 
@@ -1667,8 +1937,7 @@ const VendorDashboard = () => {
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
   // wallet_type supprimé
-  // Fonction pour déconnexion (déclarée avant tout return pour respecter les Hooks rules)
-  const [signingOut, setSigningOut] = React.useState(false);
+  // Fonction pour déconnexion
   const handleSignOut = async () => {
     try {
       setSigningOut(true);
@@ -1689,7 +1958,7 @@ const VendorDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
       {/* Header Moderne - Style similaire à BuyerDashboard */}
-      <header className="bg-primary rounded-b-2xl shadow-lg mb-6 sticky top-0 z-40 backdrop-blur-sm">
+      <header className="bg-primary rounded-b-2xl shadow-lg mb-2 md:mb-6 sticky top-0 z-40 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
           <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
             Validèl
@@ -1704,7 +1973,7 @@ const VendorDashboard = () => {
         </div>
       )}
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1 md:py-8">
       {/* ...section stats supprimée... */}
       {/* Navigation - Desktop Tabs */}
       <div className="hidden md:block">
@@ -1725,6 +1994,22 @@ const VendorDashboard = () => {
           </TabsList>
         {/* Products Tab */}
         <TabsContent value="products" className="space-y-6">
+          <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-4 shadow-sm">
+            <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-orange-200/40 blur-2xl" />
+            <div className="pointer-events-none absolute -bottom-8 left-10 h-20 w-20 rounded-full bg-amber-200/40 blur-2xl" />
+            <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+              </div>
+              <Button
+                type="button"
+                onClick={handleSellDemoClick}
+                className="bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
+              >
+                Regarder demo
+              </Button>
+            </div>
+          </div>
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
             {products.length > 0 && (
@@ -1781,6 +2066,7 @@ const VendorDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {renderProductDemoVideo(product)}
                   <p className="text-gray-600 text-sm mb-3 line-clamp-2">
                     {product.description}
                   </p>
@@ -1803,30 +2089,36 @@ const VendorDashboard = () => {
                     {/* Bouton Copier supprimé */}
                   </div>
 
-                  <div className="mb-3 w-full rounded-md border border-dashed border-gray-200 bg-gray-50 p-2">
-                    <div className="flex w-full items-start gap-2">
-                      <p className="min-w-0 flex-1 text-[11px] text-gray-600 break-all leading-snug" title={getProductPublicUrl(product)}>
-                        <span className="font-semibold text-gray-700">Lien:</span>{' '}
-                        {getProductPublicUrl(product)}
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 shrink-0 px-2 text-xs"
-                        onClick={() => handleCopyProductLink(product)}
-                      >
-                        <Copy className="h-3.5 w-3.5 mr-1" />
-                        Copier lien
-                      </Button>
-                    </div>
-                  </div>
-                
                   <div className="space-y-2 mb-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Prix:</span>
-                      <span className="font-semibold text-black">
-                        {product.price?.toLocaleString()} CFA
-                      </span>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500">Prix:</span>
+                        <span className="font-semibold text-black">
+                          {product.price?.toLocaleString()} CFA
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2 text-xs border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]"
+                          onClick={() => handleWhatsAppProduct(product)}
+                        >
+                          <MessageCircle className="h-3.5 w-3.5 mr-1" />
+                          WhatsApp
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2 text-xs border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]"
+                          onClick={() => handleShareProduct(product)}
+                        >
+                          <Share2 className="h-3.5 w-3.5 mr-1" />
+                          Partager
+                        </Button>
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1907,6 +2199,8 @@ const VendorDashboard = () => {
             </div>
           </div>
           <Card>
+
+
             <CardHeader>
               <CardTitle>Commandes récentes</CardTitle>
             </CardHeader>
@@ -2270,10 +2564,23 @@ const VendorDashboard = () => {
       </div>
       {/* Navigation Mobile - Bottom Navigation Bar */}
       <div className="md:hidden">
-        <Tabs defaultValue="products" className="pb-20 px-4">
+        <Tabs defaultValue="products" className="pb-20 px-4 -mt-1">
           <div className="space-y-6">
             <TabsContent value="products" className="mt-0">
               <div className="space-y-6">
+                <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-3 shadow-sm">
+                  <div className="pointer-events-none absolute -right-10 -top-10 h-20 w-20 rounded-full bg-orange-200/40 blur-2xl" />
+                  <div className="relative">
+                    <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+                    <Button
+                      type="button"
+                      onClick={handleSellDemoClick}
+                      className="mt-3 h-8 px-3 text-xs bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
+                    >
+                      Regarder la démo
+                    </Button>
+                  </div>
+                </div>
                 <div className="flex justify-between items-center gap-2">
                   <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
                   {products.length > 0 && (
@@ -2300,6 +2607,7 @@ const VendorDashboard = () => {
                       }}
                     >
                       <CardContent className="p-4">
+                        {renderProductDemoVideo(product, true)}
                         <div className="flex justify-between items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <h3
@@ -2369,24 +2677,16 @@ const VendorDashboard = () => {
                             )}
                           </Button>
                         </div>
-                        <div className="mb-2 w-full rounded-md border border-dashed border-gray-200 bg-gray-50 p-2">
-                          <div className="flex w-full items-start gap-2">
-                            <p className="min-w-0 flex-1 text-[11px] text-gray-600 break-all leading-snug" title={getProductPublicUrl(product)}>
-                              {/* <span className="font-semibold text-gray-700">Lien:</span>{' '} */}
-                              {getProductPublicUrl(product)}
-                            </p>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 shrink-0 px-2 text-[11px]"
-                              onClick={() => handleCopyProductLink(product)}
-                            >
-                              <Copy className="h-3.5 w-3.5 mr-1" />
-                              Copier lien
-                            </Button>
-                          </div>
+                        <div className="mb-1 flex justify-end gap-1">
+                          <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" className="h-8 px-2 text-[11px] border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]">
+                            <MessageCircle className="h-3.5 w-3.5 mr-1" />
+                            WhatsApp
+                          </Button>
+                          <Button onClick={() => handleShareProduct(product)} variant="outline" className="h-8 px-2 text-[11px] border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]">
+                            <Share2 className="h-3.5 w-3.5 mr-1" />
+                            Partager
+                          </Button>
                         </div>
-                        {/* Boutons actions mobile */}
                         <div className="mt-4 flex gap-2">
                           <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-sm">
                             Modifier
@@ -2765,9 +3065,122 @@ const VendorDashboard = () => {
         </Tabs>
       </div>
       </main>
+      <Dialog open={sellDemoModalOpen} onOpenChange={setSellDemoModalOpen}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Videos de demonstration - Mes Produits</DialogTitle>
+            <p className="text-xs text-gray-600">
+              {watchedSellDemoVideoIds.length}/{sellDemoVideos.length} video(s) vue(s)
+              {allSellDemoVideosWatched ? ' - Toutes les videos ont ete vues.' : ''}
+            </p>
+          </DialogHeader>
+
+          <div className="grid gap-4 grid-cols-1">
+            {sellDemoVideos.map((video, index) => {
+              const isWatched = watchedSellDemoVideoIds.includes(video.id);
+              return (
+                <div
+                  key={video.id}
+                  className="w-full text-left transition-all"
+                >
+                  <button
+                    type="button"
+                    onClick={() => openSellDemoVideo(video)}
+                    className="w-full rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition-shadow hover:shadow-lg sm:p-4"
+                  >
+                    <div className="mb-2 flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700">
+                          Etape {index + 1}
+                        </p>
+                        <h3 className="mt-1 text-sm font-semibold text-gray-900 sm:text-base">{video.title}</h3>
+                      </div>
+                      {isWatched && (
+                        <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                          Vue
+                        </span>
+                      )}
+                    </div>
+                    <p className="mb-3 text-xs text-gray-600 sm:text-sm">{video.description}</p>
+
+                    <div className="inline-flex items-center gap-2 rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                      </svg>
+                      Lire
+                    </div>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSellDemoModalOpen(false)}>
+              Fermer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Video Play Modal */}
+      <Dialog open={sellDemoVideoPlayModalOpen} onOpenChange={setSellDemoVideoPlayModalOpen}>
+        <DialogContent
+          aria-describedby={undefined}
+          hideCloseButton
+          className="w-screen h-screen max-w-none max-h-none rounded-none border-0 p-0 overflow-hidden bg-black"
+          onEscapeKeyDown={() => {
+            setSellDemoVideoPlayModalOpen(false);
+            setSelectedVideoToPlay(null);
+          }}
+          onInteractOutside={(e) => e.preventDefault()}
+        >
+          <div className="relative h-full w-full">
+            <button
+              type="button"
+              onClick={() => {
+                setSellDemoVideoPlayModalOpen(false);
+                setSelectedVideoToPlay(null);
+              }}
+              aria-label="Retour"
+              className="fixed left-4 top-4 z-[120] inline-flex items-center gap-2 rounded-full bg-black/75 px-3 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur-sm hover:bg-black/90"
+            >
+              <span aria-hidden="true">&lt;</span>
+              Retour
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSellDemoVideoPlayModalOpen(false);
+                setSelectedVideoToPlay(null);
+              }}
+              aria-label="Fermer la video"
+              className="fixed right-4 top-4 z-[120] grid h-11 w-11 place-items-center rounded-full bg-black/75 text-lg font-bold text-white shadow-lg backdrop-blur-sm hover:bg-black/90"
+            >
+              X
+            </button>
+
+            {selectedVideoToPlay && (
+              <iframe
+                key={selectedVideoToPlay?.id}
+                src={getSellDemoPlayerSrc(selectedVideoToPlay?.src || '', true)}
+                title={selectedVideoToPlay?.playerTitle || 'Video de demonstration'}
+                className="h-full w-full"
+                frameBorder="0"
+                allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
+                referrerPolicy="strict-origin-when-cross-origin"
+                allowFullScreen
+                loading="lazy"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Invoice Viewer Modal (in-app) */}
       <Dialog open={invoiceViewerOpen} onOpenChange={setInvoiceViewerOpen}>
-        <DialogContent hideCloseButton className={`max-w-4xl ${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'max-w-full w-full h-screen p-0' : ''}`}>
+        <DialogContent aria-describedby={undefined} hideCloseButton className={`max-w-4xl ${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'max-w-full w-full h-screen p-0' : ''}`}>
           {/* Mobile layout: make modal fullscreen with stacked header + iframe */}
           <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'h-full flex flex-col' : ''}`}>
             <div className={`${typeof window !== 'undefined' && window.innerWidth <= 640 ? 'flex items-center justify-center p-4 border-b' : ''}`}>
@@ -2810,7 +3223,7 @@ const VendorDashboard = () => {
 
       {/* Vendor payout batches modal (list & open) */}
       <Dialog open={batchesModalOpen} onOpenChange={setBatchesModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Factures de paiement</DialogTitle>
           </DialogHeader>
@@ -2854,7 +3267,7 @@ const VendorDashboard = () => {
 
       {/* Add Product Modal */}
       <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Ajouter un nouveau produit</DialogTitle>
           </DialogHeader>
@@ -2934,7 +3347,7 @@ const VendorDashboard = () => {
       </Dialog>
       {/* Edit Product Modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Modifier le produit</DialogTitle>
           </DialogHeader>
@@ -2992,7 +3405,7 @@ const VendorDashboard = () => {
       </Dialog>
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Confirmer la suppression</DialogTitle>
           </DialogHeader>
@@ -3015,7 +3428,7 @@ const VendorDashboard = () => {
       </Dialog>
       {/* Call Confirmation Dialog */}
       <Dialog open={callModalOpen} onOpenChange={setCallModalOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Appeler ce client ?</DialogTitle>
           </DialogHeader>
@@ -3035,7 +3448,7 @@ const VendorDashboard = () => {
 
       {/* QR Code Commande Dialog */}
       <Dialog open={vendorQRModalOpen} onOpenChange={setVendorQRModalOpen}>
-        <DialogContent className="max-w-md w-[95vw] sm:w-full">
+        <DialogContent aria-describedby={undefined} className="max-w-md w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <QrCode className="h-5 w-5 text-black" />

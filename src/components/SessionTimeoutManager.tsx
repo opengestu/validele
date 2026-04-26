@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
+import { apiUrl, resolveAuthToken } from '@/lib/api';
 
 // Durée minimum en arrière-plan avant de demander le PIN (en ms).
 // L'utilisateur ne verra PinReauth que s'il quitte l'app pendant >= ce délai.
@@ -168,23 +169,30 @@ const SessionTimeoutManager: React.FC = () => {
     };
   }, [redirectToPinReauth, isExcludedPage]);
 
-  // ---------- Intercepteur global 401 ----------
+  // ---------- Intercepteur global 401 (SEULEMENT pour vraies expirations de session Supabase) ----------
   useEffect(() => {
     const originalFetch = window.fetch;
 
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
 
+      // NE intercepter 401 que pour les endpoints sensibles (vérification de session, etc.)
+      // PAS pour les requêtes métier normales (update-product, orders, etc.)
       if (response.status === 401 && isAuthenticatedRef.current) {
-        const currentPath = window.location.pathname;
-        const currentFullPath = getCurrentPathWithQuery();
-        if (!isExcludedPage(currentPath)) {
-          console.warn('[SessionTimeout] 401 détecté, redirection vers PIN re-auth');
-          localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
-          localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentFullPath);
-          setTimeout(() => {
-            navigate('/pin-reauth', { replace: true });
-          }, 100);
+        const url = String(args[0] || '').toLowerCase();
+        const isSessionCheck = url.includes('session') || url.includes('user/me') || url.includes('verify') || url.includes('profile');
+        
+        if (isSessionCheck) {
+          const currentPath = window.location.pathname;
+          const currentFullPath = getCurrentPathWithQuery();
+          if (!isExcludedPage(currentPath)) {
+            console.warn('[SessionTimeout] 401 détecté sur endpoint sensible, redirection vers PIN re-auth');
+            localStorage.setItem(REAUTH_REQUIRED_KEY, '1');
+            localStorage.setItem(REAUTH_RETURN_PATH_KEY, currentFullPath);
+            setTimeout(() => {
+              navigate('/pin-reauth', { replace: true });
+            }, 100);
+          }
         }
       }
 
@@ -195,6 +203,42 @@ const SessionTimeoutManager: React.FC = () => {
       window.fetch = originalFetch;
     };
   }, [navigate, isExcludedPage, getCurrentPathWithQuery]);
+
+  // ---------- Heartbeat activité utilisateur ----------
+  useEffect(() => {
+    let cancelled = false;
+
+    const sendHeartbeat = async () => {
+      if (!isAuthenticatedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+      try {
+        const token = await resolveAuthToken();
+        if (!token) return;
+
+        await fetch(apiUrl('/api/me/heartbeat'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } catch {
+        // Silent best-effort heartbeat
+      }
+    };
+
+    const heartbeatTimer = window.setInterval(() => {
+      if (!cancelled) {
+        void sendHeartbeat();
+      }
+    }, 30 * 1000);
+
+    void sendHeartbeat();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(heartbeatTimer);
+    };
+  }, []);
 
   return null;
 };
