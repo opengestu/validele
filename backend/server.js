@@ -6256,47 +6256,28 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       });
     }
 
-    // Envoi d'un SMS à l'acheteur avec le numéro du livreur et le nom du produit
-    console.log('[MARK-IN-DELIVERY] Preparing SMS notification...');
+    // Notification livraison en cours: push immédiat, SMS différé seulement si inactif récemment.
+    console.log('[MARK-IN-DELIVERY] Preparing delivery-start notification flow...');
     try {
       const buyerPhone = order.buyer?.phone;
-      // Si le numéro du livreur n'est pas dans la commande, on va le chercher
       let deliveryPhone = order.delivery_person?.phone;
       if (!deliveryPhone && deliveryPersonId) {
         deliveryPhone = await getDeliveryPersonPhone(deliveryPersonId);
       }
-      console.log('[MARK-IN-DELIVERY] SMS data:', { buyerPhone, deliveryPhone, productName: order.product?.name });
-      
-      const productName = order.product?.name || 'votre commande';
-      if (buyerPhone && deliveryPhone) {
-        const smsText = `Votre commande de "${productName}" sur VALIDEL est en cours de livraison. Numero livreur : ${deliveryPhone}`;
-        console.log('[MARK-IN-DELIVERY] Sending SMS to buyer:', buyerPhone, 'text:', smsText);
-        const smsResult = await notificationService.sendSMS(buyerPhone, smsText);
-        console.log('[MARK-IN-DELIVERY] SMS result:', smsResult);
-        
-        // Notification push à l'acheteur avec le template
-        if (order.buyer_id) {
-          const { data: buyerTokens } = await dbClient
-            .from('push_tokens')
-            .select('token')
-            .eq('user_id', order.buyer_id)
-            .eq('is_active', true);
 
-          if (buyerTokens && buyerTokens.length > 0) {
-            const notif = getNotificationTemplate('ORDER_IN_DELIVERY', {
-              orderCode: order.order_code,
-              deliveryPhone: deliveryPhone,
-              orderId: order.id
-            });
+      console.log('[MARK-IN-DELIVERY] Notification data:', { buyerPhone, deliveryPhone, productName: order.product?.name, buyerId: order.buyer_id });
 
-            for (const { token } of buyerTokens) {
-              await sendPushNotification(token, notif.title, notif.body, notif.data);
-            }
-            console.log('[MARK-IN-DELIVERY] Notification push envoyée à l\'acheteur');
-          }
-        }
+      if (order.buyer_id) {
+        const notifyResult = await notificationService.notifyBuyerDeliveryStarted(order.buyer_id, {
+          orderId: order.id,
+          orderCode: order.order_code,
+          productName: order.product?.name || 'votre commande',
+          deliveryPersonPhone: deliveryPhone || null,
+          buyerPhone: buyerPhone || null
+        });
+        console.log('[MARK-IN-DELIVERY] Delivery-start notify result:', notifyResult);
       } else {
-        console.warn('[MARK-IN-DELIVERY] Missing phone for SMS - buyerPhone:', buyerPhone, 'deliveryPhone:', deliveryPhone);
+        console.warn('[MARK-IN-DELIVERY] Missing buyer_id, notification flow skipped');
       }
     } catch (smsErr) {
       console.error('[MARK-IN-DELIVERY] SMS/Push error:', smsErr);
