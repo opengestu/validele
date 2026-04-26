@@ -110,12 +110,12 @@ const legalRoutes = new Set([
 ]);
 
 const FirstLaunchLegalGate: React.FC = () => {
+  const location = useLocation();
+  const accepted = React.useMemo(() => hasAcceptedLegal(), [location.pathname]);
+
   if (!LEGAL_FEATURE_ENABLED) {
     return null;
   }
-
-  const location = useLocation();
-  const accepted = React.useMemo(() => hasAcceptedLegal(), [location.pathname]);
 
   if (accepted) {
     return null;

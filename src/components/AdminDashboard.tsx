@@ -243,6 +243,12 @@ const AdminDashboard: React.FC = () => {
   const [invoiceViewerLoading, setInvoiceViewerLoading] = useState(false);
   const [invoiceViewerFilename, setInvoiceViewerFilename] = useState<string | null>(null);
 
+  // Broadcast notification to all vendors
+  const [broadcastNotifyOpen, setBroadcastNotifyOpen] = useState(false);
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastBody, setBroadcastBody] = useState('');
+  const [broadcastSending, setBroadcastSending] = useState(false);
+
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -305,7 +311,7 @@ const AdminDashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
-  // Background polling (silent): orders every 1s, transactions every 5s.
+  // Background polling (silent): reduced cadence to avoid server/log saturation.
   useEffect(() => {
     if (!isAuthenticated) return;
     let ordersInterval: any = null;
@@ -316,6 +322,7 @@ const AdminDashboard: React.FC = () => {
     fetchTransactionsOnly({ silent: true });
 
     ordersInterval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (isRefreshingRef.current) return;
       isRefreshingRef.current = true;
       try {
@@ -325,15 +332,16 @@ const AdminDashboard: React.FC = () => {
       } finally {
         isRefreshingRef.current = false;
       }
-    }, 1000);
+    }, 10000);
 
     txInterval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       try {
         await fetchTransactionsOnly({ silent: true });
       } catch (e) {
         console.warn('[AdminDashboard] background transactions refresh failed', e);
       }
-    }, 5000);
+    }, 15000);
 
     return () => {
       try { if (ordersInterval) clearInterval(ordersInterval); } catch (e) {}
@@ -1065,6 +1073,33 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const sendBroadcastNotification = async () => {
+    if (!broadcastTitle.trim() || !broadcastBody.trim()) {
+      return toast({ title: 'Erreur', description: 'Titre et message requis', variant: 'destructive' });
+    }
+    setBroadcastSending(true);
+    try {
+      const res = await fetch(apiUrl('/api/admin/notify-all-vendors'), {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ title: broadcastTitle, body: broadcastBody })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Erreur envoi notification');
+      toast({ 
+        title: 'Succès', 
+        description: `Notification envoyée à ${json.sent} vendeur(s)` 
+      });
+      setBroadcastNotifyOpen(false);
+      setBroadcastTitle('');
+      setBroadcastBody('');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err || 'Erreur envoi');
+      toast({ title: 'Erreur', description: message, variant: 'destructive' });
+    } finally {
+      setBroadcastSending(false);
+    }
+  };
+
   // Open transaction details modal
   const openTxDetails = (tx: TransactionFull) => {
     setSelectedTransaction(tx);
@@ -1157,14 +1192,24 @@ const AdminDashboard: React.FC = () => {
     <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 md:py-6">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold sm:text-2xl">Dashboard Admin</h1>
-        <Button 
-          variant="destructive" 
-          size="sm"
-          className="w-full sm:w-auto"
-          onClick={handleLogout}
-        >
-          Se déconnecter
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button 
+            variant="default" 
+            size="sm"
+            className="w-full sm:w-auto bg-orange-600 hover:bg-orange-700"
+            onClick={() => setBroadcastNotifyOpen(true)}
+          >
+            📢 Notifier les vendeurs
+          </Button>
+          <Button 
+            variant="destructive" 
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={handleLogout}
+          >
+            Se déconnecter
+          </Button>
+        </div>
       </div>
 
       {!isOnline && (
@@ -1993,6 +2038,60 @@ const AdminDashboard: React.FC = () => {
         setProcessing(false);
       }
     }} />}
+    {/* Broadcast Notification Dialog */}
+    {broadcastNotifyOpen && (
+      <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center backdrop-blur-sm p-3">
+        <div className="w-full max-w-md rounded-lg bg-white shadow-2xl">
+          <div className="border-b p-4">
+            <h3 className="text-lg font-semibold">📢 Envoyer une notification à tous les vendeurs</h3>
+          </div>
+          <div className="space-y-4 p-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Titre</label>
+              <input
+                type="text"
+                value={broadcastTitle}
+                onChange={(e) => setBroadcastTitle(e.target.value)}
+                placeholder="Ex: Mise à jour importante"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
+              <textarea
+                value={broadcastBody}
+                onChange={(e) => setBroadcastBody(e.target.value)}
+                placeholder="Entrez votre message ici..."
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-200 resize-none"
+                rows={4}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 border-t p-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setBroadcastNotifyOpen(false);
+                setBroadcastTitle('');
+                setBroadcastBody('');
+              }}
+              disabled={broadcastSending}
+            >
+              Annuler
+            </Button>
+            <Button
+              size="sm"
+              className="flex-1 bg-orange-600 hover:bg-orange-700"
+              onClick={sendBroadcastNotification}
+              disabled={broadcastSending}
+            >
+              {broadcastSending ? 'Envoi...' : 'Envoyer'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
     
     {/* Modal Invoice Viewer */}
     {invoiceViewerOpen && (

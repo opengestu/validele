@@ -66,11 +66,6 @@ export default function HomePage() {
     }
   }, [authLoading, navigate, onboardingSeen, user, userProfile?.role]);
 
-  // Le splash HTML global couvre le chargement initial, on évite un 2e loader React.
-  if (user || onboardingSeen) {
-    return null;
-  }
-
   React.useEffect(() => {
     if (!api) return;
 
@@ -84,6 +79,11 @@ export default function HomePage() {
       api.off("reInit", update);
     };
   }, [api]);
+
+  // Le splash HTML global couvre le chargement initial, on évite un 2e loader React.
+  if (user || onboardingSeen) {
+    return null;
+  }
 
   const handleContinue = () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");

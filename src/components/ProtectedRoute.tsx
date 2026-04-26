@@ -105,7 +105,9 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // pour que l'utilisateur voie le contenu de l'app pendant le chargement
   if (loading) {
     if (requiredRole === 'admin') {
-      return null;
+      // Let AdminDashboard handle its own session check/login UI.
+      // Returning null here causes a blank page in local/dev when auth hydration is slow.
+      return <>{children}</>;
     }
     return <>{children}</>;
   }
@@ -172,16 +174,10 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     return <Navigate to="/auth" replace />;
   }
 
-  // Correction : si requiredRole est 'admin', on autorise l'accès même si userProfile n'est pas encore chargé,
-  // mais on bloque explicitement l'accès aux autres rôles si userProfile est chargé et différent de 'admin'.
+  // Pour /admin, ne jamais rediriger vers une autre zone frontend.
+  // L'écran admin gère lui-même la vérification backend et affiche le formulaire de connexion admin si nécessaire.
   if (requiredRole === 'admin') {
-    if (userProfile && (userProfile.role as string) !== 'admin') {
-      // Si le profil est chargé et n'est pas admin, on redirige
-      const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 
-                          userProfile.role === 'delivery' ? '/delivery' : '/buyer';
-      return <Navigate to={redirectPath} replace />;
-    }
-    // Sinon, on laisse passer (même si userProfile n'est pas encore chargé)
+    return <>{children}</>;
   } else if (requiredRole && userProfile?.role && userProfile.role !== requiredRole) {
     // Pour les autres rôles, logique standard
     const redirectPath = userProfile.role === 'vendor' ? '/vendor' : 

@@ -6,6 +6,7 @@ export interface Product {
   price: number;
   category?: string;
   image_url?: string;
+  demo_video_url?: string;
   stock_quantity?: number;
   is_available: boolean;
   created_at: string;
