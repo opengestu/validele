@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info } from 'lucide-react';
+import { QrCode, CheckCircle, AlertCircle, Camera, Package, Info, X, ZapOff, RotateCw } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 const valideLogo = '/icons/validel-logo.svg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -62,7 +62,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
   // computed size used for the visual overlay. Start with a reasonable
   // default but compute a stable size based on the container (92% of
   // the smaller dimension so the visual frame fills the rounded square).
-  const [computedQrbox, setComputedQrbox] = useState<number>(isMobile ? 220 : 420);
+  const [computedQrbox, setComputedQrbox] = useState<number>(isMobile ? 200 : 240);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -70,9 +70,8 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
     const update = () => {
       const w = el.clientWidth || (isMobileRef.current ? 360 : 600);
       const h = el.clientHeight || w;
-      // Use 76% of the smaller dimension so the scan-frame (CSS uses 76%)
-      const raw = Math.floor(Math.min(w, h) * 0.76);
-      const size = Math.max(180, Math.min(raw, 380));
+      const raw = Math.floor(Math.min(w, h) * 0.42);
+      const size = Math.max(160, Math.min(raw, 260));
       // Only update when change is meaningful to avoid tiny oscillations
       setComputedQrbox(prev => (Math.abs(prev - size) > 8 ? size : prev));
     };
@@ -165,7 +164,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
         const el = containerRef.current;
         const w = el ? (el.clientWidth || (isMobileRef.current ? 360 : 600)) : (isMobileRef.current ? 360 : 600);
         const h = el ? (el.clientHeight || w) : w;
-        const startQrbox = Math.max(180, Math.min(Math.floor(Math.min(w, h) * 0.76), 380));
+        const startQrbox = Math.max(160, Math.min(Math.floor(Math.min(w, h) * 0.42), 260));
         setComputedQrbox(prev => (Math.abs(prev - startQrbox) > 8 ? startQrbox : prev));
 
         try {
@@ -229,83 +228,7 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
             const userMessage = hint || 'Impossible d\'initialiser la caméra. Vérifiez les permissions et servez la page en HTTPS.';
             onError(new Error(userMessage + ' — ' + (errStart instanceof Error ? errStart.message : String(errStart))));
           }
-          // Mobile devices (particularly Android) may report layout changes
-          // after the camera stream starts. If the container size changes
-          // significantly right after start, attempt a safe one-time restart
-          // to realign the scanner's qrbox to the visual frame.
-          if (isMobileRef.current) {
-            (async () => {
-              try {
-                const restartAttempted = { val: false } as { val: boolean };
-                await new Promise(r => setTimeout(r, 500));
-                if (!isMounted || !active || !html5Qr.current) return;
-                const el2 = containerRef.current;
-                if (!el2) return;
-                const w2 = el2.clientWidth || (isMobileRef.current ? 360 : 600);
-                const h2 = el2.clientHeight || w2;
-                const recalculated = Math.max(180, Math.min(Math.floor(Math.min(w2, h2) * 0.76), 380));
-                if (Math.abs(recalculated - startQrbox) > 8 && !restartAttempted.val) {
-                  restartAttempted.val = true;
-                  try {
-                    const inst2 = html5Qr.current;
-                    if (inst2) {
-                      try { await inst2.stop(); } catch (e) { /* ignore */ }
-                      try { inst2.clear(); } catch (e) { /* ignore */ }
-                    }
-                    if (!isMounted || !active) return;
-                    html5Qr.current = new Html5Qrcode(divId);
-                    const inst3 = html5Qr.current;
-                    if (!inst3) return;
-                    await inst3.start(
-                      cameraId,
-                      { fps: 15, qrbox: recalculated, videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } } },
-                      (decodedText) => {
-                        if (scanPausedRef.current) return;
-                        setScanPaused(true);
-                        try { onScanRef.current && onScanRef.current(decodedText); } catch (e) { console.error(e); }
-                        setTimeout(() => setScanPaused(false), 2000);
-                      },
-                      (err) => console.debug('[QR] scan error:', err)
-                    );
-                  } catch (e) {
-                    // ignore restart failures; continue with existing instance
-                    console.warn('[QR] mobile restart attempt failed', e);
-                  }
-                }
-              } catch (e) {
-                /* ignore */
-              }
-            })();
-          }
         } catch (startErr) {
-          const msg = String(startErr || '');
-          if ((msg.includes('Cannot clear while scan is ongoing') || msg.includes('clear while scan')) && isMounted && active) {
-            try {
-              const inst = html5Qr.current;
-              if (inst) {
-                try { await inst.stop(); } catch (e) { /* ignore */ }
-                try { inst.clear(); } catch (e) { /* ignore */ }
-              }
-              if (!isMounted || !active) { return; }
-              html5Qr.current = new Html5Qrcode(divId);
-              const inst2 = html5Qr.current;
-              if (!inst2) { onError(new Error('Impossible de créer une instance du scanner')); return; }
-              await inst2.start(
-                cameraId,
-                { fps: 15, qrbox: startQrbox, videoConstraints: { facingMode: 'environment', width: { ideal: isMobileRef.current ? 360 : 640 } } },
-                (decodedText) => {
-                  if (scanPausedRef.current) return;
-                  setScanPaused(true);
-                  onScan(decodedText);
-                  setTimeout(() => setScanPaused(false), 2000);
-                },
-                (err) => console.debug('[QR] scan error:', err)
-              );
-              return;
-            } catch (e) {
-              // fall through
-            }
-          }
           const friendly = startErr instanceof Error ? startErr : new Error(String(startErr));
           onError(friendly);
         }
@@ -395,51 +318,43 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
           pointer-events: none;
         }
         #${divId} .scan-frame {
-          width: 76%;
+          width: 72%;
           aspect-ratio: 1;
-          border-radius: 12px;
+          border-radius: 22px;
           position: relative;
           display: block;
           margin: auto;
           background: transparent;
         }
-        /* Blue corners */
+        /* White rounded corners like reference design */
         #${divId} .corner {
           position: absolute;
-          width: 20px; /* smaller corner length */
-          height: 20px; /* smaller corner length */
-          border: 3px solid #ffffff; /* white and visible */
-          background: transparent;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+          width: 34px;
+          height: 34px;
         }
-        #${divId} .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
-        #${divId} .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
-        #${divId} .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
-        #${divId} .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
-        /* Red scanning line */
-        #${divId} .scan-line {
-          position: absolute;
-          left: 8%;
-          width: 84%;
-          height: 2px;
-          background: linear-gradient(90deg, transparent 0%, #f44336 50%, transparent 100%);
-          top: 50%;
-          transform: translateY(-50%);
-          z-index: 2;
-          animation: scan-move 1.6s linear infinite alternate;
-        }
-        @keyframes scan-move {
-          0% { top: 18%; }
-          100% { top: 82%; }
-        }
-        /* Optional: subtle inner border for the scanning area */
-        #${divId} .scan-frame::after {
+        #${divId} .corner::before,
+        #${divId} .corner::after {
           content: '';
           position: absolute;
-          inset: 0;
-          border-radius: 10px;
-          box-shadow: 0 0 0 2px rgba(255,255,255,0.06) inset;
+          background: #ffffff;
+          border-radius: 999px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         }
+        #${divId} .corner.tl { top: 0; left: 0; }
+        #${divId} .corner.tl::before { top: 0; left: 0; width: 4px; height: 28px; }
+        #${divId} .corner.tl::after { top: 0; left: 0; width: 28px; height: 4px; }
+
+        #${divId} .corner.tr { top: 0; right: 0; }
+        #${divId} .corner.tr::before { top: 0; right: 0; width: 4px; height: 28px; }
+        #${divId} .corner.tr::after { top: 0; right: 0; width: 28px; height: 4px; }
+
+        #${divId} .corner.bl { bottom: 0; left: 0; }
+        #${divId} .corner.bl::before { bottom: 0; left: 0; width: 4px; height: 28px; }
+        #${divId} .corner.bl::after { bottom: 0; left: 0; width: 28px; height: 4px; }
+
+        #${divId} .corner.br { bottom: 0; right: 0; }
+        #${divId} .corner.br::before { bottom: 0; right: 0; width: 4px; height: 28px; }
+        #${divId} .corner.br::after { bottom: 0; right: 0; width: 28px; height: 4px; }
       `}</style>
       <div
         id={divId}
@@ -463,14 +378,13 @@ function Html5QrcodeReact({ onScan, onError, resetSignal, active = true }: { onS
           overflow: 'hidden',
         }}
       >
-        {/* Overlay with blue corners and animated red line */}
+        {/* Overlay with white corners */}
         <div className="qr-overlay">
           <div className="scan-frame" style={{ width: computedQrbox, height: computedQrbox, borderRadius: 24 }}>
             <div className="corner tl" />
             <div className="corner tr" />
             <div className="corner bl" />
             <div className="corner br" />
-            <div className="scan-line" />
           </div>
         </div>
       </div>
@@ -489,7 +403,21 @@ function QRScanSection({
   matchInfo,
   scanSessionId,
   active,
-  scanVendorQRMode
+  scanVendorQRMode,
+  onClose
+}: {
+  scannedCode: string;
+  setScannedCode: (value: string) => void;
+  handleScanQR: (code: string, reset?: () => void) => void;
+  validationResult: ValidationResult | null;
+  handleConfirmDelivery: () => void;
+  resetScan?: () => void;
+  isConfirmingDelivery: boolean;
+  matchInfo: { type: 'order_code'|'qr_code'|'partial'; code: string } | null;
+  scanSessionId: number;
+  active: boolean;
+  scanVendorQRMode: boolean;
+  onClose: () => void;
 }) {
   // matchInfo: { type: 'order_code'|'qr_code'|'partial', code: string } | null
   const [cameraError, setCameraError] = useState(false);
@@ -556,7 +484,39 @@ function QRScanSection({
   const scanValid = validationResult && validationResult.status === 'valid';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.95)', zIndex: 1000 }}>
+    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.35)', zIndex: 1000 }}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 16px', pointerEvents: 'none' }}>
+        <button
+          type="button"
+          aria-label="Fermer le scanner"
+          onClick={onClose}
+          style={{ width: 36, height: 36, borderRadius: 999, background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', pointerEvents: 'auto' }}
+        >
+          <X className="h-5 w-5" />
+        </button>
+        <div style={{ display: 'flex', gap: 10, pointerEvents: 'auto' }}>
+          <button
+            type="button"
+            aria-label="Flash"
+            onClick={() => {
+              /* UI only */
+            }}
+            style={{ width: 36, height: 36, borderRadius: 999, background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+          >
+            <ZapOff className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            aria-label="Changer de camera"
+            onClick={() => {
+              /* UI only */
+            }}
+            style={{ width: 36, height: 36, borderRadius: 999, background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+          >
+            <RotateCw className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
       {/* Scanner et champ manuel masqués si scan validé OU si un code a été scanné */}
       {/* Loading spinner overlay */}
       {loadingScanner && !cameraError && !scanValid && !hasScanned && (
@@ -648,6 +608,9 @@ function QRScanSection({
           <span className="font-semibold">QR code invalide : {validationResult.error}</span>
         </div>
       )}
+      <div style={{ position: 'fixed', left: 0, right: 0, top: '64%', textAlign: 'center', color: '#fff', fontSize: 36, lineHeight: 1.15, fontWeight: 500, zIndex: 1200, pointerEvents: 'none' }}>
+        Scanner un QR code
+      </div>
     </div>
   );
 }
@@ -708,238 +671,45 @@ const QRScanner = () => {
   const handleStartDelivery = useCallback(async () => {
     if (!currentOrder) return;
     if (!user?.id) {
-      toast({ title: 'Erreur', description: 'Utilisateur non connecté', variant: 'destructive' });
+      toast({ title: 'Erreur', description: 'Utilisateur non connecté.', variant: 'destructive' });
       return;
     }
-
     try {
-      // console.log('Démarrage de la livraison pour la commande (via backend):', currentOrder.id);
-      if (!currentOrder.id) throw new Error('Order id manquant');
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          status: 'in_delivery',
+          assigned_at: new Date().toISOString(),
+          delivery_person_id: user.id
+        })
+        .eq('id', currentOrder.id as string);
 
-      // Appel backend robuste pour démarrer la livraison (bypass RLS côté client)
-      try {
-        // Include Authorization header (access token) if available to help backend infer user
-        let authHeader: Record<string, string> = {};
-        try {
-          type SupabaseSessionResp = { data?: { session?: { access_token?: string } } | null; session?: { access_token?: string } | null };
-          const sessionResp = await supabase.auth.getSession() as SupabaseSessionResp;
-          const token = sessionResp?.data?.session?.access_token || sessionResp?.session?.access_token || null;
-          if (token) {
-            authHeader = { Authorization: `Bearer ${token}` };
-            // console.log('[QRScanner] Using auth token for backend call');
-          } else {
-            // console.log('[QRScanner] No auth token available for backend call');
-          }
-        } catch (e) {
-          // console.warn('[QRScanner] supabase.getSession() failed:', e);
-        }
+      if (error) throw error;
 
-        const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
-          body: JSON.stringify({ orderId: currentOrder.id, deliveryPersonId: user?.id })
-        });
-        const json = await resp.json();
-        if (!resp.ok || !json || !json.success) {
-          // console.error('Backend mark-in-delivery failed:', resp.status, json);
-          throw new Error(json?.error || json?.message || 'Backend mark-in-delivery failed');
-        }
+      setCurrentOrder(prev =>
+        prev ? { ...prev, status: 'in_delivery', delivery_person_id: user.id } : prev
+      );
 
-        const updated = json.order ? json.order : { ...(currentOrder as Order), status: 'in_delivery', delivery_person_id: user?.id || currentOrder?.delivery_person_id };
-        setCurrentOrder(updated as Order);
+      await notifyBuyerDeliveryStarted(
+        currentOrder.buyer_id as string,
+        currentOrder.id as string,
+        currentOrder.order_code || undefined
+      ).catch(err => console.warn('Notification démarrage livraison échouée:', err));
 
-        try {
-          window.dispatchEvent(new CustomEvent('delivery:started', { detail: { order: updated } }));
-        } catch (e) {
-          // console.warn('Unable to dispatch delivery:started event', e);
-        }
-        // console.log('Livraison démarrée avec succès (backend)', json);
-        toast({
-          title: 'Commande récupérée',
-          description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
-        });
-
-        // Rediriger l'utilisateur vers le dashboard Livraison -> onglet En cours (avec order_id pour faciliter la localisation)
-        try {
-          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
-        } catch (e) {
-          console.warn('[QRScanner] navigation to /delivery failed:', e);
-        }
-
-      } catch (backendErr) {
-        console.warn('Backend mark-in-delivery failed, falling back to client update', backendErr);
-        const { error } = await supabase
-          .from('orders')
-          .update({ 
-            status: 'in_delivery',
-            delivery_person_id: user.id as string
-          })
-          .eq('id', currentOrder.id as string);
-
-        if (error) {
-          console.error('Erreur lors du démarrage de la livraison (fallback client):', error);
-          throw error;
-        }
-
-        setCurrentOrder(prev => prev ? { ...prev, status: 'in_delivery', delivery_person_id: user?.id || prev.delivery_person_id } : prev);
-
-        // Fallback client: envoyer la notification push au client (si backend indisponible)
-        try {
-          if (currentOrder?.buyer_id && currentOrder?.id) {
-            notifyBuyerDeliveryStarted(
-              String(currentOrder.buyer_id),
-              String(currentOrder.id),
-              currentOrder.order_code || undefined
-            ).catch(err => console.warn('[QRScanner] notifyBuyerDeliveryStarted failed:', err));
-          }
-        } catch (e) {
-          console.warn('[QRScanner] notifyBuyerDeliveryStarted error:', e);
-        }
-
-        toast({
-          title: 'Commande récupérée',
-          description: 'Cliquez sur "Scanner Qrcode Client" pour finaliser la livraison.',
-        });
-
-        try {
-          navigate(`/delivery?tab=in_progress&order_id=${encodeURIComponent(String(currentOrder?.id))}`);
-        } catch (e) {
-          console.warn('[QRScanner] navigation to /delivery failed (fallback):', e);
-        }
-      }
-    } catch (error) {
-      console.error('Erreur lors du démarrage de la livraison:', error);
       toast({
-        title: "Erreur",
-        description: "Impossible de démarrer la livraison : " + (error instanceof Error ? error.message : JSON.stringify(error)),
-        variant: "destructive",
+        title: 'Livraison démarrée',
+        description: `Commande ${currentOrder.order_code} prise en charge.`
+      });
+    } catch (err) {
+      console.error('handleStartDelivery error:', err);
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de démarrer la livraison.',
+        variant: 'destructive'
       });
     }
   }, [currentOrder, user?.id, toast]);
 
-  // Keep a stable ref to the start-delivery handler so other effects can
-  // call it without depending on its identity (prevents infinite loops).
-  const handleStartDeliveryRef = useRef(handleStartDelivery);
-  useEffect(() => {
-    handleStartDeliveryRef.current = handleStartDelivery;
-  }, [handleStartDelivery]);
-
-  // Si on arrive avec ?orderId=... ou ?orderCode=..., on précharge la commande et ouvre le flux de scan
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const orderId = params.get('orderId');
-    const orderCodeParam = params.get('orderCode');
-    const autoStart = params.get('autoStart') || params.get('scan');
-    if (autoStart) setAutoOpenScanner(true);
-
-    // Helper: try to resolve an order by its code (client first, then backend fallback)
-    const resolveByCode = async (code: string) => {
-      const cleaned = (code || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
-      if (!cleaned) return null;
-      try {
-        const pattern = `%${cleaned}%`;
-        const { data, error } = await supabase
-          .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
-          .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
-          .maybeSingle();
-        if (!error && data) return data as Order;
-      } catch (e) {
-        console.warn('resolveByCode supabase error', e);
-      }
-
-      // Backend fallback
-      try {
-        const resp = await fetch(apiUrl('/api/orders/search'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: cleaned })
-        });
-        const json = await resp.json();
-        if (json && json.success && json.order) return json.order as Order;
-      } catch (e) {
-        console.warn('resolveByCode backend fallback error', e);
-      }
-      return null;
-    };
-
-    (async () => {
-      try {
-        if (orderId && user?.id) {
-          // Prefer fetching by id first (fast path)
-          try {
-            const { data, error } = await supabase
-              .from('orders')
-              .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`) 
-              .eq('id', orderId)
-              .maybeSingle();
-
-            if (!error && data) {
-              setCurrentOrder(data as Order);
-              console.log('Commande chargée depuis URL par id:', data.id);
-              // If it's already in delivery and assigned to this user, show modal
-              if (data.status === 'in_delivery' && String(data.delivery_person_id) === String(user?.id)) {
-                setOrderModalOpen(true);
-                return;
-              }
-
-              // If paid and autoStart, attempt to start delivery (without auto opening scanner)
-              if (data.status === 'paid' && autoStart) {
-                try {
-                  // Use ref-stored handler to avoid recreating the effect when
-                  // `handleStartDelivery` identity changes (prevents an infinite loop)
-                  await handleStartDeliveryRef.current?.();
-                  setOrderModalOpen(true);
-                  return;
-                } catch (e) {
-                  console.warn('Auto start by id failed, will still try code fallback if provided', e);
-                }
-              }
-
-              // Otherwise show modal
-              setOrderModalOpen(true);
-              return;
-            }
-          } catch (e) {
-            console.warn('Fetch by id failed:', e);
-          }
-        }
-
-        // If we didn't resolve by id and an orderCode param is available, try to resolve by code
-        if (orderCodeParam) {
-          const found = await resolveByCode(orderCodeParam);
-          if (found) {
-            setCurrentOrder(found as Order);
-            console.log('Commande chargée depuis URL par code:', found.id);
-
-            if (found.status === 'in_delivery' && String(found.delivery_person_id) === String(user?.id)) {
-              setOrderModalOpen(true);
-              return;
-            }
-
-            if (found.status === 'paid' && autoStart) {
-              try {
-                await handleStartDeliveryRef.current?.();
-                setOrderModalOpen(true);
-                return;
-              } catch (e) {
-                console.warn('Auto start by code failed, falling back to modal', e);
-              }
-            }
-
-            setOrderModalOpen(true);
-            return;
-          }
-        }
-
-        // If we reach here and nothing resolved, leave the page in search mode
-      } catch (e) {
-        console.warn('Error resolving order params', e);
-      }
-    })();
-  }, [user?.id]);
-
-  // Recherche de la commande par code commande
   const handleSearchOrder = async () => {
     if (!orderCode.trim()) {
       toast({
@@ -951,12 +721,10 @@ const QRScanner = () => {
     }
 
     try {
-      // Normalize input: remove spaces/dashes and uppercase for robust matching
       const cleaned = orderCode.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
-      console.log('Recherche de la commande avec le code (nettoyé):', cleaned);
+      console.log('Recherche de la commande avec le code (nettoye):', cleaned);
       const pattern = `%${cleaned}%`;
 
-      // 1. Recherche Supabase classique
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -969,42 +737,33 @@ const QRScanner = () => {
         .in('status', ['paid', 'in_delivery'])
         .maybeSingle();
 
-      console.log('Résultat de la recherche:', { data, error });
+      console.log('Resultat de la recherche:', { data, error });
 
-      if (error) {
-        console.error('Erreur lors de la recherche:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       if (data) {
         setCurrentOrder(data as Order);
-        // Déterminer si la correspondance vient de order_code ou qr_code
-        const normalize = (s) => (s||'').toString().replace(/[^a-z0-9]/gi,'').toUpperCase();
-        const cleaned = orderCode.trim().replace(/[^a-z0-9]/gi,'').toUpperCase();
+        const normalize = (s: unknown) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+        const cleanedCode = orderCode.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
         const orderCodeNorm = normalize(data.order_code);
         const qrNorm = normalize(data.qr_code);
         let matchType: 'order_code' | 'qr_code' | 'partial' = 'partial';
-        if (orderCodeNorm && orderCodeNorm === cleaned) matchType = 'order_code';
-        else if (qrNorm && qrNorm === cleaned) matchType = 'qr_code';
-        else if (orderCodeNorm && orderCodeNorm.includes(cleaned)) matchType = 'order_code';
-        else if (qrNorm && qrNorm.includes(cleaned)) matchType = 'qr_code';
+        if (orderCodeNorm && orderCodeNorm === cleanedCode) matchType = 'order_code';
+        else if (qrNorm && qrNorm === cleanedCode) matchType = 'qr_code';
+        else if (orderCodeNorm && orderCodeNorm.includes(cleanedCode)) matchType = 'order_code';
+        else if (qrNorm && qrNorm.includes(cleanedCode)) matchType = 'qr_code';
 
         const codeVal = matchType === 'qr_code' ? (data.qr_code ?? data.order_code ?? '') : (data.order_code ?? data.qr_code ?? '');
         setLastMatchInfo({ type: matchType, code: codeVal });
-        
-        console.log('Commande trouvée:', data, 'matchType:', matchType, 'statut:', data.status);
-        
-        // Afficher le modal avec les détails de la commande (pas le scan directement)
         setOrderModalOpen(true);
-        
+
         toast({
-          title: "Commande trouvée",
-          description: `Commande ${data.order_code} trouvée. Cliquez sur "Commencer à livrer" pour démarrer.`,
+          title: "Commande trouvee",
+          description: `Commande ${data.order_code} trouvee. Cliquez sur "Commencer a livrer" pour demarrer.`,
         });
         return;
       }
 
-      // 2. Fallback : requête backend (si jamais RLS ou policies bloquent côté client)
       try {
         const resp = await fetch(apiUrl('/api/orders/search'), {
           method: 'POST',
@@ -1012,27 +771,25 @@ const QRScanner = () => {
           body: JSON.stringify({ code: cleaned })
         });
         const json = await resp.json();
-        console.log('[Fallback backend] Résultat:', json);
         if (json && json.success && json.order) {
           setCurrentOrder(json.order as Order);
           setLastMatchInfo({ type: 'order_code', code: json.order.order_code ?? '' });
           setOrderModalOpen(true);
           toast({
-            title: "Commande trouvée (backend)",
-            description: `Commande ${json.order.order_code} trouvée via backend. Cliquez sur "Commencer à livrer" pour démarrer.`,
+            title: "Commande trouvee (backend)",
+            description: `Commande ${json.order.order_code} trouvee via backend. Cliquez sur "Commencer a livrer" pour demarrer.`,
           });
           return;
         }
-        // Si backend répond mais pas de commande
         toast({
-          title: "Commande non trouvée",
-          description: `Aucune commande trouvée avec ce code. Vérifiez le code et le statut.`,
+          title: "Commande non trouvee",
+          description: "Aucune commande trouvee avec ce code. Verifiez le code et le statut.",
           variant: "destructive",
         });
       } catch (e) {
         console.error('[Fallback backend] Erreur:', e);
         toast({
-          title: "Erreur réseau",
+          title: "Erreur reseau",
           description: "Impossible de contacter le backend pour la recherche de commande.",
           variant: "destructive",
         });
@@ -1050,12 +807,11 @@ const QRScanner = () => {
     }
   };
 
-  // Fonction pour scanner le QR code vendeur
   const handleScanVendorQR = () => {
     if (vendorScanLocked || currentOrder?.status === 'in_delivery') {
       toast({
-        title: 'Scan vendeur bloqué',
-        description: 'Le QR vendeur ne peut plus être scanné pour cette commande en cours. Scannez le QR client pour confirmer la livraison.',
+        title: 'Scan vendeur bloque',
+        description: 'Le QR vendeur ne peut plus etre scanne pour cette commande en cours. Scannez le QR client pour confirmer la livraison.',
         variant: 'destructive',
       });
       return;
@@ -1065,37 +821,18 @@ const QRScanner = () => {
     setScanSessionId(s => s + 1);
   };
 
-  
-
-  const handleScanQR = async (code, resetScan) => {
+  const handleScanQR = async (code: string, resetScan?: () => void) => {
     const codeToCheck = code !== undefined ? code : scannedCode;
-    console.log('handleScanQR appelé, codeToCheck =', codeToCheck, 'scanVendorQRMode =', scanVendorQRMode);
-    
-    // Si on est en mode scan QR vendeur, chercher la commande PAR ORDER_CODE UNIQUEMENT
+    console.log('handleScanQR appele, codeToCheck =', codeToCheck, 'scanVendorQRMode =', scanVendorQRMode);
+
     if (scanVendorQRMode) {
-      // Ferme immédiatement l'écran de scan dès qu'un QR vendeur est lu.
       setShowScanSection(false);
       try {
         const cleaned = codeToCheck.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
-        
-        console.log('[QRScanner] 🔍 Recherche commande VENDEUR - code scanné:', codeToCheck);
-        console.log('[QRScanner] 🔍 Code nettoyé:', cleaned);
-        console.log('[QRScanner] ℹ️ Recherche dans order_code uniquement (sécurité anti-bypass)');
-        
-        // Debug: voir toutes les commandes avec ce order_code (recherche flexible)
-        const { data: allMatches, error: debugError } = await supabase
-          .from('orders')
-          .select('id, order_code, qr_code, status')
-          .ilike('order_code', `%${cleaned}%`);
-        
-        console.log('[QRScanner] 📊 Commandes correspondant au code', cleaned, ':', allMatches);
-        
-        // Recherche tolérante: order_code uniquement
+
         let data: Order | null = null;
-        let error: any = null;
-        
-        // 1) D'abord, recherche exacte sur order_code
-        console.log('[QRScanner] 🔎 Recherche order_code exact avec statuts [paid, assigned]...');
+        let error: unknown = null;
+
         let result = await supabase
           .from('orders')
           .select(`
@@ -1107,15 +844,11 @@ const QRScanner = () => {
           .eq('order_code', cleaned)
           .in('status', ['paid', 'assigned'])
           .maybeSingle();
-        
-        console.log('[QRScanner] Résultat recherche exacte:', { found: !!result.data, status: result.data?.status, error: result.error });
-        
-        data = result.data;
+
+        data = result.data as Order | null;
         error = result.error;
 
-        // 2) Si pas trouvé, recherche avec ilike (tolérante) sur order_code uniquement
         if (!data && !error) {
-          console.log('[QRScanner] 🔎 Recherche tolérante avec ilike...');
           result = await supabase
             .from('orders')
             .select(`
@@ -1128,60 +861,21 @@ const QRScanner = () => {
             .in('status', ['paid', 'assigned'])
             .limit(1)
             .maybeSingle();
-          
-          console.log('[QRScanner] Résultat recherche tolérante:', { found: !!result.data, status: result.data?.status, error: result.error });
-          data = result.data;
+          data = result.data as Order | null;
           error = result.error;
         }
 
         if (error || !data) {
-          // Si la commande est déjà en cours de livraison, interdire le scan QR vendeur
-          // et orienter vers le scan QR client.
-          try {
-            const { data: inDeliveryOrder } = await supabase
-              .from('orders')
-              .select(`
-                *,
-                products(name, code),
-                buyer_profile:profiles!orders_buyer_id_fkey(full_name),
-                vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)
-              `)
-              .eq('order_code', cleaned)
-              .eq('status', 'in_delivery')
-              .maybeSingle();
-
-            if (inDeliveryOrder) {
-              setCurrentOrder(inDeliveryOrder as Order);
-              setLastMatchInfo({ type: 'order_code', code: inDeliveryOrder.order_code ?? '' });
-              setLinkedVendorOrderCode(inDeliveryOrder.order_code ?? '');
-              setScanVendorQRMode(false);
-              setVendorScanLocked(true);
-              setOrderModalOpen(true);
-              toast({
-                title: 'Commande déjà en cours',
-                description: 'Le QR vendeur n\'est plus scannable. Scannez uniquement le QR code client pour confirmer la livraison.',
-              });
-              return;
-            }
-          } catch (inDeliveryLookupError) {
-            console.warn('[QRScanner] Recherche in_delivery échouée:', inDeliveryLookupError);
-          }
-
-          console.error('[QRScanner] ❌ Aucune commande trouvée. Erreur:', error);
-          console.error('[QRScanner] 💡 Code scanné:', codeToCheck, '-> nettoyé:', cleaned);
           toast({
-            title: "Commande non trouvée",
-            description: `Aucune commande ne correspond à ce QR code. Code scanné: ${cleaned.substring(0, 10)}...`,
+            title: "Commande non trouvee",
+            description: `Aucune commande ne correspond a ce QR code. Code scanne: ${cleaned.substring(0, 10)}...`,
             variant: "destructive",
           });
           setShowScanSection(true);
           if (resetScan) resetScan();
           return;
         }
-        
-        console.log('[QRScanner] ✅ Commande trouvée:', { id: data.id, order_code: data.order_code, status: data.status });
 
-        // Commande trouvée via QR commande
         setCurrentOrder(data as Order);
         setLastMatchInfo({ type: 'order_code', code: data.order_code ?? '' });
         setLinkedVendorOrderCode(data.order_code ?? cleaned);
@@ -1189,10 +883,10 @@ const QRScanner = () => {
         setVendorScanLocked(true);
         setShowScanSection(false);
         setOrderModalOpen(true);
-        
+
         toast({
-          title: "Commande trouvée",
-          description: `Commande ${data.order_code} trouvée via QR code commande`,
+          title: "Commande trouvee",
+          description: `Commande ${data.order_code} trouvee via QR code commande`,
         });
         return;
       } catch (error) {
@@ -1207,8 +901,7 @@ const QRScanner = () => {
         return;
       }
     }
-    
-    // Mode normal : scan du QR code client
+
     if (!codeToCheck.trim()) {
       toast({
         title: "Erreur",
@@ -1218,91 +911,21 @@ const QRScanner = () => {
       return;
     }
 
-    // If we don't have a currentOrder, try to resolve the order by the scanned QR code
-    if (!currentOrder) {
-      console.log('No currentOrder; attempting to find order by QR code');
-      try {
-        const deliveryUserId = user?.id;
-        if (!deliveryUserId) {
-          toast({ title: 'Erreur', description: 'Utilisateur non connecté.', variant: 'destructive' });
-          return;
-        }
-        const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
-        const scannedNormalized = normalize(codeToCheck);
-        // Query supabase for orders with matching qr_code (tolerant match)
-        const { data: found, error: findErr } = await supabase
-          .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, phone), vendor_profile:profiles!orders_vendor_id_fkey(full_name, phone)`)
-          .ilike('qr_code', `%${scannedNormalized}%`)
-          .eq('status', 'in_delivery')
-          .eq('delivery_person_id', deliveryUserId)
-          .limit(1)
-          .maybeSingle();
-
-        if (findErr) {
-          console.warn('Error searching order by QR:', findErr);
-        }
-        if (found && found.id) {
-          console.log('Order found by QR:', found.id, 'status:', found.status);
-          setCurrentOrder(found as Order);
-          // proceed with normal validation against that order
-        } else {
-          toast({ title: 'Commande introuvable', description: 'Aucune commande associée à ce QR code.', variant: 'destructive' });
-          return;
-        }
-      } catch (e) {
-        console.error('Error resolving order by QR:', e);
-        toast({ title: 'Erreur', description: 'Impossible de vérifier la commande pour ce QR.', variant: 'destructive' });
-        return;
-      }
-    }
-
     try {
-      console.log('QRScanner: code scanné =', codeToCheck, 'QR attendu =', currentOrder?.qr_code);
-      // Normaliser les codes (supprimer espaces, tirets et non-alphanumériques, mettre en majuscule)
-      const normalize = (s) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
+      const normalize = (s: unknown) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
       const scannedNormalized = normalize(codeToCheck);
       const expectedNormalized = normalize(currentOrder?.qr_code);
       const orderCodeNormalized = normalize(currentOrder?.order_code);
+      const effectiveExpected = expectedNormalized || orderCodeNormalized;
 
-      // Anti-fraude: si un QR vendeur a été scanné dans ce flux, il doit pointer
-      // vers la même commande que celle validée par le QR acheteur.
-      const linkedVendorNormalized = normalize(linkedVendorOrderCode);
-      if (linkedVendorNormalized && orderCodeNormalized && linkedVendorNormalized !== orderCodeNormalized) {
-        throw new Error('Le QR vendeur scanné ne correspond pas à la commande client en cours');
+      if (!effectiveExpected) {
+        throw new Error('QR client manquant pour cette commande');
       }
-
-      // Blocage explicite: le QR vendeur (code commande) ne doit jamais servir
-      // à valider la livraison côté client.
-      if (scannedNormalized && orderCodeNormalized && scannedNormalized === orderCodeNormalized) {
-        toast({
-          title: 'QR vendeur détecté',
-          description: 'Veuillez scanner le QR code acheteur pour confirmer la livraison.',
-          variant: 'default',
-        });
-        if (resetScan) resetScan();
-        return;
+      if (scannedNormalized !== effectiveExpected) {
+        throw new Error('QR code ne correspond pas a la commande');
       }
-      if (scannedNormalized && linkedVendorNormalized && scannedNormalized === linkedVendorNormalized) {
-        toast({
-          title: 'QR vendeur déjà scanné',
-          description: 'Scannez maintenant le QR code acheteur pour continuer.',
-          variant: 'default',
-        });
-        if (resetScan) resetScan();
-        return;
-      }
-
-      if (expectedNormalized && expectedNormalized === orderCodeNormalized) {
-        throw new Error('Configuration QR non sécurisée: QR client identique au code commande');
-      }
-      // Vérifier que le QR code correspond à la commande en cours
-      if (scannedNormalized !== expectedNormalized) {
-        throw new Error('QR code ne correspond pas à la commande');
-      }
-      // Vérifier que c'est bien le livreur assigné
       if (currentOrder?.delivery_person_id !== user?.id) {
-        throw new Error('Vous n\'êtes pas le livreur assigné à cette commande');
+        throw new Error('Vous n etes pas le livreur assigne a cette commande');
       }
       setValidationResult({
         ...(currentOrder as Order),
@@ -1310,14 +933,10 @@ const QRScanner = () => {
         timestamp: new Date().toLocaleString()
       });
       setValidatedQrCode(codeToCheck);
-      console.log('QRScanner: validation OK, commande id =', currentOrder?.id, 'vendor_profile:', currentOrder?.vendor_profile);
       toast({
         title: "QR Code valide",
-        description: `Livraison confirmée pour ${currentOrder?.buyer_profile?.full_name}`,
+        description: `Livraison confirmee pour ${currentOrder?.buyer_profile?.full_name}`,
       });
-      // Ne pas fermer la section ici
-      // setShowScanSection(false);
-      // setScannedCode('');
     } catch (error) {
       const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
       setValidationResult({
@@ -1327,16 +946,12 @@ const QRScanner = () => {
         error: errorMessage
       });
       setValidatedQrCode('');
-      console.error('QRScanner: validation échouée', errorMessage);
       toast({
         title: "QR Code invalide",
-        description: errorMessage || "Ce code QR n'est pas valide",
+        description: errorMessage || "Ce code QR n est pas valide",
         variant: "destructive",
       });
-      if (resetScan) resetScan(); // Réaffiche le scanner si code invalide
-      // Fermer la section seulement si tu veux masquer après échec, sinon laisse ouvert
-      // setShowScanSection(false);
-      // setScannedCode('');
+      if (resetScan) resetScan();
     }
   };
 
@@ -1657,6 +1272,9 @@ const QRScanner = () => {
             scanSessionId={scanSessionId}
             active={showScanSection}
             scanVendorQRMode={scanVendorQRMode}
+            onClose={() => {
+              setShowScanSection(false);
+            }}
           />
         )}
       </div>

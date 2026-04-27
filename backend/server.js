@@ -2305,7 +2305,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       // Récupérer l'order_code de la commande
       const { data: orderData, error: fetchError } = await dbClient
         .from('orders')
-        .select('order_code, status')
+        .select('order_code, status, qr_code')
         .eq('id', orderId)
         .single();
       
@@ -2322,8 +2322,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           .from('orders')
           .update({
             status: 'paid', // Utiliser 'status' pas 'payment_status'
-            payment_confirmed_at: new Date().toISOString(),
-            qr_code: orderData?.order_code || null // Utiliser order_code comme QR code
+            payment_confirmed_at: new Date().toISOString()
           })
           .eq('id', orderId)
           .neq('status', 'paid')
@@ -2336,7 +2335,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         } else if (!updatedOrderRows || updatedOrderRows.length === 0) {
           console.log('[PIXPAY-WEBHOOK] ℹ️ Statut déjà confirmé, notifications non renvoyées');
         } else {
-          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée avec QR code:', orderData?.order_code);
+          console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée. QR code existant:', orderData?.qr_code);
           
           // Notifier l'acheteur et le vendeur du paiement confirmé
           try {
@@ -2581,8 +2580,7 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
       .from('orders')
       .update({
         status: 'paid',
-        payment_confirmed_at: new Date().toISOString(),
-        qr_code: order.order_code // Use order_code as QR code
+        payment_confirmed_at: new Date().toISOString()
       })
       .eq('id', orderId);
 
@@ -5538,7 +5536,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       .from('refund_requests')
       .select(`
         *,
-        order:orders(id, status, total_amount, buyer_id, payment_method),
+        order:orders(id, status, total_amount, buyer_id, payment_method, buyer_phone),
         buyer:profiles!refund_requests_buyer_id_fkey(phone, wallet_type, full_name)
       `)
       .eq('id', refundId)
@@ -5561,13 +5559,14 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
 
     // 2) Déterminer le wallet de remboursement depuis la méthode de paiement de la commande
     // pour éviter les incohérences avec buyer.wallet_type (qui peut être différent).
-    const buyerPhone = refundRequest.buyer?.phone;
-    const orderPaymentMethod = String(refundRequest.order?.payment_method || '').trim().toLowerCase();
+    const buyerPhone = refundRequest.order?.buyer_phone || refundRequest.buyer?.phone;
+    const orderPaymentMethodRaw = String(refundRequest.order?.payment_method || '').trim().toLowerCase();
+    const orderPaymentMethod = orderPaymentMethodRaw.replace(/\s+/g, '_').replace(/-/g, '_');
     let walletType = null;
 
-    if (orderPaymentMethod === 'wave') {
+    if (orderPaymentMethod === 'wave' || orderPaymentMethod === 'wave_senegal') {
       walletType = 'wave-senegal';
-    } else if (orderPaymentMethod === 'orange_money') {
+    } else if (orderPaymentMethod === 'orange_money' || orderPaymentMethod === 'orange_senegal' || orderPaymentMethod === 'orange') {
       walletType = 'orange-senegal';
     }
 
@@ -5581,7 +5580,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     if (!walletType) {
       return res.status(400).json({
         success: false,
-        error: `Type de portefeuille non déterminé pour le remboursement (payment_method=${orderPaymentMethod || 'inconnu'})`
+        error: `Type de portefeuille non déterminé pour le remboursement (payment_method=${orderPaymentMethodRaw || 'inconnu'})`
       });
     }
 

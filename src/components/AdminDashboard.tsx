@@ -827,6 +827,11 @@ const AdminDashboard: React.FC = () => {
     return r.status === 'pending';
   };
 
+  const isWavePaymentMethod = (paymentMethod?: string | null) => {
+    const normalized = String(paymentMethod || '').trim().toLowerCase().replace(/-/g, '_');
+    return normalized === 'wave' || normalized === 'wave_senegal';
+  };
+
   const handleApproveRefund = async (refundId: string) => {
     setProcessing(true);
     try {
@@ -1881,52 +1886,57 @@ const AdminDashboard: React.FC = () => {
                 <TableBody>
                   {filterRefunds(refunds)
                     .filter(isRefundPending)
-                    .map(r => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
-                        <TableCell>{r.order?.order_code || r.order_id}</TableCell>
-                        <TableCell>{r.order?.products?.name || r.order?.order_code || '-'}</TableCell>
-                        <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
-                        <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
-                        <TableCell>
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${r.order?.payment_method === 'wave' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                            {r.order?.payment_method === 'wave' ? '🌊 Wave' : '🟠 Orange Money'}
-                          </span>
-                        </TableCell>
-                        <TableCell>{r.reason || '-'}</TableCell>
-                        <TableCell>{r.requested_at ? new Date(r.requested_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button 
-                              size="sm" 
-                              variant="default"
-                              className="bg-primary text-primary-foreground"
-                              onClick={() => {
-                                if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name} via ${r.order?.payment_method === 'wave' ? 'Wave' : 'Orange Money'}?`)) {
-                                  handleApproveRefund(r.id);
-                                }
-                              }}
-                              disabled={processing}
-                            >
-                              ✓ Approuver
-                            </Button>
-                            <Button 
-                              size="sm" 
-                              variant="destructive"
-                              onClick={() => {
-                                const reason = prompt('Raison du rejet:');
-                                if (reason) {
-                                  handleRejectRefund(r.id, reason);
-                                }
-                              }}
-                              disabled={processing}
-                            >
-                              ✗ Rejeter
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    .map((r) => {
+                      const isWaveChannel = isWavePaymentMethod(r.order?.payment_method);
+                      const refundChannelLabel = isWaveChannel ? 'Wave' : 'Orange Money';
+
+                      return (
+                        <TableRow key={r.id}>
+                          <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
+                          <TableCell>{r.order?.order_code || r.order_id}</TableCell>
+                          <TableCell>{r.order?.products?.name || r.order?.order_code || '-'}</TableCell>
+                          <TableCell>{r.buyer?.full_name || '-'}<br /><span className="text-xs text-gray-500">{r.buyer?.phone}</span></TableCell>
+                          <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${isWaveChannel ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                              {isWaveChannel ? '🌊 Wave' : '🟠 Orange Money'}
+                            </span>
+                          </TableCell>
+                          <TableCell>{r.reason || '-'}</TableCell>
+                          <TableCell>{r.requested_at ? new Date(r.requested_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button 
+                                size="sm" 
+                                variant="default"
+                                className="bg-primary text-primary-foreground"
+                                onClick={() => {
+                                  if (confirm(`Approuver le remboursement de ${(r.amount || 0).toLocaleString()} FCFA pour ${r.buyer?.full_name} via ${refundChannelLabel}?`)) {
+                                    handleApproveRefund(r.id);
+                                  }
+                                }}
+                                disabled={processing}
+                              >
+                                ✓ Approuver
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="destructive"
+                                onClick={() => {
+                                  const reason = prompt('Raison du rejet:');
+                                  if (reason) {
+                                    handleRejectRefund(r.id, reason);
+                                  }
+                                }}
+                                disabled={processing}
+                              >
+                                ✗ Rejeter
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   {filterRefunds(refunds).filter(isRefundPending).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={9} className="text-center text-gray-500">Aucune demande en attente</TableCell>
@@ -1961,36 +1971,40 @@ const AdminDashboard: React.FC = () => {
                       const dateB = b.reviewed_at || b.processed_at || b.requested_at || '';
                       return new Date(dateB).getTime() - new Date(dateA).getTime();
                     })
-                    .map(r => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
-                        <TableCell>{r.order?.order_code || r.order_id}</TableCell>
-                        <TableCell>{r.buyer?.full_name || '-'}</TableCell>
-                        <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
-                        <TableCell>
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${r.order?.payment_method === 'wave' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                            {r.order?.payment_method === 'wave' ? '🌊 Wave' : '🟠 Orange Money'}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-sm">{r.reason || '-'}</TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded text-sm ${
-                            r.status === 'approved' || r.status === 'processed' 
-                              ? 'bg-green-100 text-green-800' 
-                              : r.status === 'rejected'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-slate-100 text-slate-700'
-                          }`}>
-                            {r.status === 'approved' ? 'Approuvé ✓' : r.status === 'processed' ? 'Traité ✓' : r.status === 'rejected' ? 'Rejeté ✗' : r.status}
-                          </span>
-                          {r.status === 'rejected' && r.rejection_reason && (
-                            <div className="text-xs text-gray-500 mt-1">Motif: {r.rejection_reason}</div>
-                          )}
-                        </TableCell>
-                        <TableCell>{r.reviewed_at ? new Date(r.reviewed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : r.processed_at ? new Date(r.processed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
-                        <TableCell className="text-xs text-gray-500">{r.reviewed_by || '-'}</TableCell>
-                      </TableRow>
-                    ))}
+                    .map((r) => {
+                      const isWaveChannel = isWavePaymentMethod(r.order?.payment_method);
+
+                      return (
+                        <TableRow key={r.id}>
+                          <TableCell className="font-mono text-xs truncate max-w-[80px]" title={r.id}>{r.id.substring(0, 8)}...</TableCell>
+                          <TableCell>{r.order?.order_code || r.order_id}</TableCell>
+                          <TableCell>{r.buyer?.full_name || '-'}</TableCell>
+                          <TableCell className="font-semibold">{(r.amount || 0).toLocaleString()} FCFA</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${isWaveChannel ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                              {isWaveChannel ? '🌊 Wave' : '🟠 Orange Money'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-sm">{r.reason || '-'}</TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              r.status === 'approved' || r.status === 'processed' 
+                                ? 'bg-green-100 text-green-800' 
+                                : r.status === 'rejected'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}>
+                              {r.status === 'approved' ? 'Approuvé ✓' : r.status === 'processed' ? 'Traité ✓' : r.status === 'rejected' ? 'Rejeté ✗' : r.status}
+                            </span>
+                            {r.status === 'rejected' && r.rejection_reason && (
+                              <div className="text-xs text-gray-500 mt-1">Motif: {r.rejection_reason}</div>
+                            )}
+                          </TableCell>
+                          <TableCell>{r.reviewed_at ? new Date(r.reviewed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : r.processed_at ? new Date(r.processed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</TableCell>
+                          <TableCell className="text-xs text-gray-500">{r.reviewed_by || '-'}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   {filterRefunds(refunds).filter(r => !isRefundPending(r)).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={9} className="text-center text-gray-500">Aucun historique de remboursement</TableCell>

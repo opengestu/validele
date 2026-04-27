@@ -414,17 +414,8 @@ const App = () => {
                     } 
                   />
                 )}
-                {/* Page de succès de paiement, accessible à tous les rôles connectés */}
-                {!adminOnlyMode && (
-                  <Route 
-                    path="/payment-success" 
-                    element={
-                      <ProtectedRoute>
-                        <PaymentSuccess />
-                      </ProtectedRoute>
-                    }
-                  />
-                )}
+                {/* Page de succès de paiement: doit rester accessible après une redirection externe */}
+                {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 <Route path="*" element={adminOnlyMode ? <Navigate to="/admin" replace /> : <NotFound />} />
               </Routes>
               </AnimatedRoutes>
