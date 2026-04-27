@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const PIN_MAX_ATTEMPTS = Number.parseInt(process.env.PIN_MAX_ATTEMPTS || '5', 10);
 const PIN_ATTEMPT_WINDOW_MS = Number.parseInt(process.env.PIN_ATTEMPT_WINDOW_MS || String(5 * 60 * 1000), 10);
 const PIN_LOCK_MS = Number.parseInt(process.env.PIN_LOCK_MS || String(15 * 60 * 1000), 10);
+const FALLBACK_JWT_SECRET = 'votre-secret-très-long-et-sécurisé-changez-le';
 
 // In-memory brute-force guard for PIN attempts.
 // Keyed by normalized phone + client IP.
@@ -220,14 +221,18 @@ router.post('/login-pin', async (req, res) => {
 
     clearPinFailures(attemptKey);
 
-    // Issue JWT if configured
-    const jwtSecret = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
-    if (jwtSecret) {
-      const token = jwt.sign({ sub: user.id, phone: user.phone }, jwtSecret, { expiresIn: '7d' });
-      return res.json({ success: true, token });
+    // Always issue a JWT for SMS sessions so protected endpoints (heartbeat, vendor routes) can authenticate.
+    const jwtSecret = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET || FALLBACK_JWT_SECRET;
+    if (!process.env.JWT_SECRET && !process.env.SUPABASE_JWT_SECRET) {
+      console.warn('[LOGIN-PIN] JWT secret env missing; using fallback secret. Configure JWT_SECRET in production.');
     }
 
-    return res.json({ success: true });
+    const token = jwt.sign(
+      { sub: user.id, phone: user.phone, role: user.role || 'buyer', auth_mode: 'sms' },
+      jwtSecret,
+      { expiresIn: '7d' }
+    );
+    return res.json({ success: true, token });
   } catch (e) {
     console.error('[LOGIN-PIN] Error during PIN login:', e);
     return res.status(500).json({ error: 'Internal error' });
