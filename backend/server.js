@@ -5559,17 +5559,16 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       });
     }
 
-    // 2) Récupérer le téléphone et wallet_type de l'acheteur
+    // 2) Déterminer le wallet de remboursement depuis la méthode de paiement de la commande
+    // pour éviter les incohérences avec buyer.wallet_type (qui peut être différent).
     const buyerPhone = refundRequest.buyer?.phone;
-    let walletType = refundRequest.buyer?.wallet_type;
-    
-    if (!walletType && refundRequest.order?.payment_method) {
-      // Mapper payment_method vers wallet_type
-      if (refundRequest.order.payment_method === 'wave') {
-        walletType = 'wave-senegal';
-      } else if (refundRequest.order.payment_method === 'orange_money') {
-        walletType = 'orange-senegal';
-      }
+    const orderPaymentMethod = String(refundRequest.order?.payment_method || '').trim().toLowerCase();
+    let walletType = null;
+
+    if (orderPaymentMethod === 'wave') {
+      walletType = 'wave-senegal';
+    } else if (orderPaymentMethod === 'orange_money') {
+      walletType = 'orange-senegal';
     }
 
     if (!buyerPhone) {
@@ -5582,7 +5581,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
     if (!walletType) {
       return res.status(400).json({
         success: false,
-        error: 'Type de portefeuille non déterminé pour le remboursement'
+        error: `Type de portefeuille non déterminé pour le remboursement (payment_method=${orderPaymentMethod || 'inconnu'})`
       });
     }
 
@@ -7442,7 +7441,7 @@ app.post('/api/auth/reset-pin', async (req, res) => {
     const last9 = digitsOnly.slice(-9);
     const { data: profiles, error: profErr } = await supabase
       .from('profiles')
-      .select('id')
+      .select('id, phone, role')
       .ilike('phone', `%${last9}%`)
       .limit(1);
 
@@ -7453,7 +7452,8 @@ app.post('/api/auth/reset-pin', async (req, res) => {
     if (!profiles || profiles.length === 0) {
       return res.status(404).json({ success: false, error: 'Profil non trouvé' });
     }
-    const profileId = profiles[0].id;
+    const profileRow = profiles[0];
+    const profileId = profileRow.id;
 
     // Hasher le PIN côté serveur (bcrypt)
     try {
@@ -7469,7 +7469,23 @@ app.post('/api/auth/reset-pin', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
 
-    return res.json({ success: true });
+    const token = jwt.sign(
+      {
+        sub: profileId,
+        phone: profileRow.phone || formattedPhone,
+        role: profileRow.role || 'buyer',
+        auth_mode: 'sms'
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      success: true,
+      token,
+      profileId,
+      role: profileRow.role || 'buyer'
+    });
   } catch (err) {
     console.error('[RESET-PIN] Exception:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });

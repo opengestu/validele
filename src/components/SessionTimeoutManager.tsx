@@ -32,6 +32,7 @@ const SessionTimeoutManager: React.FC = () => {
   const { user, userProfile } = useAuth();
   const navigate = useNavigate();
   const isAuthenticatedRef = useRef(false);
+  const heartbeatTokenWarnedRef = useRef(false);
 
   // Pages qui ne doivent pas déclencher la re-auth
   const isExcludedPage = useCallback((path: string) => {
@@ -214,13 +215,25 @@ const SessionTimeoutManager: React.FC = () => {
 
       try {
         const token = await resolveAuthToken();
-        if (!token) return;
+        if (!token) {
+          if (!heartbeatTokenWarnedRef.current) {
+            heartbeatTokenWarnedRef.current = true;
+            console.warn('[HEARTBEAT] Aucun token auth resolu; heartbeat ignore.');
+          }
+          return;
+        }
 
-        await fetch(apiUrl('/api/me/heartbeat'), {
+        heartbeatTokenWarnedRef.current = false;
+
+        const response = await fetch(apiUrl('/api/me/heartbeat'), {
           method: 'POST',
           credentials: 'include',
           headers: { Authorization: `Bearer ${token}` }
         });
+
+        if (!response.ok) {
+          console.warn('[HEARTBEAT] Reponse non OK:', response.status);
+        }
       } catch {
         // Silent best-effort heartbeat
       }

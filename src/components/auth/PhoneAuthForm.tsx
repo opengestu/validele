@@ -694,34 +694,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       if (result.valid) {
         // OTP validé (flow normal)
         if (existingProfile && existingProfile.pin_hash) {
-          // OTP validé + profil existant avec PIN - connexion réussie !
-          // Pour les utilisateurs SMS : on utilise localStorage pour maintenir la session
-          // car ils n'ont pas de compte Supabase Auth (email/password)
-         
-          // Stocker les infos de session dans localStorage
-          localStorage.setItem('sms_auth_session', JSON.stringify({
-            phone: formData.phone,
-            profileId: existingProfile.id,
-            role: existingProfile.role,
-            fullName: existingProfile.full_name,
-            loginTime: new Date().toISOString()
-          }));
+          // Un profil déjà protégé par PIN doit toujours passer par /auth/login-pin
+          // pour recevoir un JWT valide et permettre le heartbeat.
+          setStep('login-pin');
+          setLoginPinDigits(['', '', '', '']);
           toast({
-            title: "Connexion réussie ! 🎉",
-            description: `Bienvenue ${existingProfile.full_name}`,
+            title: "Numéro confirmé ! ✅",
+            description: "Entrez votre code PIN pour vous connecter",
           });
-          
-          // Activer le mode redirection pour afficher le spinner plein écran
-          // Clear persisted interim state so the flow does not resume afterward
-          try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
-          setRedirecting(true);
-          await new Promise(resolve => setTimeout(resolve, 800));
-          
-          const redirectPath = existingProfile.role === 'vendor' ? '/vendor' :
-                             existingProfile.role === 'delivery' ? '/delivery' : '/buyer';
-         
-          // Rafraîchir pour charger la session
-          window.location.href = redirectPath;
+          setTimeout(() => loginPinRefs[0].current?.focus(), 100);
           return;
         }
        
@@ -815,16 +796,17 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           console.error('Erreur génération JWT vendeur:', e);
         }
       }
-      if (accessToken) {
-        localStorage.setItem('auth_token', accessToken);
+      if (!accessToken) {
+        throw new Error('Connexion impossible (token manquant). Reessayez.');
       }
+      localStorage.setItem('auth_token', accessToken);
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: existingProfile.id,
         role: existingProfile.role,
         fullName: existingProfile.full_name,
         loginTime: new Date().toISOString(),
-        access_token: accessToken || undefined
+        access_token: accessToken
       }));
       console.log('[DEBUG] sms_auth_session stored:', JSON.parse(localStorage.getItem('sms_auth_session') || '{}'));
       toast({
@@ -930,13 +912,34 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         throw new Error(json?.error || 'Impossible de réinitialiser le PIN');
       }
 
+      let accessToken = typeof json?.token === 'string' ? json.token : '';
+      if (!accessToken) {
+        const formattedPhone = formatPhoneNumber(formData.phone);
+        const loginResp = await fetch(apiUrl('/auth/login-pin'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone, pin: String(formData.pin) })
+        });
+        const loginJson = await loginResp.json().catch(() => ({}));
+        if (loginResp.ok && typeof loginJson?.token === 'string') {
+          accessToken = loginJson.token;
+        }
+      }
+
+      if (!accessToken) {
+        throw new Error('PIN reinitialise mais session invalide (token manquant). Reconnectez-vous.');
+      }
+
+      localStorage.setItem('auth_token', accessToken);
+
       // Créer la session locale
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
         profileId: existingProfile.id,
         role: existingProfile.role,
         fullName: existingProfile.full_name,
-        loginTime: new Date().toISOString()
+        loginTime: new Date().toISOString(),
+        access_token: accessToken
       }));
       toast({
         title: isResetPin ? "PIN réinitialisé ! 🎉" : "PIN créé ! 🎉",
@@ -1069,6 +1072,25 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       if (!newProfileId) {
         throw new Error('Réponse serveur invalide (profileId manquant)');
       }
+      let accessToken = created && typeof created.token === 'string' ? created.token : '';
+      if (!accessToken) {
+        const formattedPhone = formatPhoneNumber(formData.phone);
+        const loginResp = await fetch(apiUrl('/auth/login-pin'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone, pin: String(formData.pin) })
+        });
+        const loginJson = await loginResp.json().catch(() => ({}));
+        if (loginResp.ok && typeof loginJson?.token === 'string') {
+          accessToken = loginJson.token;
+        }
+      }
+      if (!accessToken) {
+        throw new Error('Inscription reussie mais session invalide (token manquant). Veuillez vous reconnecter.');
+      }
+
+      localStorage.setItem('auth_token', accessToken);
+
       // Créer une session SMS dans localStorage avec le token JWT si présent
       localStorage.setItem('sms_auth_session', JSON.stringify({
         phone: formData.phone,
@@ -1076,7 +1098,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         role: selectedRole,
         fullName: formData.fullName,
         loginTime: new Date().toISOString(),
-        access_token: created && typeof created.token === 'string' ? created.token : undefined,
+        access_token: accessToken,
         expiresIn: created?.expiresIn
       }));
       toast({

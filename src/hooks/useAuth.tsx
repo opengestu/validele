@@ -298,6 +298,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (smsSessionStr) {
           try {
             const smsSession = JSON.parse(smsSessionStr);
+            const smsToken = typeof smsSession?.access_token === 'string'
+              ? smsSession.access_token
+              : (typeof smsSession?.token === 'string' ? smsSession.token : '');
+            const isDevSession = typeof smsSession?.profileId === 'string' && smsSession.profileId.startsWith('dev-');
+
+            if (!smsToken && !isDevSession) {
+              // Legacy sessions created without JWT break protected APIs (heartbeat, push-token, etc.).
+              // Clear them once so users re-authenticate and obtain a valid token.
+              localStorage.removeItem('sms_auth_session');
+              localStorage.removeItem('auth_token');
+              throw new Error('SMS_TOKEN_MISSING');
+            }
+
             const buildProfileFromSmsSession = (sessionLike: { profileId?: string; phone?: string; fullName?: string; role?: string }) => {
               if (!sessionLike?.profileId) return null;
               return {
@@ -436,7 +449,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               localStorage.removeItem('sms_auth_session');
             }
           } catch (parseError) {
-            console.error('Erreur parsing session SMS:', parseError);
+            if (!(parseError instanceof Error && parseError.message === 'SMS_TOKEN_MISSING')) {
+              console.error('Erreur parsing session SMS:', parseError);
+            }
             localStorage.removeItem('sms_auth_session');
           }
         }

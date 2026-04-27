@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -360,7 +361,7 @@ const BuyerDashboard = () => {
       data = json.orders || [];
 
       // Normalisation: backend retourne `vendor` et `delivery` (ou vendor/delivery), adapter au format attendu côté UI
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       data = (data || []).map((o: any) => ({
         ...o,
         // Adapter les clés venant du backend à celles attendues par l'UI
@@ -408,7 +409,7 @@ const BuyerDashboard = () => {
 
         // Merge profiles into orders
         normalizedOrders = normalizedOrders.map(o => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           const copy = { ...o } as any;
           if (!copy.profiles && copy.vendor_id && vendorMap[String(copy.vendor_id)]) {
             copy.profiles = vendorMap[String(copy.vendor_id)];
@@ -456,7 +457,7 @@ const BuyerDashboard = () => {
     } finally {
       if (!opts?.silent) setOrdersLoading(false);
     }
-  }, [user, toast]);
+  }, [user, smsSessionStr, sms?.phone]);
 
 
   const fetchTransactions = useCallback(async () => {
@@ -507,7 +508,7 @@ const BuyerDashboard = () => {
         // ignore
       }
     }
-  }, [user, toast]);
+  }, [user]);
 
   useEffect(() => {
     // Wait for auth initialization to complete before fetching orders/txs.
@@ -1555,6 +1556,10 @@ const BuyerDashboard = () => {
     }
   };
 
+  const isWavePaymentMethod = (method?: string | null) => {
+    return String(method ?? '').trim().toLowerCase() === 'wave';
+  };
+
 
   const renderStatusBadge = (status?: string) => {
     if (!status) return null;
@@ -2016,7 +2021,7 @@ const BuyerDashboard = () => {
 
                             {/* Affichage du remboursement si existant */}
                             {order.status === 'cancelled' && orderTransactions.find(t => t.transaction_type === 'refund') && (() => {
-                              const isWaveRefund = order.payment_method === 'wave';
+                              const isWaveRefund = isWavePaymentMethod(order.payment_method);
                               const refundMethodLabel = isWaveRefund ? 'Wave' : 'Orange Money';
                               const refundTx = orderTransactions.find(t => t.transaction_type === 'refund');
                               const isSuccess = refundTx?.status === 'SUCCESSFUL';
@@ -2268,7 +2273,7 @@ const BuyerDashboard = () => {
                       throw new Error(data.message || 'Erreur paiement Orange Money OTP');
                     }
                   }
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                 
                 } catch (err: any) {
                   setSoftPayError(err.message);
                 } finally {
@@ -2355,7 +2360,7 @@ const BuyerDashboard = () => {
                 } else {
                   throw new Error(result.message || 'Erreur paiement Orange Money OTP');
                 }
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+               
               } catch (err: any) {
                 setOtpError(err.message);
               } finally {
@@ -2401,7 +2406,7 @@ const BuyerDashboard = () => {
 
       {/* Modal de remboursement/annulation */}
       {showRefundModal && refundOrder && (() => {
-        const isWave = refundOrder.payment_method === 'wave';
+        const isWave = isWavePaymentMethod(refundOrder.payment_method);
         const paymentLabel = isWave ? 'Wave' : 'Orange Money';
         const paymentLogo = isWave ? waveLogo : orangeMoneyLogo;
         return (
