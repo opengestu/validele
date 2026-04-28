@@ -1138,7 +1138,7 @@ app.post('/api/orders/search', async (req, res) => {
     const { data, error } = await dbClient
       .from('orders')
       .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name, address, phone), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern}`)
+      .or(`order_code.ilike.${pattern},qr_code.ilike.${pattern},qr_code_vendor.ilike.${pattern}`)
       .in('status', ['paid', 'in_delivery'])
       .maybeSingle();
 
