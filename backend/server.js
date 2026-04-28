@@ -169,7 +169,8 @@ app.post('/api/orders', async (req, res) => {
       console.error('[API] Erreur création commande:', error);
       return res.status(500).json({ success: false, error: error.message || 'Erreur création commande' });
     }
-    return res.json({ success: true, order: data });
+    // Correction : expose l'id à la racine pour compatibilité frontend
+    return res.json({ success: true, id: data.id, order_id: data.id, order: data });
   } catch (err) {
     console.error('[API] /api/orders error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
