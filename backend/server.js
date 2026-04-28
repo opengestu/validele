@@ -128,6 +128,43 @@ function generateSecureQrCode(prefix = '') {
   const code = crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
   return prefix ? `${prefix}${code}` : code;
 }
+
+// Génère un code commande lisible et facile à saisir (ex: CAB7394).
+// Pas de caractères ambigus type I/O/1/0.
+function generateReadableOrderCode() {
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  let partLetters = '';
+  let partDigits = '';
+  for (let i = 0; i < 3; i += 1) {
+    partLetters += letters[Math.floor(Math.random() * letters.length)];
+  }
+  for (let i = 0; i < 4; i += 1) {
+    partDigits += digits[Math.floor(Math.random() * digits.length)];
+  }
+  return `${partLetters}${partDigits}`;
+}
+
+function normalizeOrderCode(raw) {
+  return String(raw || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+}
+
+async function generateUniqueReadableOrderCode(supabaseAdmin, maxAttempts = 12) {
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const candidate = generateReadableOrderCode();
+    const { data, error } = await supabaseAdmin
+      .from('orders')
+      .select('id')
+      .eq('order_code', candidate)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) return candidate;
+  }
+  // Fallback quasi impossible, mais garde un code exploitable.
+  return `${generateReadableOrderCode()}${Math.floor(Math.random() * 9) + 1}`;
+}
 // ==========================================
 // Création de commande avec deux QR codes distincts
 // ==========================================
@@ -145,11 +182,12 @@ app.post('/api/orders', async (req, res) => {
     if (qr_code === rest.order_code) qr_code = generateSecureQrCode('C-');
     if (qr_code_vendor === rest.order_code) qr_code_vendor = generateSecureQrCode('V-');
 
-    // Générer un order_code unique (existant ou nouveau)
-    const order_code = rest.order_code || generateSecureQrCode('O-');
-
     // Crée un client Supabase avec la clé service_role pour bypasser RLS
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    // Générer / normaliser order_code lisible
+    const providedOrderCode = normalizeOrderCode(rest.order_code);
+    const order_code = providedOrderCode || await generateUniqueReadableOrderCode(supabaseAdmin);
+
     const { data, error } = await supabaseAdmin
       .from('orders')
       .insert({

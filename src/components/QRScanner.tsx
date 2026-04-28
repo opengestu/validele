@@ -259,7 +259,7 @@ function QRScanSection({
   handleConfirmDelivery: () => void;
   resetScan?: () => void;
   isConfirmingDelivery: boolean;
-  matchInfo: { type: 'order_code' | 'qr_code' | 'qr_code_vendor' | 'partial'; code: string } | null;
+  matchInfo: { type: 'order_code' | 'qr_code' | 'partial'; code: string } | null;
   scanSessionId: number;
   active: boolean;
   scanVendorQRMode: boolean;
@@ -462,7 +462,7 @@ const QRScanner = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [showScanSection, setShowScanSection] = useState(false);
-  const [lastMatchInfo, setLastMatchInfo] = useState<{ type: 'order_code' | 'qr_code' | 'qr_code_vendor' | 'partial'; code: string } | null>(null);
+  const [lastMatchInfo, setLastMatchInfo] = useState<{ type: 'order_code' | 'qr_code' | 'partial'; code: string } | null>(null);
   const [deliveryConfirmed, setDeliveryConfirmed] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
@@ -662,49 +662,76 @@ const QRScanner = () => {
     if (scanVendorQRMode) {
       setShowScanSection(false);
       try {
-        const cleaned = codeToCheck.trim().replace(/[^a-z0-9]/gi, '').toUpperCase();
+        const rawScanned = codeToCheck.trim();
+        const cleaned = rawScanned.replace(/[^a-z0-9]/gi, '').toUpperCase();
+
         let data: Order | null = null;
         let error: unknown = null;
-        // Recherche par qr_code_vendor (le QR vendeur doit matcher ce champ)
+
+        // 1) Exact match vendor QR / order code only
         let result = await supabase
           .from('orders')
           .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .eq('qr_code_vendor' as any, cleaned)
-          .in('status', ['paid', 'assigned'])
+          .or(`order_code.eq.${rawScanned},qr_code_vendor.eq.${rawScanned}`)
+          .in('status', ['paid', 'assigned', 'in_delivery'])
           .maybeSingle();
         data = result.data as Order | null;
         error = result.error;
+
+        // 2) Normalized fallback (still vendor QR / order code only)
         if (!data && !error) {
           result = await supabase
             .from('orders')
             .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .ilike('qr_code_vendor' as any, `%${cleaned}%`)
-            .in('status', ['paid', 'assigned'])
+            .or(`order_code.ilike.%${cleaned}%,qr_code_vendor.ilike.%${cleaned}%`)
+            .in('status', ['paid', 'assigned', 'in_delivery'])
             .limit(1)
             .maybeSingle();
           data = result.data as Order | null;
           error = result.error;
         }
+
         if (error || !data) {
-          toast({ title: "Commande non trouvée", description: `Aucune commande ne correspond à ce QR code vendeur.`, variant: "destructive" });
+          // Explicit guard: if it matches buyer QR, explain why it's refused.
+          try {
+            const { data: buyerQrMatch } = await supabase
+              .from('orders')
+              .select('id')
+              .or(`qr_code.eq.${rawScanned},qr_code.ilike.%${cleaned}%`)
+              .in('status', ['paid', 'assigned', 'in_delivery'])
+              .limit(1)
+              .maybeSingle();
+            if (buyerQrMatch) {
+              toast({
+                title: "QR client détecté",
+                description: "Ce mode accepte uniquement le QR commande vendeur. Scannez le QR client uniquement après avoir récupéré la commande.",
+                variant: "destructive"
+              });
+              setShowScanSection(true);
+              if (resetScanCb) resetScanCb();
+              return;
+            }
+          } catch {
+            // ignore buyer QR hint check errors
+          }
+          toast({ title: "Commande non trouvee", description: `Aucune commande ne correspond a ce QR code.`, variant: "destructive" });
           setShowScanSection(true);
           if (resetScanCb) resetScanCb();
           return;
         }
+
         setCurrentOrder(data as Order);
-        setLastMatchInfo({ type: 'qr_code_vendor', code: data.qr_code_vendor ?? cleaned });
-        setLinkedVendorOrderCode(data.qr_code_vendor ?? cleaned);
+        setLastMatchInfo({ type: 'order_code', code: data.order_code ?? '' });
+        setLinkedVendorOrderCode(data.order_code ?? cleaned);
         setScanVendorQRMode(false);
         setVendorScanLocked(true);
         setShowScanSection(false);
         setOrderModalOpen(true);
-        toast({ title: "Commande trouvée", description: `Commande ${data.order_code} trouvée via QR code vendeur.` });
+        toast({ title: "Commande trouvee", description: `Commande ${data.order_code} trouvee via QR code commande` });
         return;
       } catch (err) {
         console.error('Erreur scan QR vendeur:', err);
-        toast({ title: "Erreur", description: "Erreur lors de la recherche de la commande (QR vendeur)", variant: "destructive" });
+        toast({ title: "Erreur", description: "Erreur lors de la recherche de la commande", variant: "destructive" });
         setShowScanSection(true);
         if (resetScanCb) resetScanCb();
         return;
@@ -721,20 +748,20 @@ const QRScanner = () => {
       const scannedNormalized = normalize(codeToCheck);
       const expectedNormalized = normalize(currentOrder?.qr_code);
       const orderCodeNormalized = normalize(currentOrder?.order_code);
-      const vendorQrNormalized = normalize(currentOrder?.qr_code_vendor);
-      // Pour la validation client, seul qr_code doit matcher (pas le code vendeur)
-      if (!expectedNormalized) throw new Error('QR client manquant pour cette commande');
-      if (scannedNormalized !== expectedNormalized) throw new Error('QR code client non valide pour cette commande');
-      if (vendorQrNormalized && scannedNormalized === vendorQrNormalized) throw new Error('Ce QR code est réservé au vendeur/livreur. Demandez le QR code client.');
-      if (currentOrder?.delivery_person_id !== user?.id) throw new Error('Vous n’êtes pas le livreur assigné à cette commande');
+      const effectiveExpected = expectedNormalized || orderCodeNormalized;
+
+      if (!effectiveExpected) throw new Error('QR client manquant pour cette commande');
+      if (scannedNormalized !== effectiveExpected) throw new Error('QR code ne correspond pas a la commande');
+      if (currentOrder?.delivery_person_id !== user?.id) throw new Error('Vous n etes pas le livreur assigne a cette commande');
+
       setValidationResult({ ...(currentOrder as Order), status: 'valid', timestamp: new Date().toLocaleString() });
       setValidatedQrCode(codeToCheck);
-      toast({ title: "QR Code valide", description: `Livraison confirmée pour ${currentOrder?.buyer_profile?.full_name}` });
+      toast({ title: "QR Code valide", description: `Livraison confirmee pour ${currentOrder?.buyer_profile?.full_name}` });
     } catch (error) {
       const errorMessage = toFrenchErrorMessage(error, 'Erreur inconnue');
       setValidationResult({ status: 'invalid', code: codeToCheck, timestamp: new Date().toLocaleString(), error: errorMessage });
       setValidatedQrCode('');
-      toast({ title: "QR Code invalide", description: errorMessage || "Ce code QR n’est pas valide", variant: "destructive" });
+      toast({ title: "QR Code invalide", description: errorMessage || "Ce code QR n est pas valide", variant: "destructive" });
       if (resetScanCb) resetScanCb();
     }
   };
