@@ -1148,12 +1148,22 @@ const AdminDashboard: React.FC = () => {
         return;
       }
 
-      // 2) confirm with admin
+      // 2) Ask for commission percentage
+      const commissionPctRaw = prompt('Pourcentage de commission à appliquer sur ce payout (ex: 2 pour 2%) ?', '0');
+      if (commissionPctRaw === null) return; // User cancelled
+      
+      const commissionPct = Number(commissionPctRaw);
+      if (isNaN(commissionPct) || commissionPct < 0) {
+        toast({ title: 'Erreur', description: 'Commission invalide', variant: 'destructive' });
+        return;
+      }
+
+      // 3) confirm with admin
       if (!confirm('Confirmer le paiement au vendeur pour cette commande ?')) return;
 
-      // 3) execute payout
+      // 4) execute payout
       const execRes = await fetch(apiUrl('/api/admin/verify-and-payout'), {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true })
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true, commission_pct: commissionPct })
       });
       const execJson = await execRes.json();
       if (!execRes.ok) throw new Error(execJson.error || 'Erreur exécution payout');

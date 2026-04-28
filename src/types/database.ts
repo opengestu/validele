@@ -31,6 +31,7 @@ export interface Order {
   buyer_phone: string;
   order_code?: string;
   qr_code?: string;
+  qr_code_vendor?: string;
   status?: string;
   payment_confirmed_at?: string;
   assigned_at?: string;

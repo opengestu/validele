@@ -311,11 +311,7 @@ const DeliveryDashboard = () => {
       if (smsSessionStr) {
         try {
           console.log('[DeliveryDashboard] SMS session detected, calling backend /api/delivery/my-orders (SMS flow)');
-          // Choose API host depending on environment. On real devices (non-localhost) prefer the configured API base or production.
-          const smsApiHost = (typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname))
-            ? (import.meta.env.VITE_API_BASE || 'https://validele.onrender.com')
-            : (import.meta.env.VITE_DEV_BACKEND || 'http://localhost:5000');
-          const resp = await fetch(`${smsApiHost}/api/delivery/my-orders`, {
+          const resp = await fetch(apiUrl('/api/delivery/my-orders'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ deliveryPersonId: user.id })
@@ -348,47 +344,7 @@ const DeliveryDashboard = () => {
                     } else if (!resp.ok) {
                       console.warn('[DeliveryDashboard] /api/delivery/my-orders (SMS) returned non-ok status', resp.status, respText || j);
 
-                      if (resp.status >= 500) {
-                        // Server error: try production fallback *first* and log outcome (no toasts shown)
-                        let fallbackSucceeded = false;
-                        try {
-                          const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ deliveryPersonId: user.id })
-                          });
-                          let prodJson: unknown = null;
-                          try {
-                            const ct2 = prodResp.headers.get('content-type') || '';
-                            if (ct2.includes('application/json')) {
-                              prodJson = await prodResp.json();
-                            } else {
-                              try { prodJson = await prodResp.text(); } catch (e) { prodJson = null; }
-                            }
-                          } catch (e) {
-                            console.warn('[DeliveryDashboard] Prod fallback parse error', e);
-                          }
-                          if (
-                            prodResp.ok &&
-                            prodJson &&
-                            typeof prodJson === 'object' &&
-                            'orders' in (prodJson as Record<string, unknown>) &&
-                            Array.isArray((prodJson as { orders?: unknown }).orders)
-                          ) {
-                            setDeliveries([]);
-                            const prodOrders = (prodJson as { orders: DeliveryOrder[] }).orders;
-                            const filteredProdOrders = prodOrders.filter(o => ['assigned','in_delivery','delivered','cancelled'].includes(String(o.status)));
-                            setMyDeliveries(filteredProdOrders);
-                            fallbackSucceeded = true; 
-                          }
-                        } catch (e) {
-                          console.warn('[DeliveryDashboard] production fallback failed:', e);
-                        }
-
-                        if (!fallbackSucceeded) {
-                          console.warn('[DeliveryDashboard] Unable to load deliveries from local backend or remote instance');
-                        }
-                      } else {
+                      if (resp.status < 500) {
                         console.warn('[DeliveryDashboard] Delivery fetch returned non-ok status', resp.status);
                       }
                       // continue to client-side fetch fallback
@@ -446,11 +402,7 @@ const DeliveryDashboard = () => {
             if (token) headers['Authorization'] = `Bearer ${token}`;
           } catch (e) { /* ignore */ }
 
-          // Determine API host similarly to SMS flow (prefer prod when not on localhost)
-          const apiHost = (typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname))
-            ? (import.meta.env.VITE_API_BASE || 'https://validele.onrender.com')
-            : (import.meta.env.VITE_DEV_BACKEND || 'http://localhost:5000');
-          const resp = await fetch(`${apiHost}/api/delivery/my-orders`, {
+          const resp = await fetch(apiUrl('/api/delivery/my-orders'), {
             method: 'POST',
             headers,
             body: JSON.stringify({ deliveryPersonId: user.id })
@@ -474,16 +426,6 @@ const DeliveryDashboard = () => {
           }
         } catch (e) {
           console.warn('[DeliveryDashboard] backend /api/delivery/my-orders failed', e);
-          // try remote prod fallback (best-effort)
-          try {
-            const prodResp = await fetch('https://validele.onrender.com/api/delivery/my-orders', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deliveryPersonId: user.id })
-            });
-            const prodJson = prodResp.ok ? await prodResp.json().catch(() => null) : null;
-            if (prodResp.ok && prodJson && typeof prodJson === 'object' && Array.isArray((prodJson as { orders?: unknown }).orders)) {
-              finalMyDeliveries = (prodJson as { orders: DeliveryOrder[] }).orders;
-            }
-          } catch (e2) { console.warn('[DeliveryDashboard] prod fallback failed', e2); }
         }
       }
 
@@ -784,7 +726,7 @@ const DeliveryDashboard = () => {
   const handleStartDelivery = async (delivery: DeliveryOrder) => {
     if (!user?.id) return;
     try {
-      const resp = await fetch('/api/orders/mark-in-delivery', {
+      const resp = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: delivery.id, deliveryPersonId: user.id })

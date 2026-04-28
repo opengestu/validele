@@ -123,6 +123,59 @@ function normalizeJsonField(val) {
   }
 }
 
+// Génère un code QR sécurisé (alphanumérique, 10 caractères)
+function generateSecureQrCode(prefix = '') {
+  const code = crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+  return prefix ? `${prefix}${code}` : code;
+}
+// ==========================================
+// Création de commande avec deux QR codes distincts
+// ==========================================
+app.post('/api/orders', async (req, res) => {
+  try {
+    const { buyer_id, vendor_id, product_id, total_amount, payment_method, delivery_address, buyer_phone, ...rest } = req.body || {};
+    if (!buyer_id || !vendor_id || !product_id || !total_amount || !payment_method) {
+      return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
+    }
+
+    // Générer deux QR codes distincts
+    const qr_code = generateSecureQrCode('C-'); // Pour le client
+    const qr_code_vendor = generateSecureQrCode('V-'); // Pour le vendeur/livreur
+
+    // Générer un order_code unique (existant ou nouveau)
+    const order_code = rest.order_code || generateSecureQrCode('O-');
+
+    // Crée un client Supabase avec la clé service_role pour bypasser RLS
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const { data, error } = await supabaseAdmin
+      .from('orders')
+      .insert({
+        buyer_id,
+        vendor_id,
+        product_id,
+        total_amount,
+        payment_method,
+        delivery_address,
+        buyer_phone,
+        qr_code,
+        qr_code_vendor,
+        order_code,
+        ...rest
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('[API] Erreur création commande:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Erreur création commande' });
+    }
+    return res.json({ success: true, order: data });
+  } catch (err) {
+    console.error('[API] /api/orders error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
+});
+
 // Mount auth routes (added for phone existence check and PIN login)
 try {
   const authRoutes = require('./routes/auth');
@@ -3613,7 +3666,7 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
 // POST /api/admin/verify-and-payout - run a full verification and optionally execute the payout (admin only)
 app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
   try {
-    const { orderId, execute } = req.body || {};
+    const { orderId, execute, commission_pct } = req.body || {};
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
 
     const report = await verifyOrderForPayout(orderId);
@@ -3625,14 +3678,19 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
     // If executing, make sure eligible
     if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible_for_payout', report });
 
-    // Call PixPay to send money to vendor
-    const amount = report.order.total_amount;
+    // Calculate commission and net amount
+    const grossAmount = Number(report.order.total_amount || 0);
+    const commissionPct = typeof commission_pct === 'number' ? commission_pct : (commission_pct ? Number(commission_pct) : 0);
+    const commissionAmount = Math.round(grossAmount * commissionPct / 100);
+    const netAmount = grossAmount - commissionAmount;
+
+    // Call PixPay to send money to vendor (NET amount after commission)
     const phone = report.vendor.phone;
     const walletType = report.vendor.wallet_type || 'wave-senegal';
 
-    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { amount, phone, walletType });
+    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { grossAmount, commissionPct, commissionAmount, netAmount, phone, walletType });
 
-    const payoutRes = await pixpaySendMoney({ amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
+    const payoutRes = await pixpaySendMoney({ amount: netAmount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
 
     console.log('[ADMIN] verify-and-payout Pixpay response:', JSON.stringify(payoutRes, null, 2));
 
@@ -3652,7 +3710,7 @@ app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
         transaction_id: payoutRes.transaction_id,
         provider: 'pixpay',
         order_id: report.order.id,
-        amount,
+        amount: netAmount,
         phone,
         status: payoutRes.state || 'PENDING1',
         transaction_type: 'payout',
@@ -5454,7 +5512,8 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
         amount: order.total_amount,
         reason: reason || 'Non satisfaction client',
         status: 'pending',
-        requested_at: new Date().toISOString()
+        requested_at: new Date().toISOString(),
+        previous_order_status: order.status
       })
       .select()
       .single();
@@ -5495,7 +5554,7 @@ app.get('/api/admin/refund-requests', requireAdmin, async (req, res) => {
       .from('refund_requests')
       .select(`
         *,
-        order:orders(id, order_code, products(name)),
+        order:orders(id, order_code, payment_method, products(name)),
         buyer:profiles!refund_requests_buyer_id_fkey(id, full_name, phone)
       `)
       .order('requested_at', { ascending: false });
@@ -5609,7 +5668,7 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       .update({
         status: newStatus,
         reviewed_at: now,  // ALWAYS set - this marks refund as reviewed
-        reviewed_by: req.adminUser?.id || req.user?.id || 'admin',
+        reviewed_by: req.adminUser?.id || req.user?.id || null,
         processed_at: result.success ? now : null,
         transaction_id: result.transaction_id || null
       })
@@ -5750,10 +5809,10 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
       });
     }
 
-    // 1) Récupérer la demande
+    // 1) Récupérer la demande avec tous les infos nécessaires
     const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
-      .select('id, status')
+      .select('id, status, order_id, previous_order_status')
       .eq('id', refundId)
       .single();
 
@@ -5777,7 +5836,7 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
       .update({
         status: 'rejected',
         reviewed_at: new Date().toISOString(),
-        reviewed_by: req.user?.id || 'admin',
+        reviewed_by: req.user?.id || req.adminUser?.id || null,
         rejection_reason: reason
       })
       .eq('id', refundId);
@@ -5790,11 +5849,32 @@ app.post('/api/admin/refund-requests/:id/reject', requireAdmin, async (req, res)
       });
     }
 
+    // 3) Restaurer la commande au statut précédent
+    if (refundRequest.previous_order_status) {
+      console.log('[REFUND] Restauration commande au statut:', refundRequest.previous_order_status);
+      const { error: orderRestoreError } = await supabaseAdmin
+        .from('orders')
+        .update({
+          status: refundRequest.previous_order_status,
+          cancelled_at: null,
+          cancellation_reason: null
+        })
+        .eq('id', refundRequest.order_id);
+
+      if (orderRestoreError) {
+        console.error('[REFUND] Erreur restauration commande:', orderRestoreError);
+      } else {
+        console.log('[REFUND] ✅ Commande restaurée au statut:', refundRequest.previous_order_status);
+      }
+    } else {
+      console.warn('[REFUND] ⚠️ Pas de previous_order_status sauvegardé, commande non restaurée');
+    }
+
     console.log('[REFUND] Demande rejetée:', refundId);
 
     return res.json({
       success: true,
-      message: 'Demande de remboursement rejetée'
+      message: 'Demande de remboursement rejetée et commande restaurée au statut précédent'
     });
 
   } catch (error) {
@@ -6705,7 +6785,7 @@ app.get('/api/buyer/orders', async (req, res) => {
       const { data: order, error } = await sb
         .from('orders')
         .select(`
-          id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+          id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address, payment_method,
           product:products(id, name, price, description),
           buyer:profiles!orders_buyer_id_fkey(id, address, full_name, phone),
           vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address, full_name),
@@ -6779,7 +6859,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabaseAdmin
           .from('orders')
           .select(`
-            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address, payment_method,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
@@ -6795,7 +6875,7 @@ app.get('/api/buyer/orders', async (req, res) => {
         const q = await supabase
           .from('orders')
           .select(`
-            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address,
+            id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address, payment_method,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
             vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
