@@ -138,9 +138,12 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
     }
 
-    // Générer deux QR codes distincts
-    const qr_code = generateSecureQrCode('C-'); // Pour le client
-    const qr_code_vendor = generateSecureQrCode('V-'); // Pour le vendeur/livreur
+    // Toujours générer deux QR codes distincts, même si fournis ou vides côté client
+    let qr_code = (rest.qr_code && typeof rest.qr_code === 'string' && rest.qr_code.length >= 6) ? rest.qr_code : generateSecureQrCode('C-');
+    let qr_code_vendor = (rest.qr_code_vendor && typeof rest.qr_code_vendor === 'string' && rest.qr_code_vendor.length >= 6) ? rest.qr_code_vendor : generateSecureQrCode('V-');
+    // Ne jamais utiliser order_code comme QR code
+    if (qr_code === rest.order_code) qr_code = generateSecureQrCode('C-');
+    if (qr_code_vendor === rest.order_code) qr_code_vendor = generateSecureQrCode('V-');
 
     // Générer un order_code unique (existant ou nouveau)
     const order_code = rest.order_code || generateSecureQrCode('O-');
@@ -160,7 +163,7 @@ app.post('/api/orders', async (req, res) => {
         qr_code,
         qr_code_vendor,
         order_code,
-        ...rest
+        ...rest,
       })
       .select('*')
       .single();
