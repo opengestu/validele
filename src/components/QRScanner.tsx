@@ -265,6 +265,10 @@ function QRScanSection({
   scanVendorQRMode: boolean;
   onClose: () => void;
 }) {
+  // ✅ MODIFICATION 1 : calcul de qrboxSize pour positionner le texte
+  const isMobile = typeof navigator !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent);
+  const qrboxSize = isMobile ? 220 : 250;
+
   const [cameraError, setCameraError] = useState(false);
   const [cameraErrorMsg, setCameraErrorMsg] = useState('');
   const [hasScanned, setHasScanned] = useState(false);
@@ -438,8 +442,22 @@ function QRScanSection({
         </div>
       )}
 
-      {/* Instruction label */}
-      <div style={{ position: 'fixed', left: 0, right: 0, top: '20px', textAlign: 'center', color: '#fff', fontSize: 14, lineHeight: 1.2, fontWeight: 500, zIndex: 1200, pointerEvents: 'none', padding: '0 16px' }}>
+      {/* ✅ MODIFICATION 2 : Instruction label repositionné juste au-dessus du cadre */}
+      <div style={{
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        top: `calc(50% - ${qrboxSize / 2}px - 192px)`,
+        textAlign: 'center',
+        color: '#fff',
+        fontSize: 26,
+        lineHeight: 1.4,
+        fontWeight: 600,
+        zIndex: 1200,
+        pointerEvents: 'none',
+        padding: '0 24px',
+        textShadow: '0 1px 4px rgba(0,0,0,0.6)',
+      }}>
         {scanVendorQRMode
           ? "Scannez le QR code de la commande côté Vendeur(se)"
           : "Scannez le QR code du client pour confirmer la commande"
@@ -667,49 +685,81 @@ const QRScanner = () => {
 
         let data: Order | null = null;
         let error: unknown = null;
+        const allowedStatuses = ['paid', 'assigned', 'in_delivery'];
+        const baseSelect = '*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)';
 
-        // 1) Exact match vendor QR / order code only
-        let result = await supabase
-          .from('orders')
-          .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-          .or(`order_code.eq.${rawScanned},qr_code_vendor.eq.${rawScanned}`)
-          .in('status', ['paid', 'assigned', 'in_delivery'])
-          .maybeSingle();
-        data = result.data as Order | null;
-        error = result.error;
-
-        // 2) Normalized fallback (still vendor QR / order code only)
-        if (!data && !error) {
-          result = await supabase
+        // 1) Exact on vendor QR code (preferred path)
+        {
+          const res = await supabase
             .from('orders')
-            .select(`*, products(name, code), buyer_profile:profiles!orders_buyer_id_fkey(full_name), vendor_profile:profiles!orders_vendor_id_fkey(phone, wallet_type)`)
-            .or(`order_code.ilike.%${cleaned}%,qr_code_vendor.ilike.%${cleaned}%`)
-            .in('status', ['paid', 'assigned', 'in_delivery'])
+            .select(baseSelect)
+            .eq('qr_code_vendor', rawScanned)
+            .in('status', allowedStatuses)
+            .maybeSingle();
+          data = res.data as Order | null;
+          error = res.error;
+        }
+
+        // 2) Exact on order_code (for manual input or vendor sharing code)
+        if (!data && !error) {
+          const res = await supabase
+            .from('orders')
+            .select(baseSelect)
+            .eq('order_code', cleaned)
+            .in('status', allowedStatuses)
+            .maybeSingle();
+          data = res.data as Order | null;
+          error = res.error;
+        }
+
+        // 3) Soft fallback on order_code only (manual partial input)
+        if (!data && !error) {
+          const res = await supabase
+            .from('orders')
+            .select(baseSelect)
+            .ilike('order_code', `%${cleaned}%`)
+            .in('status', allowedStatuses)
             .limit(1)
             .maybeSingle();
-          data = result.data as Order | null;
-          error = result.error;
+          data = res.data as Order | null;
+          error = res.error;
         }
 
         if (error || !data) {
-          // Explicit guard: if it matches buyer QR, explain why it's refused.
+
+          // Explicit guard: if it matches buyer QR, explain why it's refused, sauf rétrocompatibilité
           try {
-            const { data: buyerQrMatch } = await supabase
+            const exactBuyer = await supabase
               .from('orders')
-              .select('id')
-              .or(`qr_code.eq.${rawScanned},qr_code.ilike.%${cleaned}%`)
-              .in('status', ['paid', 'assigned', 'in_delivery'])
-              .limit(1)
+              .select('id, qr_code_vendor')
+              .eq('qr_code', rawScanned)
+              .in('status', allowedStatuses)
               .maybeSingle();
+            let buyerQrMatch = exactBuyer.data;
+            if (!buyerQrMatch && !exactBuyer.error) {
+              const partialBuyer = await supabase
+                .from('orders')
+                .select('id, qr_code_vendor')
+                .ilike('qr_code', `%${cleaned}%`)
+                .in('status', allowedStatuses)
+                .limit(1)
+                .maybeSingle();
+              buyerQrMatch = partialBuyer.data;
+            }
             if (buyerQrMatch) {
-              toast({
-                title: "QR client détecté",
-                description: "Ce mode accepte uniquement le QR commande vendeur. Scannez le QR client uniquement après avoir récupéré la commande.",
-                variant: "destructive"
-              });
-              setShowScanSection(true);
-              if (resetScanCb) resetScanCb();
-              return;
+              // Vérifier si cette commande a un qr_code_vendor distinct
+              if (buyerQrMatch.qr_code_vendor) {
+                toast({
+                  title: "QR client détecté",
+                  description: "Ce mode accepte uniquement le QR commande vendeur. Scannez le QR client uniquement après avoir récupéré la commande.",
+                  variant: "destructive"
+                });
+                setShowScanSection(true);
+                if (resetScanCb) resetScanCb();
+                return;
+              }
+              // Pas de qr_code_vendor → ancienne commande, accepter le qr_code comme code vendeur (rétrocompatibilité)
+              // La suite du code trouvera la commande via les lookups order_code
             }
           } catch {
             // ignore buyer QR hint check errors

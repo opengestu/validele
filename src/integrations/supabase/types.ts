@@ -25,6 +25,7 @@ export type Database = {
           delivery_person_id: string | null
           id: string
           order_code: string | null
+          qr_code_vendor: string | null
           payment_confirmed_at: string | null
           payment_method: string
           product_id: string
@@ -45,6 +46,7 @@ export type Database = {
           delivery_person_id?: string | null
           id?: string
           order_code?: string | null
+          qr_code_vendor?: string | null
           payment_confirmed_at?: string | null
           payment_method: string
           product_id: string
@@ -65,6 +67,7 @@ export type Database = {
           delivery_person_id?: string | null
           id?: string
           order_code?: string | null
+          qr_code_vendor?: string | null
           payment_confirmed_at?: string | null
           payment_method?: string
           product_id?: string

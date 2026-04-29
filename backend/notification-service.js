@@ -35,7 +35,29 @@ async function sendD7SMSNotify(to, text) {
 // backend/notification-service.js
 // Service de notifications automatiques pour les événements de commande
 
-const { sendPushNotification } = require('./firebase-push');
+const { sendPushNotification, sendPushToMultiple, removeInvalidTokens } = require('./firebase-push');
+/**
+ * Envoi groupé de notifications push avec suppression automatique des tokens invalides
+ * @param {string[]} userIds - Liste d'IDs utilisateurs
+ * @param {string} title
+ * @param {string} body
+ * @param {object} data
+ */
+async function sendPushToUsers(userIds, title, body, data = {}) {
+  if (!supabase) return { sent: false, reason: 'no_supabase' };
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('push_token')
+    .in('id', userIds);
+
+  const tokens = (profiles || []).map(p => p.push_token).filter(Boolean);
+
+  const result = await sendPushToMultiple(tokens, title, body, data);
+  if (result.invalidTokens.length > 0) {
+    await removeInvalidTokens(result.invalidTokens);
+  }
+  return result;
+}
 const { createClient } = require('@supabase/supabase-js');
 
 // Initialiser Supabase
@@ -160,6 +182,7 @@ module.exports = {
   sendSMS: sendD7SMSNotify,
   // Expose également la fonction originale si besoin
   sendD7SMSNotify
+  ,sendPushToUsers
 };
 
 /**

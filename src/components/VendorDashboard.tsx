@@ -3463,8 +3463,8 @@ const VendorDashboard = () => {
                     Présentez ce QR code au livreur pour qu'il puisse récupérer la commande
                   </p>
                   <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-black/10">
-                    {/* Affiche le QR code vendeur (qr_code_vendor), fallback sur qr_code si vide pour compatibilité */}
-                    <SimpleQRCode value={selectedOrderForQR.qr_code_vendor || selectedOrderForQR.qr_code || selectedOrderForQR.order_code || selectedOrderForQR.id} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 200 : 240} />
+                    {/* Affiche le QR code vendeur (qr_code_vendor), sans fallback sur qr_code pour éviter bug rétrocompatibilité */}
+                    <SimpleQRCode value={selectedOrderForQR.qr_code_vendor || selectedOrderForQR.order_code || selectedOrderForQR.id} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 200 : 240} />
                   </div>
                 </div>
                 <div className="bg-black/5 p-3 rounded-lg">

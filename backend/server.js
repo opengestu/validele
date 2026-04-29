@@ -1125,7 +1125,6 @@ app.get('/api/vendor/transactions', async (req, res) => {
         .in('order_id', orderIds)
         .in('transaction_type', ['payout','vendor_payout'])
         .order('created_at', { ascending: false });
-
       if (error) {
         console.error('[VENDOR] Error fetching transactions (admin):', error);
         return res.status(500).json({ success: false, error: 'Erreur serveur' });

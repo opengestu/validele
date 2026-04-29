@@ -1,3 +1,31 @@
+// --- SUPABASE ---
+// Configure ici tes variables d'environnement Supabase
+const { createClient } = require('@supabase/supabase-js');
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+/**
+ * Supprimer les tokens FCM invalides dans Supabase
+ * @param {string[]} invalidTokens - Liste des tokens à supprimer
+ */
+async function removeInvalidTokens(invalidTokens) {
+  if (!supabase) {
+    console.warn('[SUPABASE] Non configuré, suppression ignorée');
+    return;
+  }
+  for (const token of invalidTokens) {
+    const { error } = await supabase
+      .from('fcm_tokens') // Remplace par le nom de ta table si besoin
+      .delete()
+      .eq('token', token); // Remplace par le nom de la colonne si besoin
+    if (error) {
+      console.error(`[SUPABASE] Erreur suppression token ${token}:`, error);
+    } else {
+      console.log(`[SUPABASE] Token supprimé: ${token}`);
+    }
+  }
+}
 // Firebase Cloud Messaging - HTTP v1 API
 const { google } = require('googleapis');
 // IMPORTANT: ne pas committer de fichier JSON de compte de service.
@@ -223,4 +251,5 @@ module.exports = {
   sendPushToTopic,
   getAccessToken,
   isFirebaseConfigured,
+  removeInvalidTokens,
 };
