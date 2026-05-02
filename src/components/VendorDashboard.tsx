@@ -1682,7 +1682,7 @@ const VendorDashboard = () => {
   };
 
   const getPublicWebBaseUrl = () => {
-    const cloudflareDefault = 'https://validele.pages.dev';
+    const cloudflareDefault = 'https://www.validel.shop';
     const candidates = [
       import.meta.env.VITE_PUBLIC_WEB_URL,
       import.meta.env.VITE_SITE_URL,

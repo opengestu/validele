@@ -231,7 +231,29 @@ const DeepLinkHandler: React.FC = () => {
           return;
         }
 
-        if ((protocol === 'https:' || protocol === 'http:') && host === 'validele.pages.dev') {
+        const supportedWebHosts = new Set(
+          [
+            'validele.pages.dev',
+            'www.validel.shop',
+            'validel.shop',
+            import.meta.env.VITE_PUBLIC_WEB_URL,
+            import.meta.env.VITE_SITE_URL,
+            import.meta.env.VITE_WEB_APP_URL,
+            import.meta.env.VITE_FRONTEND_URL
+          ]
+            .map((value) => String(value || '').trim().toLowerCase())
+            .filter(Boolean)
+            .map((value) => {
+              try {
+                return new URL(value).host.toLowerCase();
+              } catch {
+                return value.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+              }
+            })
+            .filter(Boolean)
+        );
+
+        if ((protocol === 'https:' || protocol === 'http:') && supportedWebHosts.has(host)) {
           const normalizedPath = `/${path}`;
           if (normalizedPath.startsWith('/product/')) {
             const productCode = decodeURIComponent(normalizedPath.replace(/^\/product\//, '')).trim();

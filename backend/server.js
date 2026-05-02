@@ -61,6 +61,8 @@ const EXTRA_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://validele.pages.dev',
+  'https://www.validel.shop',
+  'https://validel.shop',
 ];
 
 const ALLOWED_ORIGINS = Array.from(new Set([
