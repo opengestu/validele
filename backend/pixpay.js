@@ -319,9 +319,7 @@ async function initiateWavePayment(params) {
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     redirect_url: redirectUrl,
-    success_url: redirectUrl,
     redirect_error_url: redirectErrorUrl,
-    cancel_url: redirectErrorUrl,
     custom_data: JSON.stringify({
       order_id: orderId,
       payment_method: 'wave',

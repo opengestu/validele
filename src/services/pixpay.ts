@@ -161,16 +161,12 @@ export class PixPayService {
         window.location.href = smsLink;
         console.log('[PixPay] window.location.href utilisé:', smsLink);
       } catch (e) {
-        console.warn('[PixPay] window.location.href a échoué, fallback sur window.open', e);
-        try { window.open(smsLink, '_blank'); } catch (e2) { console.error('[PixPay] fallback window.open failed', e2); }
+        console.warn('[PixPay] window.location.href a échoué', e);
       }
 
       console.log('[PixPay] Lien de paiement ouvert:', smsLink);
     } catch (error) {
       console.error('[PixPay] Erreur ouverture lien:', error);
-      // Fallback: essayer window.open
-      // eslint-disable-next-line no-empty
-      try { window.open(smsLink, '_blank'); } catch(e){}
     }
   }
 }
