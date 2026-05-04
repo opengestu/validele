@@ -2211,19 +2211,48 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
 
     const configuredSuccessUrl = String(process.env.PIXPAY_WAVE_REDIRECT_URL || '').trim();
     const configuredCancelUrl = String(process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || '').trim();
-    const frontendBaseUrl = String(
+    const configuredFrontendBase = String(
       process.env.PIXPAY_PUBLIC_WEB_URL ||
       process.env.PUBLIC_WEB_URL ||
       process.env.FRONTEND_URL ||
       process.env.VITE_PUBLIC_WEB_URL ||
-      'https://validel.shop'
+      'https://www.validel.shop'
     ).replace(/\/+$/, '');
+    const isUnsafeRedirectUrl = (candidate) => {
+      try {
+        const parsed = new URL(String(candidate || '').trim());
+        const host = (parsed.hostname || '').toLowerCase();
+        const protocol = (parsed.protocol || '').toLowerCase();
+        if (!host || (protocol !== 'https:' && protocol !== 'http:')) return true;
+        if (host === 'example.com' || host.endsWith('.example.com')) return true;
+        if (host.includes('your-frontend.domain')) return true;
+        if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && (host === 'localhost' || host === '127.0.0.1')) return true;
+        return false;
+      } catch (_) {
+        return true;
+      }
+    };
     const appendQueryParam = (url, key, value) => {
       if (new RegExp(`[?&]${key}=`).test(url)) return url;
       return url + (url.includes('?') ? '&' : '?') + `${key}=${encodeURIComponent(value)}`;
     };
-    const successUrlBase = configuredSuccessUrl || `${frontendBaseUrl}/payment-success`;
-    const cancelUrlBase = configuredCancelUrl || `${frontendBaseUrl}/buyer`;
+
+    const safeDefaultFrontend = 'https://www.validel.shop';
+    const frontendBaseUrl = isUnsafeRedirectUrl(configuredFrontendBase) ? safeDefaultFrontend : configuredFrontendBase;
+    const successUrlBaseRaw = configuredSuccessUrl || `${frontendBaseUrl}/payment-success`;
+    const cancelUrlBaseRaw = configuredCancelUrl || `${frontendBaseUrl}/buyer`;
+    const successUrlBase = isUnsafeRedirectUrl(successUrlBaseRaw) ? `${frontendBaseUrl}/payment-success` : successUrlBaseRaw;
+    const cancelUrlBase = isUnsafeRedirectUrl(cancelUrlBaseRaw) ? `${frontendBaseUrl}/buyer` : cancelUrlBaseRaw;
+
+    if (successUrlBase !== successUrlBaseRaw || cancelUrlBase !== cancelUrlBaseRaw) {
+      console.warn('[PIXPAY-WAVE] Redirect URL unsafe detected, fallback applied', {
+        successUrlBaseRaw,
+        cancelUrlBaseRaw,
+        successUrlBase,
+        cancelUrlBase
+      });
+    }
+
     const successUrl = appendQueryParam(successUrlBase, 'order_id', orderId);
     const cancelUrl = appendQueryParam(cancelUrlBase, 'payment', 'cancelled');
 
@@ -2413,8 +2442,19 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     }
 
     // Si paiement réussi, mettre à jour la commande
-    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts ou remboursements
-    if (state === 'SUCCESSFUL' && orderId && transactionType !== 'payout' && transactionType !== 'vendor_payout' && transactionType !== 'refund') {
+    // IMPORTANT: Ne mettre à jour le status que pour les paiements initiaux, PAS pour les payouts/retraits/remboursements
+    const normalizedTransactionType = String(transactionType || '').toLowerCase();
+    const isOrderPaymentType = !['payout', 'vendor_payout', 'refund', 'admin_withdrawal', 'withdrawal'].includes(normalizedTransactionType);
+    const isUuidOrderId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(orderId || ''));
+
+    if (state === 'SUCCESSFUL' && orderId && !isOrderPaymentType) {
+      console.log('[PIXPAY-WEBHOOK] ℹ️ Transaction non-commande, mise à jour orders ignorée:', { orderId, transactionType: normalizedTransactionType });
+    }
+    if (state === 'SUCCESSFUL' && orderId && isOrderPaymentType && !isUuidOrderId) {
+      console.log('[PIXPAY-WEBHOOK] ℹ️ order_id non UUID, mise à jour orders ignorée:', { orderId, transactionType: normalizedTransactionType });
+    }
+
+    if (state === 'SUCCESSFUL' && orderId && isOrderPaymentType && isUuidOrderId) {
       // Utiliser supabaseAdmin pour bypass RLS policies
       const dbClient = supabaseAdmin || supabase;
       
@@ -7898,8 +7938,20 @@ app.post('/api/paydunya/notification', async (req, res) => {
 
 // Remplacer app.get('/paymentsuccess', ...) par :
 app.get('/paymentsuccess', (req, res) => {
-  const orderId = req.query.order_id || '';
-  const redirectUrl = `https://www.validel.shop/payment-success${orderId ? `?order_id=${orderId}` : ''}`;
+  const orderId = String(req.query.order_id || '').trim();
+  const configuredFrontendBase = String(
+    process.env.PIXPAY_PUBLIC_WEB_URL ||
+    process.env.PUBLIC_WEB_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.VITE_PUBLIC_WEB_URL ||
+    ''
+  ).trim().replace(/\/+$/, '');
+  const host = req.get('host') || 'www.validel.shop';
+  const protocol = req.protocol || 'https';
+  const fallbackBase = `${protocol}://${host}`;
+  const baseUrl = configuredFrontendBase || fallbackBase;
+  const redirectUrl = `${baseUrl}/payment-success${orderId ? `?order_id=${encodeURIComponent(orderId)}` : ''}`;
+  console.log('[PAYMENT-REDIRECT] /paymentsuccess ->', redirectUrl);
   res.redirect(302, redirectUrl);
 });
 
