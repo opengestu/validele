@@ -7896,88 +7896,95 @@ app.post('/api/paydunya/notification', async (req, res) => {
   }
 });
 
-// Route de succès de paiement avec confettis et facture téléchargeable
-// Accessible en GET /paymentsuccess?order_id=<id>
-// /payment-success is handled by the React SPA so provider redirects stay in-app.
+// Remplacer app.get('/paymentsuccess', ...) par :
 app.get('/paymentsuccess', (req, res) => {
   const orderId = req.query.order_id || '';
-  const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
-  res.send(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Paiement réussi</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; background: #f7fafc; margin: 0; padding: 0; }
-    h1 { color: #2ecc40; margin-top: 60px; }
-    .confetti { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
-    .btn { display: inline-block; margin-top: 30px; padding: 15px 30px; background: #2ecc40; color: #fff; border: none; border-radius: 8px; font-size: 1.2em; cursor: pointer; text-decoration: none; transition: background 0.2s; }
-    .btn:hover { background: #27ae38; }
-  </style>
-</head>
-<body>
-  <canvas class="confetti"></canvas>
-  <h1>🎉 Paiement réussi !</h1>
-  <p>Merci pour votre commande.</p>
-  <a id="invoiceLink" href="${invoiceUrl}" class="btn ${invoiceUrl === '#' ? 'disabled' : ''}" download>Télécharger la facture</a>
-  <script>
-    (function(){
-      // Confetti animation (defensive)
-      const canvas = document.querySelector('.confetti');
-      const ctx = canvas.getContext && canvas.getContext('2d');
-      if (!ctx) return; // defensive
-      let W = window.innerWidth, H = window.innerHeight;
-      canvas.width = W; canvas.height = H;
-      function rand(min, max){ return Math.random()*(max-min)+min; }
-      let confettis = Array.from({length:120}, () => ({ x: rand(0,W), y: rand(-H,0), r: 6 + Math.random()*8, d: 8 + Math.random()*8, color: 'hsl(' + (Math.random()*360) + ',90%,60%)', tilt: Math.random()*10 - 5 }));
-      function draw(){ ctx.clearRect(0,0,W,H); confettis.forEach(c => { ctx.beginPath(); ctx.ellipse(c.x, c.y, c.r, c.r/2, c.tilt, 0, 2*Math.PI); ctx.fillStyle = c.color; ctx.fill(); }); update(); }
-      function update(){ confettis.forEach(c => { c.y += Math.cos(c.d) + 2 + c.r/8; c.x += Math.sin(0.5) * 2; if (c.y > H) { c.x = Math.random() * W; c.y = -10; } }); }
-      setInterval(draw, 16);
-      window.addEventListener('resize', () => { W = window.innerWidth; H = window.innerHeight; canvas.width = W; canvas.height = H; });
-
-      // Invoice lookup & auto-bind (if redirect doesn't include order_id)
-      async function tryResolveOrder() {
-        try {
-          const params = new URLSearchParams(window.location.search);
-          let orderId = params.get('order_id');
-          const invoiceLink = document.getElementById('invoiceLink');
-
-          function enable(linkHref) {
-            invoiceLink.href = linkHref;
-            invoiceLink.classList.remove('disabled');
-            invoiceLink.setAttribute('download', 'invoice.html');
-          }
-
-          if (orderId && orderId !== '') {
-            enable('/api/orders/' + orderId + '/invoice');
-            return;
-          }
-
-          // Try transaction ids commonly used by providers
-          const tx = params.get('transaction_id') || params.get('transaction') || params.get('txn') || params.get('provider_id') || params.get('provider_transaction_id');
-          if (!tx) return;
-
-          const lookup = await fetch('/api/payment/lookup?transaction_id=' + encodeURIComponent(tx));
-          if (!lookup.ok) return;
-          const data = await lookup.json();
-          if (data && data.order_id) enable('/api/orders/' + data.order_id + '/invoice');
-        } catch (e) {
-          console.warn('Invoice lookup failed:', e);
-        }
-      }
-
-      // On load try resolving
-      tryResolveOrder();
-
-    })();
-  </script>
-  <style>
-    /* simple disabled style for button when invoice unavailable */
-    .btn.disabled { opacity: 0.65; pointer-events: none; }
-  </style>
-</body>
-</html>`);
+  const redirectUrl = `https://www.validel.shop/payment-success${orderId ? `?order_id=${orderId}` : ''}`;
+  res.redirect(302, redirectUrl);
 });
+
+// // Route de succès de paiement avec confettis et facture téléchargeable
+// // Accessible en GET /paymentsuccess?order_id=<id>
+// // /payment-success is handled by the React SPA so provider redirects stay in-app.
+// app.get('/paymentsuccess', (req, res) => {
+//   const orderId = req.query.order_id || '';
+//   const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';
+//   res.send(`<!DOCTYPE html>
+// <html lang="fr">
+// <head>
+//   <meta charset="UTF-8">
+//   <title>Paiement réussi</title>
+//   <style>
+//     body { font-family: Arial, sans-serif; text-align: center; background: #f7fafc; margin: 0; padding: 0; }
+//     h1 { color: #2ecc40; margin-top: 60px; }
+//     .confetti { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
+//     .btn { display: inline-block; margin-top: 30px; padding: 15px 30px; background: #2ecc40; color: #fff; border: none; border-radius: 8px; font-size: 1.2em; cursor: pointer; text-decoration: none; transition: background 0.2s; }
+//     .btn:hover { background: #27ae38; }
+//   </style>
+// </head>
+// <body>
+//   <canvas class="confetti"></canvas>
+//   <h1>🎉 Paiement réussi !</h1>
+//   <p>Merci pour votre commande.</p>
+//   <a id="invoiceLink" href="${invoiceUrl}" class="btn ${invoiceUrl === '#' ? 'disabled' : ''}" download>Télécharger la facture</a>
+//   <script>
+//     (function(){
+//       // Confetti animation (defensive)
+//       const canvas = document.querySelector('.confetti');
+//       const ctx = canvas.getContext && canvas.getContext('2d');
+//       if (!ctx) return; // defensive
+//       let W = window.innerWidth, H = window.innerHeight;
+//       canvas.width = W; canvas.height = H;
+//       function rand(min, max){ return Math.random()*(max-min)+min; }
+//       let confettis = Array.from({length:120}, () => ({ x: rand(0,W), y: rand(-H,0), r: 6 + Math.random()*8, d: 8 + Math.random()*8, color: 'hsl(' + (Math.random()*360) + ',90%,60%)', tilt: Math.random()*10 - 5 }));
+//       function draw(){ ctx.clearRect(0,0,W,H); confettis.forEach(c => { ctx.beginPath(); ctx.ellipse(c.x, c.y, c.r, c.r/2, c.tilt, 0, 2*Math.PI); ctx.fillStyle = c.color; ctx.fill(); }); update(); }
+//       function update(){ confettis.forEach(c => { c.y += Math.cos(c.d) + 2 + c.r/8; c.x += Math.sin(0.5) * 2; if (c.y > H) { c.x = Math.random() * W; c.y = -10; } }); }
+//       setInterval(draw, 16);
+//       window.addEventListener('resize', () => { W = window.innerWidth; H = window.innerHeight; canvas.width = W; canvas.height = H; });
+
+//       // Invoice lookup & auto-bind (if redirect doesn't include order_id)
+//       async function tryResolveOrder() {
+//         try {
+//           const params = new URLSearchParams(window.location.search);
+//           let orderId = params.get('order_id');
+//           const invoiceLink = document.getElementById('invoiceLink');
+
+//           function enable(linkHref) {
+//             invoiceLink.href = linkHref;
+//             invoiceLink.classList.remove('disabled');
+//             invoiceLink.setAttribute('download', 'invoice.html');
+//           }
+
+//           if (orderId && orderId !== '') {
+//             enable('/api/orders/' + orderId + '/invoice');
+//             return;
+//           }
+
+//           // Try transaction ids commonly used by providers
+//           const tx = params.get('transaction_id') || params.get('transaction') || params.get('txn') || params.get('provider_id') || params.get('provider_transaction_id');
+//           if (!tx) return;
+
+//           const lookup = await fetch('/api/payment/lookup?transaction_id=' + encodeURIComponent(tx));
+//           if (!lookup.ok) return;
+//           const data = await lookup.json();
+//           if (data && data.order_id) enable('/api/orders/' + data.order_id + '/invoice');
+//         } catch (e) {
+//           console.warn('Invoice lookup failed:', e);
+//         }
+//       }
+
+//       // On load try resolving
+//       tryResolveOrder();
+
+//     })();
+//   </script>
+//   <style>
+//     /* simple disabled style for button when invoice unavailable */
+//     .btn.disabled { opacity: 0.65; pointer-events: none; }
+//   </style>
+// </body>
+// </html>`);
+// });
 
 // Public endpoint: download a simple HTML invoice for an order
 app.get('/api/orders/:id/invoice', async (req, res) => {
