@@ -1663,13 +1663,13 @@ const BuyerDashboard = () => {
         setPaymentWebViewUrl(url);
         setShowPaymentWebView(true);
       } else {
-        // Sur web: ouvrir dans un nouvel onglet
-        window.open(url, '_blank');
+        // Sur web: rester dans le meme onglet pour permettre le retour vers /payment-success
+        window.location.href = url;
       }
     } catch (error) {
       console.error('Erreur ouverture lien paiement:', error);
       // Fallback
-      window.open(url, '_blank');
+      window.location.href = url;
     }
   };
 
@@ -1696,7 +1696,7 @@ const BuyerDashboard = () => {
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
       {processingPayment && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-[2px] px-6">
           <Spinner size="sm" />
         </div>
       )}

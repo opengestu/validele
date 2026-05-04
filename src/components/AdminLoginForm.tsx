@@ -65,17 +65,22 @@ const AdminLoginForm: React.FC<AdminLoginFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="max-w-md mx-auto py-12 text-center">
-      <h1 className="text-xl font-bold mb-4">Connexion administrateur</h1>
-      <p className="text-gray-600 mb-4">Connectez-vous avec votre compte administrateur.</p>
+    <div className="mx-auto max-w-md rounded-[34px] border border-white/60 bg-white/90 px-5 py-8 text-center shadow-[0_22px_70px_rgba(15,23,42,0.12)] backdrop-blur-md">
+      <div className="mb-5 flex justify-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-[24px] border border-slate-100 bg-slate-50 shadow-[0_14px_32px_rgba(15,23,42,0.08)]">
+          <span className="text-xl font-bold text-slate-800">A</span>
+        </div>
+      </div>
+      <h1 className="mb-2 text-xl font-bold text-slate-900">Connexion administrateur</h1>
+      <p className="mb-6 text-sm text-slate-600">Connectez-vous avec votre compte administrateur.</p>
 
-      <div>
+      <div className="space-y-3 text-left">
         <input
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Email"
-          className="mb-3 px-3 py-2 border rounded w-full"
+          className="h-12 w-full rounded-[18px] border border-white/70 bg-white px-4 text-slate-900 shadow-[0_10px_22px_rgba(15,23,42,0.08)] outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
           autoComplete="username"
         />
         <input
@@ -83,7 +88,7 @@ const AdminLoginForm: React.FC<AdminLoginFormProps> = ({ onSuccess }) => {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Mot de passe"
-          className="mb-3 px-3 py-2 border rounded w-full"
+          className="h-12 w-full rounded-[18px] border border-white/70 bg-white px-4 text-slate-900 shadow-[0_10px_22px_rgba(15,23,42,0.08)] outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
           autoComplete="current-password"
         />
         <input
@@ -91,11 +96,13 @@ const AdminLoginForm: React.FC<AdminLoginFormProps> = ({ onSuccess }) => {
           value={otp}
           onChange={(e) => setOtp(e.target.value)}
           placeholder="Code 2FA (optionnel)"
-          className="mb-3 px-3 py-2 border rounded w-full"
+          className="h-12 w-full rounded-[18px] border border-white/70 bg-white px-4 text-slate-900 shadow-[0_10px_22px_rgba(15,23,42,0.08)] outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
         />
-        {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
-        <div className="flex gap-2 justify-center">
-          <Button disabled={loading} onClick={submit}>Se connecter</Button>
+        {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
+        <div className="flex justify-center pt-2">
+          <Button disabled={loading} onClick={submit} className="h-12 rounded-full px-6 shadow-[0_14px_28px_rgba(37,99,235,0.18)]">
+            Se connecter
+          </Button>
         </div>
       </div>
     </div>

@@ -2209,12 +2209,32 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       });
     }
 
-    console.log('[PIXPAY-WAVE] Initiation paiement Wave:', { amount, phone, orderId });
+    const configuredSuccessUrl = String(process.env.PIXPAY_WAVE_REDIRECT_URL || '').trim();
+    const configuredCancelUrl = String(process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || '').trim();
+    const frontendBaseUrl = String(
+      process.env.PIXPAY_PUBLIC_WEB_URL ||
+      process.env.PUBLIC_WEB_URL ||
+      process.env.FRONTEND_URL ||
+      process.env.VITE_PUBLIC_WEB_URL ||
+      'https://validel.shop'
+    ).replace(/\/+$/, '');
+    const appendQueryParam = (url, key, value) => {
+      if (new RegExp(`[?&]${key}=`).test(url)) return url;
+      return url + (url.includes('?') ? '&' : '?') + `${key}=${encodeURIComponent(value)}`;
+    };
+    const successUrlBase = configuredSuccessUrl || `${frontendBaseUrl}/payment-success`;
+    const cancelUrlBase = configuredCancelUrl || `${frontendBaseUrl}/buyer`;
+    const successUrl = appendQueryParam(successUrlBase, 'order_id', orderId);
+    const cancelUrl = appendQueryParam(cancelUrlBase, 'payment', 'cancelled');
+
+    console.log('[PIXPAY-WAVE] Initiation paiement Wave:', { amount, phone, orderId, successUrl, cancelUrl });
 
     const result = await pixpayWaveInitiate({
       amount,
       phone,
       orderId,
+      successUrl,
+      cancelUrl,
       customData
     });
 
@@ -7878,14 +7898,7 @@ app.post('/api/paydunya/notification', async (req, res) => {
 
 // Route de succès de paiement avec confettis et facture téléchargeable
 // Accessible en GET /paymentsuccess?order_id=<id>
-// Note: some providers (PixPay/PayDunya) redirect to /payment-success (with hyphen).
-// Add a small compatibility redirect to handle that.
-app.get('/payment-success', (req, res) => {
-  // preserve query string when redirecting
-  const qs = req.originalUrl && req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-  return res.redirect(302, '/paymentsuccess' + qs);
-});
-
+// /payment-success is handled by the React SPA so provider redirects stay in-app.
 app.get('/paymentsuccess', (req, res) => {
   const orderId = req.query.order_id || '';
   const invoiceUrl = orderId ? `/api/orders/${orderId}/invoice` : '#';

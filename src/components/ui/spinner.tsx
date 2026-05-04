@@ -22,7 +22,7 @@ export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: Spinn
   // Add a helper class so global CSS can hide local spinners when an overlay is active
   const helperClass = hideWhenGlobal ? 'local-spinner' : 'global-spinner-exempt';
 
-  // Spinner arc style — similar to the Loading ring animation
+  // Spinner arc style — white arc on dark background, no background circle
   return (
     <div className={cn("relative flex items-center justify-center", sizeClasses[size], helperClass, className)}>
       <svg
@@ -35,17 +35,8 @@ export function Spinner({ size = 'lg', className, hideWhenGlobal = true }: Spinn
           cx="33"
           cy="33"
           r="28"
-          stroke="currentColor"
-          strokeOpacity="0.18"
-          strokeWidth="7"
-          fill="none"
-        />
-        <circle
-          cx="33"
-          cy="33"
-          r="28"
-          stroke="currentColor"
-          strokeWidth="7"
+          stroke="white"
+          strokeWidth="6"
           strokeLinecap="round"
           fill="none"
           strokeDasharray="120 200"

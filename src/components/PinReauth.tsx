@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PinInput from './auth/PinInput';
 import { useToast } from '@/hooks/use-toast';
@@ -28,9 +28,9 @@ const PinReauth: React.FC = () => {
   const { toast } = useToast();
   const { signOut } = useAuth();
 
-  const getPhoneKey = (rawPhone: string | null) => String(rawPhone || '').replace(/\D/g, '');
+  const getPhoneKey = useCallback((rawPhone: string | null) => String(rawPhone || '').replace(/\D/g, ''), []);
 
-  const readForgotPinClicks = (rawPhone: string | null) => {
+  const readForgotPinClicks = useCallback((rawPhone: string | null) => {
     const phoneKey = getPhoneKey(rawPhone);
     if (!phoneKey) return 0;
     try {
@@ -42,7 +42,7 @@ const PinReauth: React.FC = () => {
     } catch {
       return 0;
     }
-  };
+  }, [getPhoneKey]);
 
   const saveForgotPinClicks = (rawPhone: string | null, value: number) => {
     const phoneKey = getPhoneKey(rawPhone);
@@ -108,7 +108,7 @@ const PinReauth: React.FC = () => {
       localStorage.removeItem('app_backgrounded_at');
       navigate('/auth', { replace: true });
     }
-  }, [navigate]);
+  }, [navigate, readForgotPinClicks]);
 
   const handlePinComplete = async (pin: string) => {
     if (!phone) return;
@@ -258,95 +258,110 @@ const PinReauth: React.FC = () => {
 
   if (!phone) {
     return (
-      <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
+      <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 px-6">
         <Spinner size="sm" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen items-center justify-center px-4" style={{ background: 'transparent' }}>
-      {/* Logo */}
-      <div className="mb-6">
-        <img
-          src={validelLogo}
-          alt="Validèl"
-          className="w-16 h-16 mx-auto"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
-        />
-      </div>
-
-      {/* Titre */}
-      <div className="text-center mb-8">
-        <p className="text-sm text-gray-500">
-          Entrez votre code PIN pour deverouiller
-        </p>
-        {maskedPhone && (
-          <p className="text-xs text-gray-400 mt-1">
-            {maskedPhone}
-          </p>
-        )}
-      </div>
-
-      {/* Erreur */}
-      {error && (
-        <div className="w-full max-w-xs mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-600 text-center">{error}</p>
-        </div>
-      )}
-
-      {lockRemainingSeconds > 0 && (
-        <div className="w-full max-w-xs mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm text-amber-700 text-center">
-            Nouvelle tentative dans {formatLockDuration(lockRemainingSeconds)}
-          </p>
-        </div>
-      )}
-
-      {/* PIN Input */}
-      {loading ? (
-        <div className="flex flex-col items-center gap-3 py-8">
+    <>
+      {/* Full-screen overlay when loading */}
+      {loading && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 px-6">
           <Spinner size="sm" />
-          <p className="text-sm text-gray-500">Vérification...</p>
-        </div>
-      ) : lockRemainingSeconds > 0 ? (
-        <div className="w-full max-w-xs py-6">
-          <p className="text-sm text-center text-gray-500">
-            Saisie temporairement bloquée
-          </p>
-        </div>
-      ) : (
-        <div className="w-full max-w-xs">
-          <PinInput onComplete={handlePinComplete} />
         </div>
       )}
+
+      <div className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-slate-50 px-3 py-3">
+
+        <div
+          className="relative z-10 w-full max-w-[420px] max-h-[calc(100dvh-24px)] overflow-visible rounded-[28px] border-none bg-white p-3 shadow-none sm:p-4"
+          style={{ transform: 'translateY(clamp(28px, 7vh, 58px))' }}
+        >
+        <div className="relative z-20 -translate-y-24 sm:-translate-y-28">
+          <div className="mb-3 mt-0 flex flex-col items-center text-center">
+            <div className="relative z-30 mb-2 flex h-20 w-20 items-center justify-center rounded-[24px] border border-slate-200 bg-white shadow-none">
+              <img
+                src={validelLogo}
+                alt="Validèl"
+                className="h-12 w-12 object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="mb-3 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              Entrez votre code PIN pour déverrouiller
+            </p>
+            {maskedPhone && (
+              <p className="mt-1 text-xs text-slate-500">
+                {maskedPhone}
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <div className="mb-2 rounded-2xl border border-red-200 bg-red-50/90 p-2.5">
+              <p className="text-center text-sm text-red-600">{error}</p>
+            </div>
+          )}
+
+          {lockRemainingSeconds > 0 && (
+            <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50/90 p-2.5">
+              <p className="text-center text-sm text-amber-700">
+                Nouvelle tentative dans {formatLockDuration(lockRemainingSeconds)}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="flex flex-col items-center gap-3 py-5">
+            <Spinner size="sm" />
+            <p className="text-sm text-slate-600">Vérification...</p>
+          </div>
+        ) : lockRemainingSeconds > 0 ? (
+          <div className="w-full py-5">
+            <p className="text-center text-sm text-slate-600">
+              Saisie temporairement bloquée
+            </p>
+          </div>
+        ) : (
+          <div className="mt-8 sm:mt-8 w-full">
+            <PinInput onComplete={handlePinComplete} />
+          </div>
+        )}
 
       {/* Actions secondaires */}
-      <div className="mt-8 flex items-center gap-4">
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
         {showForgotPinButton && (
           <button
             onClick={handleForgotPin}
-            className="text-sm text-gray-500 hover:text-gray-700 underline transition-colors"
+            className="whitespace-nowrap text-xs font-medium text-slate-600 underline transition-colors hover:text-slate-900"
           >
             PIN oublié ?
           </button>
         )}
         <button
           onClick={handleOpenSupportWhatsApp}
-          className="text-sm text-gray-500 hover:text-gray-700 underline transition-colors"
+          className="whitespace-nowrap text-xs font-medium text-slate-600 underline transition-colors hover:text-slate-900"
         >
           Support
         </button>
         <button
           onClick={handleLogout}
-          className="text-sm text-gray-400 hover:text-gray-600 underline transition-colors"
+          className="whitespace-nowrap text-xs font-medium text-slate-500 underline transition-colors hover:text-slate-800"
         >
           Changer de compte
         </button>
       </div>
+      </div>
     </div>
+    </>
   );
 };
 

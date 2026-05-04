@@ -284,7 +284,7 @@ async function checkTransactionStatus(transactionId) {
  * @returns {Promise<Object>} Réponse PixPay avec redirection
  */
 async function initiateWavePayment(params) {
-  const { amount, phone, orderId, customData = {} } = params;
+  const { amount, phone, orderId, successUrl, cancelUrl, customData = {} } = params;
 
   if (!PIXPAY_CONFIG.api_key) {
     throw new Error('PIXPAY_API_KEY non configurée');
@@ -302,10 +302,14 @@ async function initiateWavePayment(params) {
 
   // Pour Wave, destination = numéro du client qui paie
   // Build redirect URL and append order_id so frontend can show invoice immediately
-  let redirectUrl = PIXPAY_CONFIG.wave_redirect_url || undefined;
+  let redirectUrl = successUrl || PIXPAY_CONFIG.wave_redirect_url || undefined;
   if (redirectUrl && orderId) {
-    redirectUrl = redirectUrl + (redirectUrl.includes('?') ? '&' : '?') + 'order_id=' + encodeURIComponent(orderId);
+    const hasOrderId = /[?&]order_id=/.test(redirectUrl);
+    if (!hasOrderId) {
+      redirectUrl = redirectUrl + (redirectUrl.includes('?') ? '&' : '?') + 'order_id=' + encodeURIComponent(orderId);
+    }
   }
+  const redirectErrorUrl = cancelUrl || PIXPAY_CONFIG.wave_redirect_error_url || undefined;
 
   const payload = {
     amount: parseInt(amount),
@@ -315,7 +319,9 @@ async function initiateWavePayment(params) {
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     redirect_url: redirectUrl,
-    redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url || undefined,
+    success_url: redirectUrl,
+    redirect_error_url: redirectErrorUrl,
+    cancel_url: redirectErrorUrl,
     custom_data: JSON.stringify({
       order_id: orderId,
       payment_method: 'wave',
@@ -331,6 +337,7 @@ async function initiateWavePayment(params) {
   // Avoid logging redirect_error_url verbatim to prevent false red/error highlighting.
   const logPayload = { ...sanitizedPayload };
   delete logPayload.redirect_error_url;
+  delete logPayload.cancel_url;
 
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,

@@ -23,6 +23,7 @@ public class MainActivity extends BridgeActivity {
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+		disableAppHapticFeedback();
 
 		appUpdateManager = AppUpdateManagerFactory.create(this);
 		updateLauncher = registerForActivityResult(
@@ -38,7 +39,19 @@ public class MainActivity extends BridgeActivity {
 	@Override
 	public void onResume() {
 		super.onResume();
+		disableAppHapticFeedback();
 		checkForInAppUpdate();
+	}
+
+	private void disableAppHapticFeedback() {
+		try {
+			getWindow().getDecorView().setHapticFeedbackEnabled(false);
+			if (getBridge() != null && getBridge().getWebView() != null) {
+				getBridge().getWebView().setHapticFeedbackEnabled(false);
+			}
+		} catch (Exception ignored) {
+			// Ignore: haptic feedback is best-effort and should never block startup.
+		}
 	}
 
 	private void checkForInAppUpdate() {

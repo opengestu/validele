@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, RefreshCw, Lock, User, Check, Clipboard, ShoppingCart, Truck, ChevronDown } from 'lucide-react';
+import { ArrowRight, RefreshCw, Lock, User, Check, Clipboard, ShoppingCart, Truck, ChevronDown, Delete } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { toFrenchErrorMessage } from '@/lib/errors';
@@ -13,11 +13,11 @@ import { useAuth } from '@/hooks/useAuth';
 // INSPECT: using supabase client import
 import { supabase } from '@/integrations/supabase/client';
 // INSPECT: importing otp services
-import { sendOTP, verifyOTP as verifyOTPService } from '@/services/otp';
+import { sendOTP, verifyOTP as verifyOTPService, type OTPSendResponse } from '@/services/otp';
 import { apiUrl } from '@/lib/api';
 import RoleSpecificFields from './RoleSpecificFields';
-
 import validelLogo from '@/assets/validel-logo.png';
+
 // Ajout: import du composant QRCode
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 
@@ -32,6 +32,8 @@ interface PhoneAuthFormProps {
   startResetPin?: boolean;
   /** When true, force display of the phone entry step and ignore any restored auth progress. */
   forcePhoneStep?: boolean;
+  /** Callback to control overlay visibility from parent component. */
+  onOverlayChange?: (show: boolean) => void;
 }
 
 type UserRole = 'buyer' | 'vendor' | 'delivery';
@@ -43,7 +45,43 @@ const TRANSPORT_UNSELECTED = '__transport_unselected__';
 const AUTH_RETURN_PATH_KEY = 'auth_return_path';
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
-export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false, forcePhoneStep = false }) => {
+type PersistedAuthState = {
+  step: 'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile';
+  phone: string;
+  isResetPin: boolean;
+  existingProfile: {
+    id: string;
+    full_name: string;
+    role: UserRole;
+    pin_hash: boolean;
+  } | null;
+  updated: number;
+};
+
+type LoginPinBody = {
+  token?: string;
+  error?: string;
+  retry_after_seconds?: number | string;
+};
+
+type OTPSendResponseWithDebug = OTPSendResponse & {
+  code?: string | number;
+  otp?: string | number;
+  debug_code?: string | number;
+  debugOtp?: string | number;
+};
+
+const toOtpChannel = (channel?: OTPSendResponse['channel']): 'sms' | 'whatsapp' =>
+  channel === 'whatsapp' ? 'whatsapp' : 'sms';
+
+const getOtpDebugCode = (resp: OTPSendResponse): string | null => {
+  const payload = resp as OTPSendResponseWithDebug;
+  const maybeCode = payload.code ?? payload.otp ?? payload.debug_code ?? payload.debugOtp ?? null;
+  const code = maybeCode == null ? null : String(maybeCode);
+  return code && /^\d{4}$/.test(code) ? code : null;
+};
+
+export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBack, onStepChange, className, showContinue = false, startResetPin = false, forcePhoneStep = false, onOverlayChange }) => {
   const FORGOT_PIN_CLICKS_KEY = 'pin_forgot_clicks_v1';
   const MAX_FORGOT_PIN_CLICKS = 1;
   const [step, setStep] = useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
@@ -72,13 +110,15 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const [simulatingRole, setSimulatingRole] = useState<'buyer' | 'vendor' | 'delivery' | null>(null);
   // Mobile fallback: dialog for role selection (avoids native select overlay on some devices)
   const [roleSheetOpen, setRoleSheetOpen] = useState(false);
-  const [existingProfile, setExistingProfile] = useState<{ id: string; full_name: string; role: string; pin_hash: string | null } | null>(null);
+  const [existingProfile, setExistingProfile] = useState<{ id: string; full_name: string; role: 'buyer' | 'vendor' | 'delivery'; pin_hash: string | null } | null>(null);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [confirmPinDigits, setConfirmPinDigits] = useState(['', '', '', '']);
   const [loginPinDigits, setLoginPinDigits] = useState(['', '', '', '']);
   const [pinLockoutDetected, setPinLockoutDetected] = useState(false);
   const [forgotPinClicks, setForgotPinClicks] = useState(0);
+  const [pinUiState, setPinUiState] = useState<'idle' | 'error' | 'success'>('idle');
+  const [phoneProgress, setPhoneProgress] = useState(0);
   // Store OTP code used for reset so we can re-verify server-side when saving the new PIN
   const [resetOtpCode, setResetOtpCode] = useState('');
 
@@ -121,8 +161,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     return 'Non sélectionné';
   };
 
-  const normalizePhoneForKey = (rawPhone?: string | null) => String(rawPhone || '').replace(/\D/g, '');
-  const readForgotPinClicks = (rawPhone?: string | null) => {
+  const normalizePhoneForKey = useCallback((rawPhone?: string | null) => String(rawPhone || '').replace(/\D/g, ''), []);
+  const readForgotPinClicks = useCallback((rawPhone?: string | null) => {
     const phoneKey = normalizePhoneForKey(rawPhone);
     if (!phoneKey) return 0;
     try {
@@ -134,7 +174,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     } catch {
       return 0;
     }
-  };
+  }, [normalizePhoneForKey, FORGOT_PIN_CLICKS_KEY]);
 
   const saveForgotPinClicks = (rawPhone: string | null | undefined, value: number) => {
     const phoneKey = normalizePhoneForKey(rawPhone);
@@ -154,6 +194,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
   // Hidden ref used to receive iOS/Android SMS autofill (autocomplete="one-time-code").
   const otpAutoFillRef = useRef<HTMLInputElement | null>(null);
+  const handleVerifyOtpRef = useRef<(code?: string) => void>(() => {});
   // Flag to avoid clobbering paste handling with onChange events (some browsers fire both).
   const isPastingRef = useRef<boolean>(false);
  
@@ -218,7 +259,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   useEffect(() => {
     const phoneSource = existingProfile ? formData.phone : null;
     setForgotPinClicks(readForgotPinClicks(phoneSource));
-  }, [existingProfile, formData.phone]);
+  }, [existingProfile, formData.phone, readForgotPinClicks]);
   // Clear stale existingProfile if somehow we're on the phone step with a leftover profile
   // (e.g. localStorage restored existingProfile without restoring step to login-pin)
   useEffect(() => {
@@ -229,6 +270,19 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
 
   // length du numéro (9 chiffres attendus, sans espaces)
   const phoneLen = formData.phone.replace(/\D/g, '').length;
+  
+  // Update progress bar when phone length changes
+  useEffect(() => {
+    const progress = Math.min((phoneLen / 9) * 100, 100);
+    setPhoneProgress(progress);
+  }, [phoneLen]);
+
+  // Sync loading/redirecting state with parent overlay
+  useEffect(() => {
+    if (onOverlayChange) {
+      onOverlayChange(loading || redirecting);
+    }
+  }, [loading, redirecting, onOverlayChange]);
   // Auto-focus sur le premier champ OTP quand on arrive à l'étape OTP
   useEffect(() => {
     if (step === 'otp') {
@@ -258,19 +312,21 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           setOtpDigits(newDigits);
           if (text.length === 4) {
             // small delay to let UI update
-            setTimeout(() => handleVerifyOTP(text), 80);
+            setTimeout(() => handleVerifyOtpRef.current(text), 80);
           }
         }
       } catch (e) {
         // ignore
       } finally {
         // clear the hidden input so next SMS autofill will fire again
-        try { el.value = ''; } catch {}
+        try { el.value = ''; } catch {
+          // ignore
+        }
       }
     };
     el.addEventListener('input', onInput);
     return () => el.removeEventListener('input', onInput);
-  }, [otpAutoFillRef.current]);
+  }, []);
 
   // On mount: attempt to restore minimal state (phone + step) so the flow does not
   // lose progress if the app reloads while backgrounded on mobile. We avoid
@@ -326,7 +382,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   // if the OS kills the app while backgrounded.
   useEffect(() => {
     try {
-      const s: any = {
+      const s: PersistedAuthState = {
         step,
         phone: formData.phone,
         isResetPin,
@@ -369,7 +425,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   const DEFAULT_DEV_TEST_LAST9 = DEV_TEST_LAST9S[0];
   const DEFAULT_DEV_TEST_PHONE = `+221${DEFAULT_DEV_TEST_LAST9}`;
   const isDevTestNumber = (raw?: string | null) => DEV_TEST_LAST9S.includes(String(raw || '').replace(/\D/g, '').slice(-9));
-  const isDevEnv = (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') || (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV);
+  const importMetaEnv = typeof import.meta !== 'undefined'
+    ? (import.meta as { env?: { DEV?: boolean } }).env
+    : undefined;
+  const isDevEnv = (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') || Boolean(importMetaEnv?.DEV);
   const normalizeToLast9 = (raw: string) => (raw || '').replace(/\D/g, '').slice(-9);
 
   const simulateDevSession = async (role: 'buyer' | 'vendor' | 'delivery') => {
@@ -381,7 +440,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     try {
       const phoneNorm = formatPhoneNumber(formData.phone || DEFAULT_DEV_TEST_PHONE);
       const profileId = `dev-${role}-${normalizeToLast9(phoneNorm)}`;
-      const session: any = {
+      const session: {
+        phone: string;
+        profileId: string;
+        role: 'buyer' | 'vendor' | 'delivery';
+        fullName: string;
+        loginTime: string;
+        access_token?: string;
+      } = {
         phone: phoneNorm,
         profileId,
         role,
@@ -458,13 +524,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     // Heuristic: on some mobile browsers the paste only inserts the first character
     // into the focused single-char input. Try reading the clipboard as a fallback
     // and fill remaining digits when clipboard contains more than 1 digit.
-    if (value.length === 1 && typeof navigator !== 'undefined' && (navigator as any).clipboard && (navigator as any).clipboard.readText) {
+    if (value.length === 1 && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
       const now = Date.now();
       if (now - lastClipboardAttemptRef.current > 1000) {
         lastClipboardAttemptRef.current = now;
         isPastingRef.current = true;
         try {
-          const clip = await (navigator as any).clipboard.readText();
+          const clip = await navigator.clipboard.readText();
           // Only read remaining slots starting at current index
           const clipDigits = String(clip || '').replace(/\D/g, '').slice(0, digits.length - index);
           if (clipDigits.length > 0) {
@@ -602,7 +668,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Nouvel utilisateur - envoyer OTP pour inscription
       try {
         const resp = await sendOTP(formattedPhone);
-        const respChannel = (resp as any)?.channel || 'sms';
+        const respChannel = toOtpChannel(resp.channel);
         setOtpChannel(respChannel);
         // Notify the user in the usual way
         toast({
@@ -613,9 +679,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         });
 
         // If the backend returned the OTP (useful in development/test or debug endpoints), auto-fill it
-        const maybeCode = (resp as any)?.code || (resp as any)?.otp || (resp as any)?.debug_code || (resp as any)?.debugOtp || null;
-        if (maybeCode && /^\d{4}$/.test(String(maybeCode))) {
-          const codeStr = String(maybeCode);
+        const codeStr = getOtpDebugCode(resp);
+        if (codeStr) {
           // Fill the inputs and proceed to OTP step
           setOtpDigits(codeStr.split(''));
           setStep('otp');
@@ -737,6 +802,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       setLoading(false);
     }
   };
+
+  handleVerifyOtpRef.current = handleVerifyOTP;
+
   // Créer le PIN
   const handleCreatePin = (code?: string) => {
     const pin = code || pinDigits.join('');
@@ -764,10 +832,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: formattedPhone, pin: enteredPin })
       });
-      const body = await loginResp.json().catch(() => ({}));
+      const body: LoginPinBody = await loginResp.json().catch(() => ({} as LoginPinBody));
       if (!loginResp.ok) {
-        const retryAfterSeconds = Number.parseInt(String((body as any)?.retry_after_seconds ?? ''), 10);
-        const backendError = typeof (body as any)?.error === 'string' ? String((body as any).error) : '';
+        const retryAfterSeconds = Number.parseInt(String(body.retry_after_seconds ?? ''), 10);
+        const backendError = typeof body.error === 'string' ? String(body.error) : '';
         const isPinLockout =
           loginResp.status === 429
           || (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0)
@@ -776,6 +844,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         throw new Error(body.error || 'Code PIN incorrect');
       }
       setPinLockoutDetected(false);
+      setPinUiState('success');
+      await new Promise(resolve => setTimeout(resolve, 600));
       // Succès : stocker token et session
       let accessToken = body.token;
       console.log('[DEBUG] /auth/login-pin result body:', body);
@@ -816,7 +886,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       
       // Activer le mode redirection pour afficher le spinner plein écran
       // Clear persisted interim state so the flow does not resume afterward
-      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      try { localStorage.removeItem(STORAGE_KEY); } catch {
+        // ignore
+      }
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
@@ -827,6 +899,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       return;
     } catch (error: unknown) {
       console.error('Erreur login PIN:', error);
+      setPinUiState('error');
+      setLoginPinDigits(['', '', '', '']);
+      setTimeout(() => { setPinUiState('idle'); loginPinRefs[0].current?.focus(); }, 1200);
       let errorMessage = "Veuillez réessayer";
       if (error instanceof Error) {
         errorMessage = error.message;
@@ -838,8 +913,6 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         description: errorMessage,
         variant: "destructive",
       });
-      setLoginPinDigits(['', '', '', '']);
-      loginPinRefs[0].current?.focus();
     } finally {
       setLoading(false);
     }
@@ -948,7 +1021,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
      
       // Activer le mode redirection pour afficher le spinner plein écran
       // Clear persisted interim state so the flow does not resume afterward
-      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      try { localStorage.removeItem(STORAGE_KEY); } catch {
+        // ignore
+      }
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
      
@@ -1108,7 +1183,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       
       // Activer le mode redirection pour afficher le spinner plein écran
       // Clear persisted interim state so the flow does not resume afterward
-      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      try { localStorage.removeItem(STORAGE_KEY); } catch {
+        // ignore
+      }
       setRedirecting(true);
       await new Promise(resolve => setTimeout(resolve, 800));
       
@@ -1156,7 +1233,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       // Envoyer un OTP via Direct7 pour vérifier l'identité
       // allowExisting=true permet d'envoyer l'OTP même si le profil existe (cas reset PIN)
       const resp = await sendOTP(formatted, { allowExisting: true });
-      const resetChannel = (resp as any)?.channel || 'sms';
+      const resetChannel = toOtpChannel(resp.channel);
       setOtpChannel(resetChannel);
       setIsResetPin(true);
       toast({
@@ -1167,9 +1244,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       });
 
       // If the backend returned the code, auto-fill and move to 'pin' step (reset flows verify server-side later)
-      const maybeCode = (resp as any)?.code || (resp as any)?.otp || (resp as any)?.debug_code || (resp as any)?.debugOtp || null;
-      if (maybeCode && /^\d{4}$/.test(String(maybeCode))) {
-        const codeStr = String(maybeCode);
+      const codeStr = getOtpDebugCode(resp);
+      if (codeStr) {
         setOtpDigits(codeStr.split(''));
         setResetOtpCode(codeStr);
         startResendCooldown();
@@ -1254,13 +1330,13 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     onComplete: (code: string) => void,
     hidden: boolean = false
   ) => (
-    <div className="flex justify-center gap-3">
+    <div className="flex justify-center gap-3 sm:gap-4">
       {[0, 1, 2, 3].map((index) => (
         <input
           key={index}
           ref={refs[index] as React.RefObject<HTMLInputElement>}
           type={hidden ? "password" : "text"}
-          inputMode={step === 'otp' ? "numeric" : "none"}
+          inputMode="none"
           readOnly={step !== 'otp'}
           pattern="[0-9]*"
           maxLength={1}
@@ -1278,7 +1354,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             // Récupère le texte collé, avec fallback à l'API Clipboard si nécessaire
             let text = e.clipboardData?.getData('text') ?? '';
             if (!text && navigator.clipboard && navigator.clipboard.readText) {
-              try { text = await navigator.clipboard.readText(); } catch { /* ignore */ }
+              try { text = await navigator.clipboard.readText(); } catch {
+                // ignore
+              }
             }
             // Limit pasted to remaining slots (from index)
             const remaining = digits.length - index;
@@ -1289,7 +1367,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               pasted.split('').forEach((d, i) => { if (index + i < newDigits.length) newDigits[index + i] = d; });
               setDigits(newDigits);
               // Clear hidden autofill input if present to avoid double-firing
-              try { if (otpAutoFillRef.current) otpAutoFillRef.current.value = ''; } catch (e) {}
+              try {
+                if (otpAutoFillRef.current) otpAutoFillRef.current.value = '';
+              } catch {
+                // ignore
+              }
               if (!newDigits.includes('')) {
                 onComplete?.(newDigits.join(''));
               } else {
@@ -1299,8 +1381,35 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             }
           }}
           aria-label={`Chiffre ${index + 1}`}
-          className="w-16 h-16 text-center text-3xl font-bold md:w-20 md:h-20 md:text-4xl border-2 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all bg-white/95 shadow-md"
+          className="h-16 w-16 rounded-[22px] border border-white/80 bg-white text-center text-3xl font-bold text-slate-900 shadow-none outline-none transition-all focus:border-sky-500 focus:ring-4 focus:ring-sky-100 md:h-20 md:w-20 md:text-4xl"
         />
+      ))}
+    </div>
+  );
+
+  // Fonction pour rendre les slots PIN (divs muets avec points pour login-pin)
+  const renderPinSlots = (digits: string[], state: 'idle' | 'error' | 'success') => (
+    <div className="flex justify-center gap-3">
+      {[0,1,2,3].map(i => (
+        <div key={i} style={{
+          width: 64, height: 72,
+          borderRadius: 16,
+          border: `1.5px solid ${
+            state === 'error' ? '#E24B4A' :
+            state === 'success' ? '#1D9E75' :
+            i < digits.filter(Boolean).length ? '#111827' : 'var(--color-border-tertiary)'
+          }`,
+          background: state === 'error' ? '#FCEBEB' : state === 'success' ? '#E1F5EE' : 'var(--color-background-primary)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'all 0.15s',
+          animation: state === 'error' ? 'shake 0.35s ease' : undefined,
+        }}>
+          {i < digits.filter(Boolean).length && (
+            <div style={{ width: 10, height: 10, borderRadius: '50%',
+              background: state === 'error' ? '#E24B4A' : state === 'success' ? '#1D9E75' : '#111827'
+            }} />
+          )}
+        </div>
       ))}
     </div>
   );
@@ -1372,17 +1481,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     if (step === 'confirm-pin') return removeLastFromGroup(confirmPinDigits, setConfirmPinDigits, confirmPinRefs);
   };
 
-  // Haptic feedback helper (small vibration on supported devices)
+  // Haptic feedback intentionally disabled: Android back/navigation should stay silent.
   const provideHaptic = () => {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof window !== 'undefined' && 'navigator' in window && (navigator as any).vibrate) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (navigator as any).vibrate(10);
-      }
-    } catch (e) {
-      // ignore if vibrate not supported or throws
-    }
+    // no-op
   };
 
   // Detect Android to apply larger bottom offset (nav bar) on some devices
@@ -1399,52 +1500,57 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       return false;
     })();
 
-    const btnSize = 'w-[82px] h-[82px] sm:w-[76px] sm:h-[76px]';
+    const btnSize = 'w-full h-[54px] sm:h-[60px]';
+    
+    const keypadLayout = [
+      { num: '1', letters: '' },
+      { num: '2', letters: 'ABC' },
+      { num: '3', letters: 'DEF' },
+      { num: '4', letters: 'GHI' },
+      { num: '5', letters: 'JKL' },
+      { num: '6', letters: 'MNO' },
+      { num: '7', letters: 'PQRS' },
+      { num: '8', letters: 'TUV' },
+      { num: '9', letters: 'WXYZ' },
+      { num: '', letters: '' },
+      { num: '0', letters: '' },
+      { num: 'backspace', letters: '' },
+    ];
 
     return (
-      <div className="flex flex-col items-center mt-6">
-        {/* Keypad container */}
-        <div className="flex flex-col items-center gap-4 px-5 pt-5 pb-6 rounded-[28px] bg-transparent backdrop-blur-0 shadow-none border-none">
-          {/* Key grid */}
-          <div className="grid grid-cols-3 gap-[14px]">
-            {[1,2,3,4,5,6,7,8,9].map(n => (
-              <button
-                key={n}
-                type="button"
-                aria-label={`Num ${n}`}
-                onPointerDown={provideHaptic}
-                onClick={() => handleKeypadDigit(String(n))}
-                onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-white to-slate-50 text-primary shadow-none border-none tracking-[-0.5px]`}
-              >{n}</button>
+      <div className="mt-12 sm:mt-14 w-full px-0">
+          <div className="grid w-full grid-cols-3 gap-8">
+            {keypadLayout.map((key, index) => (
+              key.num === '' ? (
+                <div key={index} className={btnSize} />
+              ) : key.num === 'backspace' ? (
+                <button
+                  key={index}
+                  type="button"
+                  aria-label="Effacer"
+                  title="Effacer"
+                  onPointerDown={provideHaptic}
+                  onClick={handleKeypadBackspace}
+                  onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
+                  className={`${btnSize} rounded-[14px] bg-slate-200 text-slate-700 shadow-none transition-colors hover:bg-slate-300 active:scale-[0.98] focus:outline-none flex items-center justify-center touch-manipulation`}
+                >
+                  <Delete className="h-6 w-6" strokeWidth={2.25} />
+                </button>
+              ) : (
+                <button
+                  key={index}
+                  type="button"
+                  aria-label={`Num ${key.num}`}
+                  onPointerDown={provideHaptic}
+                  onClick={() => handleKeypadDigit(key.num)}
+                  onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
+                  className={`${btnSize} rounded-[14px] bg-white shadow-none transition-colors hover:bg-slate-50 active:scale-[0.98] focus:outline-none flex flex-col items-center justify-center touch-manipulation`}
+                >
+                  <span className="text-[29px] font-bold text-slate-950 leading-none">{key.num}</span>
+                  {key.letters && <span className="mt-0.5 text-[9px] font-semibold leading-none text-slate-500">{key.letters}</span>}
+                </button>
+              )
             ))}
-            {/* Empty bottom-left cell */}
-            <div className={btnSize} />
-            {/* 0 */}
-            <button
-              type="button"
-              aria-label="Num 0"
-              onPointerDown={provideHaptic}
-              onClick={() => handleKeypadDigit('0')}
-              onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-              className={`${btnSize} rounded-[18px] text-[26px] font-semibold flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-white to-slate-50 text-primary shadow-none border-none`}
-            >0</button>
-            {/* Backspace */}
-            <button
-              type="button"
-              aria-label="Effacer"
-              title="Effacer"
-              onPointerDown={provideHaptic}
-              onClick={handleKeypadBackspace}
-              onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-              className={`${btnSize} rounded-[18px] flex items-center justify-center touch-manipulation transition-all duration-100 active:scale-90 focus:outline-none bg-gradient-to-br from-rose-50 to-rose-100 text-red-500 shadow-none border-none`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
-                <line x1="18" y1="9" x2="12" y2="15" />
-                <line x1="12" y1="9" x2="18" y2="15" />
-              </svg>
-            </button>
           </div>
 
           {/* Continuer button */}
@@ -1454,28 +1560,24 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               onPointerDown={provideHaptic}
               onClick={() => { if (step === 'phone') handleSendOTP(); }}
               disabled={!canContinue || loading}
-              className={`w-full h-12 rounded-[16px] flex items-center justify-center font-bold text-[17px] transition-all duration-100 active:scale-[0.97] disabled:opacity-40 bg-primary text-primary-foreground border-none tracking-[0.3px] ${canContinue ? 'shadow-[0_6px_20px_rgba(0,0,0,0.18),0_2px_6px_rgba(0,0,0,0.10)]' : 'shadow-none'}`}
+              className={`mt-4 w-full h-[48px] rounded-[14px] flex items-center justify-center font-semibold text-[16px] transition-all duration-200 group ${canContinue ? 'bg-slate-950 text-white border border-slate-950 active:scale-[0.99]' : 'bg-slate-200 text-slate-400 border border-slate-200'} shadow-none disabled:opacity-80`}
             >
-              Continuer →
+              Continuer <ArrowRight className={`ml-2 h-4 w-4 transition-transform duration-200 ${canContinue ? 'group-hover:translate-x-0.5' : ''}`} />
             </button>
           )}
 
           {/* PIN oublié + Changer de compte — côte à côte */}
           {step === 'login-pin' && (
-            <div className="flex gap-[14px] justify-center items-center mt-1.5 mb-2">
-              {pinLockoutDetected && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleForgotPin()}
-                    disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
-                    className="text-[13px] leading-none whitespace-nowrap font-medium hover:underline transition-opacity disabled:opacity-40 text-gray-900 bg-transparent"
-                  >
-                    PIN oublié ?
-                  </button>
-                  <span className="text-gray-300 text-sm">|</span>
-                </>
-              )}
+            <div className="flex gap-[14px] justify-center items-center mt-3 mb-2">
+              <button
+                type="button"
+                onClick={() => handleForgotPin()}
+                disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
+                className="text-[13px] font-medium text-gray-500 hover:text-gray-900 transition-colors disabled:opacity-40"
+              >
+                PIN oublié ?
+              </button>
+              <span className="text-gray-300 text-sm">|</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1490,44 +1592,40 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               </button>
             </div>
           )}
-        </div>
       </div>
     );
   };
 
   return (
     <>
-      {/* Spinner overlay plein écran pendant la redirection */}
-      {redirecting && (
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" />
-        </div>
-      )}
-      
-      {/* Spinner overlay pendant le chargement (loading) - moins prioritaire que redirecting */}
-      {loading && !redirecting && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/30 backdrop-blur-[2px]">
-          <Spinner size="sm" />
-        </div>
-      )}
       {/* Suppression de tout texte 'chargement...' entre code pin et dashboard */}
 
-      <form onSubmit={(e) => e.preventDefault()} className={`min-h-[48vh] flex items-start justify-center px-4 pt-0 transform translate-y-12 md:translate-y-16 pb-8 ${className ?? ''}`}>
-      <div className="mx-auto w-full max-w-[320px] sm:max-w-[360px] bg-background/60 backdrop-blur-md p-3 sm:p-4 rounded-2xl border-none shadow-none space-y-3 sm:pb-4">
+      <form onSubmit={(e) => e.preventDefault()} className={`w-full flex items-start justify-center px-0 pt-0 pb-0 ${className ?? ''}`}>
+      <div className="mx-auto w-full max-w-none space-y-4 p-0 shadow-none backdrop-blur-0">
 
 
         {/* Étape : téléphone */}
         {step === 'phone' && (
-          <div className="space-y-2">
-            <div className="w-full flex justify-center">
-              <div className="w-full max-w-[320px]">
-                <div className={`flex items-center rounded-xl border bg-white overflow-hidden mb-2 transition-colors ${phoneLen > 0 && phoneLen < 9 ? 'border-red-300' : 'border-gray-300'} focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30`}>
-                  <div className="flex items-center gap-1.5 px-3 py-3 shrink-0 border-r border-gray-200 bg-white select-none">
-                    <span className="text-xl leading-none">🇸🇳</span>
-                    <span className="text-sm font-semibold text-gray-700">+221</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 mt-0.5"><polyline points="6 9 12 15 18 9"/></svg>
+          <div className="space-y-3">
+            {/* App icon with verification badge */}
+            <div className="flex justify-center">
+              <div className="relative">
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[24px] bg-white shadow-none ring-1 ring-slate-200">
+                  <img src={validelLogo} alt="Validel" className="h-full w-full object-cover" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-emerald-500 shadow-none">
+                  <Check className="h-4 w-4 text-white" strokeWidth={3} />
+                </div>
+              </div>
+            </div>
+            <div className="w-full">
+              <div className={`mb-2 flex w-full items-center overflow-hidden rounded-[20px] border bg-slate-950 shadow-none transition-colors ${phoneLen > 0 && phoneLen < 9 ? 'border-rose-400' : 'border-slate-900'} focus-within:border-slate-700`}>
+                  <div className="flex h-12 shrink-0 select-none items-center gap-1 border-r border-white/10 bg-white/10 px-2.5">
+                    <span className="text-xs font-bold text-slate-300">SN</span>
+                    <span className="text-[13px] font-bold text-white">+221</span>
+                    <ChevronDown className="mt-0.5 h-3 w-3 text-slate-400" strokeWidth={2.5} />
                   </div>
-                  <div className="flex items-center flex-1">
+                  <div className="flex min-w-0 flex-1 items-center">
                     <Input
                       id="phone"
                       type="tel"
@@ -1536,7 +1634,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                         const rawDigits = e.target.value.replace(/\D/g, '');
                         handleInputChange('phone', rawDigits);
                       }}
-                      placeholder="Numéro de téléphone"
+                      placeholder="7X XXX XX XX"
                       inputMode="none"
                       readOnly
                       onFocus={(e) => e.target.blur()}
@@ -1549,10 +1647,18 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                         }
                         e.preventDefault();
                       }}
-                      className="flex-1 h-12 text-base px-3 border-0 bg-transparent placeholder:text-gray-400 placeholder:text-base focus:outline-none cursor-default shadow-none focus-visible:ring-0"
+                      className="h-12 min-w-0 flex-1 cursor-default border-0 bg-transparent px-2.5 text-[17px] font-semibold tracking-[0.08em] text-white shadow-none placeholder:text-[15px] placeholder:font-medium placeholder:tracking-[0.08em] placeholder:text-slate-500 focus:outline-none focus-visible:ring-0"
                       maxLength={12}
                     />
                   </div>
+                </div>
+                
+                {/* Progress bar under phone input */}
+                <div className="h-1 overflow-hidden rounded-full bg-slate-200">
+                  <div 
+                    className="h-full rounded-full bg-sky-500 transition-all duration-300 ease-out"
+                    style={{ width: `${phoneProgress}%` }}
+                  />
                 </div>
 
                 {/* Quick simulator for the provided test number (dev or explicit test numbers) */}
@@ -1574,8 +1680,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   </div>
                 )}
 
-                <div className="mt-14 sm:mt-10 md:mt-12">{renderNumericKeypad()}</div>
-              </div>
+                <div className="mt-5">{renderNumericKeypad()}</div>
             </div>
           </div>
         )}
@@ -1584,7 +1689,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'otp' && (
           <>
             <div className="text-center mb-3">
-              <p className="text-base font-medium">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[24px] border border-white/70 bg-white/95 shadow-none">
+                <Lock className="h-7 w-7 text-sky-600" />
+              </div>
+              <p className="text-base font-semibold text-slate-900">
                 {otpChannel === 'whatsapp' ? 'Entrez le code reçu par WhatsApp' : 'Entrez le code reçu par SMS'}
               </p>
               <p className="text-sm text-muted-foreground mt-2">
@@ -1597,7 +1705,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             <input
               ref={otpAutoFillRef as React.RefObject<HTMLInputElement>}
               type="text"
-              inputMode="numeric"
+              inputMode="none"
               autoComplete="one-time-code"
               aria-label="Code OTP automatique"
               title="Code OTP automatique"
@@ -1606,8 +1714,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               tabIndex={-1}
               className="absolute -left-[9999px] w-px h-px opacity-0"
             />
-                <div className="mt-6 mb-16 sm:mb-4">
+                <div className="mt-6 mb-8 sm:mb-4">
               {renderDigitInputs(otpDigits, setOtpDigits, otpRefs, handleVerifyOTP, false)}
+            </div>
+
+            <div className="mt-8 sm:mt-6">
+              {renderNumericKeypad()}
             </div>
 
             <div className="text-center mt-2">
@@ -1626,27 +1738,34 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'login-pin' && (
           <>
             <div className="text-center mb-1 md:mb-2">
-              <div className="inline-flex items-center justify-center w-14 h-14 md:w-16 md:h-16 bg-primary/10 rounded-full mb-1">
-                <Lock className="w-6 h-6 md:w-8 md:h-8 text-primary" />
-              </div>
-              <h3 className="text-xl sm:text-2xl font-extrabold text-foreground">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
+              {(() => {
+                const initials = (existingProfile?.full_name || 'U')
+                  .split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+                return (
+                  <div style={{
+                    width: 56, height: 56, borderRadius: '50%',
+                    background: '#E6F1FB', color: '#0C447C',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, fontWeight: 500, margin: '0 auto 12px auto'
+                  }}>{initials}</div>
+                );
+              })()}
+              <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900">Bonjour {existingProfile?.full_name?.split(' ')[0]} ! 👋</h3>
               <p className="text-sm text-muted-foreground mt-1">Entrez votre code PIN pour continuer</p>
             </div>
-            <div className="mb-16 sm:mb-4">{renderDigitInputs(loginPinDigits, setLoginPinDigits, loginPinRefs, handleLoginPin, true)}</div>
+            <div className="mb-8 sm:mb-4">{renderPinSlots(loginPinDigits, pinUiState)}</div>
             {renderNumericKeypad()}
             {/* Mobile: bouton PIN oublié déplacé dans le clavier numérique (voir plus haut) */}
             {/* Desktop: bouton normal */}
             <div className="hidden sm:flex justify-center gap-3 mt-6">
-              {pinLockoutDetected && (
-                <button
-                  type="button"
-                  onClick={() => handleForgotPin()}
-                  disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
-                  className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
-                >
-                  PIN oublié ?
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => handleForgotPin()}
+                disabled={!formData.phone || loading || forgotPinClicks >= MAX_FORGOT_PIN_CLICKS}
+                className="text-sm text-gray-500 hover:text-gray-900 transition-colors px-4 py-2 bg-white rounded-md disabled:opacity-40"
+              >
+                PIN oublié ?
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1655,7 +1774,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   setExistingProfile(null);
                 }}
                 disabled={loading}
-                className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md shadow-sm"
+                className="text-sm text-primary hover:underline px-4 py-2 bg-white rounded-md"
               >
                 Changer de compte
               </button>
@@ -1667,11 +1786,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'pin' && (
           <>
             <div className="text-center mb-2 md:mb-3">
-              <h3 className="text-lg sm:text-xl font-extrabold text-foreground">Créez votre code PIN</h3>
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[24px] border border-slate-200 bg-white shadow-none">
+                <Lock className="h-7 w-7 text-sky-600" />
+              </div>
+              <h3 className="text-lg sm:text-xl font-extrabold text-slate-900">Créez votre code PIN</h3>
               <p className="text-sm text-muted-foreground mt-2">Choisissez 4 chiffres pour sécuriser votre compte</p>
               <p className="text-xs text-blue-600 mt-2">🔒 Ce code vous permettra de vous connecter rapidement lors de vos prochaines visites</p>
             </div>
-            <div className="mb-16 sm:mb-4">{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
+            <div className="mb-8 sm:mb-4">{renderDigitInputs(pinDigits, setPinDigits, pinRefs, handleCreatePin, true)}</div>
             {renderNumericKeypad()}
             <Button type="button" onClick={handleBack} className="w-full text-sm text-muted-foreground hover:text-foreground mt-6">← Retour</Button>
           </>
@@ -1681,14 +1803,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
         {step === 'confirm-pin' && (
           <>
             <div className="text-center mb-4">
-              <div className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 bg-primary/10 rounded-full mb-3">
-                <Lock className="w-8 h-8 md:w-10 md:h-10 text-primary" />
+              <div className="inline-flex h-16 w-16 items-center justify-center rounded-[24px] border border-slate-200 bg-white shadow-none mb-3">
+                <Lock className="w-7 h-7 text-sky-600" />
               </div>
-              <h3 className="text-lg sm:text-xl font-extrabold text-foreground">Confirmez votre PIN</h3>
+              <h3 className="text-lg sm:text-xl font-extrabold text-slate-900">Confirmez votre PIN</h3>
               <p className="text-sm text-muted-foreground mt-1">Entrez à nouveau votre code PIN pour le confirmer</p>
               <p className="text-xs text-orange-600 mt-1">⚠️ Assurez-vous d'entrer le même code que précédemment</p>
             </div>
-            <div className="mb-16 sm:mb-4">{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
+            <div className="mb-8 sm:mb-4">{renderDigitInputs(confirmPinDigits, setConfirmPinDigits, confirmPinRefs, handleConfirmPin, true)}</div>
             {renderNumericKeypad()}
           </>
         )}
@@ -1728,7 +1850,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 value={formData.fullName}
                 onChange={(e) => handleInputChange('fullName', e.target.value)}
                 placeholder="Votre prénom et nom"
-                className="h-12 text-lg rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+                className="h-12 text-lg rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-none"
                 autoFocus
               />
             </div>
@@ -1739,7 +1861,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 <>
                   <Button
                     onClick={() => setRoleSheetOpen(true)}
-                    className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold justify-between w-full"
+                    className="h-12 rounded-xl border-2 bg-white shadow-none flex items-center px-3 text-base font-semibold justify-between w-full"
                     aria-haspopup="dialog"
                     aria-expanded={roleSheetOpen}
                     aria-label={`Choix du rôle. Rôle actuel: ${getRoleLabel(formData.role)}`}
@@ -1807,10 +1929,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 </>
               ) : (
                       <Select value={formData.role} onValueChange={(value) => handleInputChange('role', value)}>
-                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-none flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
                     <SelectValue placeholder="Sélectionner un rôle" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                  <SelectContent className="rounded-xl shadow-none border mt-2 bg-white max-h-72 overflow-y-auto">
                           <SelectItem value={ROLE_UNSELECTED} disabled className="text-muted-foreground">
                             Sélectionner un rôle (obligatoire)
                           </SelectItem>
@@ -1852,10 +1974,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 onValueChange={(value) => handleInputChange('vehicleInfo', value === TRANSPORT_UNSELECTED ? '' : value)}
                 required
               >
-                <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-none flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
                   <SelectValue placeholder="Moyen de transport" />
                 </SelectTrigger>
-                <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                <SelectContent className="rounded-xl shadow-none border mt-2 bg-white max-h-72 overflow-y-auto">
                   <SelectItem value={TRANSPORT_UNSELECTED} disabled className="text-muted-foreground">
                     Choisir un moyen de transport
                   </SelectItem>
@@ -1891,10 +2013,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   disabled={!isValidRole(formData.role)}
                   required
                 >
-                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-sm flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
+                  <SelectTrigger className="h-12 rounded-xl border-2 bg-white shadow-none flex items-center px-3 text-base font-semibold focus:ring-2 focus:ring-primary/20 transition-all [&>svg]:h-5 [&>svg]:w-5 [&>svg]:opacity-100 [&>svg]:text-gray-700">
                     <SelectValue placeholder={formData.role === 'vendor' ? 'Adresse de la boutique (obligatoire)' : 'Adresse (obligatoire)'} />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl shadow-lg border mt-2 bg-white max-h-72 overflow-y-auto">
+                  <SelectContent className="rounded-xl shadow-none border mt-2 bg-white max-h-72 overflow-y-auto">
                     <SelectItem value={ADDRESS_UNSELECTED} disabled className="text-muted-foreground">
                       Adresse (obligatoire)
                     </SelectItem>
@@ -1977,7 +2099,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 {/* Champ texte si "Autre" sélectionné */}
                 {formData.address === 'Autre' && (
                   <Input
-                    className="mt-2 h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-sm"
+                    className="mt-2 h-12 rounded-xl border-2 placeholder:text-sm md:placeholder:text-base placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/20 transition-shadow shadow-none"
                     placeholder="Entrez votre adresse exacte"
                     value={formData.customAddress || ''}
                     onChange={e => handleInputChange('customAddress', e.target.value)}

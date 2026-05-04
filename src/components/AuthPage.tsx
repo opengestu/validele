@@ -1,11 +1,11 @@
 // INSPECT: AuthPage
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Card, CardContent } from '@/components/ui/card';
+import { createPortal } from 'react-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { LEGAL_FEATURE_ENABLED, PRIVACY_POLICY_ROUTE, TERMS_OF_USE_ROUTE } from '@/lib/legalConsent';
-const validelLogo = '/icons/validel-logo.svg';
 import { PhoneAuthForm } from './auth/PhoneAuthForm';
+import { Spinner } from '@/components/ui/spinner';
 
 const AUTH_PHONE_WELCOME_SEEN_KEY = 'auth_phone_welcome_seen_v1';
 
@@ -20,6 +20,7 @@ const AuthPage = () => {
 
   const [authStep, setAuthStep] = React.useState<'phone' | 'otp' | 'login-pin' | 'pin' | 'confirm-pin' | 'profile'>('phone');
   const [showFirstVisitWelcome, setShowFirstVisitWelcome] = React.useState(false);
+  const [showOverlay, setShowOverlay] = React.useState(false);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -72,36 +73,50 @@ const AuthPage = () => {
   // Format d'affichage 7X XXX XX XX
 
   return (
-    <div className="flex flex-col min-h-screen items-center bg-white pt-0 md:pt-0">
-      {authStep === 'phone' && showFirstVisitWelcome && (
-        <div className="w-full text-center mt-0 mb-0 pt-0 transform translate-y-6 md:translate-y-10">
-          <h2 className="text-2xl md:text-3xl font-extrabold">Bienvenue chez <span className="text-primary font-bold">Validèl</span> !</h2>
-          <p className="text-sm md:text-base text-muted-foreground mt-1 mb-0">Entrez votre numéro pour commencer</p>
-        </div>
+    <>
+      {/* Portal-based overlay as modal with margins */}
+      {showOverlay && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 px-6">
+          <Spinner size="sm" />
+        </div>,
+        document.body
       )}
 
-      <div className="w-full flex items-center justify-center mt-0 mb-2">
-        <PhoneAuthForm
-          onStepChange={setAuthStep}
-          showContinue
-          initialPhone={initialPhone}
-          startResetPin={startResetPin}
-          forcePhoneStep={forcePhoneEntry}
-        />
+      <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-100 px-4 py-6">
+
+        <div className="relative z-10 w-full max-w-[360px]">
+          {authStep === 'phone' && showFirstVisitWelcome && (
+            <div className="mb-4 text-center text-slate-900">
+              <h2 className="text-2xl font-extrabold tracking-tight md:text-3xl">Bienvenue chez <span className="text-slate-900">Validèl</span> !</h2>
+              <p className="mt-2 text-sm text-slate-600 md:text-base">Entrez votre numéro pour commencer</p>
+            </div>
+          )}
+
+          <div className="w-full rounded-[28px] bg-white p-5 shadow-none ring-1 ring-slate-200/70">
+            <PhoneAuthForm
+              onStepChange={setAuthStep}
+              showContinue
+              initialPhone={initialPhone}
+              startResetPin={startResetPin}
+              forcePhoneStep={forcePhoneEntry}
+              onOverlayChange={setShowOverlay}
+            />
+          </div>
+
+          {LEGAL_FEATURE_ENABLED && (
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-500">
+              <Link to={PRIVACY_POLICY_ROUTE} className="underline underline-offset-2 hover:text-slate-900">
+                Règles de confidentialité
+              </Link>
+              <span className="h-1 w-1 rounded-full bg-slate-300" />
+              <Link to={TERMS_OF_USE_ROUTE} className="underline underline-offset-2 hover:text-slate-900">
+                Conditions d'utilisation
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
-
-      {LEGAL_FEATURE_ENABLED && (
-        <div className="mb-6 flex items-center gap-3 text-xs text-muted-foreground">
-          <Link to={PRIVACY_POLICY_ROUTE} className="hover:text-foreground underline underline-offset-2">
-            Règles de confidentialité
-          </Link>
-          <span className="h-1 w-1 rounded-full bg-slate-300" />
-          <Link to={TERMS_OF_USE_ROUTE} className="hover:text-foreground underline underline-offset-2">
-            Conditions d'utilisation
-          </Link>
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 

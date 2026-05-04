@@ -1862,7 +1862,14 @@ const VendorDashboard = () => {
     markSellDemoVideoAsWatched(video.id);
   }, [markSellDemoVideoAsWatched]);
 
-  const allSellDemoVideosWatched = sellDemoVideos.length > 0 && watchedSellDemoVideoIds.length === sellDemoVideos.length;
+  const unwatchedSellDemoVideos = sellDemoVideos.filter((video) => !watchedSellDemoVideoIds.includes(video.id));
+  const allSellDemoVideosWatched = sellDemoVideos.length > 0 && unwatchedSellDemoVideos.length === 0;
+
+  React.useEffect(() => {
+    if (allSellDemoVideosWatched && sellDemoModalOpen && !sellDemoVideoPlayModalOpen) {
+      setSellDemoModalOpen(false);
+    }
+  }, [allSellDemoVideosWatched, sellDemoModalOpen, sellDemoVideoPlayModalOpen]);
 
   const getSellDemoPlayerSrc = (src: string, shouldAutoplay = false) => {
     try {
@@ -1994,22 +2001,24 @@ const VendorDashboard = () => {
           </TabsList>
         {/* Products Tab */}
         <TabsContent value="products" className="space-y-6">
-          <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-4 shadow-sm">
-            <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-orange-200/40 blur-2xl" />
-            <div className="pointer-events-none absolute -bottom-8 left-10 h-20 w-20 rounded-full bg-amber-200/40 blur-2xl" />
-            <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+          {!allSellDemoVideosWatched && (
+            <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-4 shadow-sm">
+              <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-orange-200/40 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-8 left-10 h-20 w-20 rounded-full bg-amber-200/40 blur-2xl" />
+              <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleSellDemoClick}
+                  className="bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
+                >
+                  Regarder demo
+                </Button>
               </div>
-              <Button
-                type="button"
-                onClick={handleSellDemoClick}
-                className="bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
-              >
-                Regarder demo
-              </Button>
             </div>
-          </div>
+          )}
           <div className="flex justify-between items-center gap-2">
             <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
             {products.length > 0 && (
@@ -2568,19 +2577,21 @@ const VendorDashboard = () => {
           <div className="space-y-6">
             <TabsContent value="products" className="mt-0">
               <div className="space-y-6">
-                <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-3 shadow-sm">
-                  <div className="pointer-events-none absolute -right-10 -top-10 h-20 w-20 rounded-full bg-orange-200/40 blur-2xl" />
-                  <div className="relative">
-                    <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
-                    <Button
-                      type="button"
-                      onClick={handleSellDemoClick}
-                      className="mt-3 h-8 px-3 text-xs bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
-                    >
-                      Regarder la démo
-                    </Button>
+                {!allSellDemoVideosWatched && (
+                  <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-3 shadow-sm">
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-20 w-20 rounded-full bg-orange-200/40 blur-2xl" />
+                    <div className="relative">
+                      <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+                      <Button
+                        type="button"
+                        onClick={handleSellDemoClick}
+                        className="mt-3 h-8 px-3 text-xs bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
+                      >
+                        Regarder la démo
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="flex justify-between items-center gap-2">
                   <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
                   {products.length > 0 && (
@@ -3070,13 +3081,12 @@ const VendorDashboard = () => {
           <DialogHeader>
             <DialogTitle>Videos de demonstration - Mes Produits</DialogTitle>
             <p className="text-xs text-gray-600">
-              {watchedSellDemoVideoIds.length}/{sellDemoVideos.length} video(s) vue(s)
-              {allSellDemoVideosWatched ? ' - Toutes les videos ont ete vues.' : ''}
+              {unwatchedSellDemoVideos.length} video(s) restante(s)
             </p>
           </DialogHeader>
 
           <div className="grid gap-4 grid-cols-1">
-            {sellDemoVideos.map((video, index) => {
+            {unwatchedSellDemoVideos.map((video, index) => {
               const isWatched = watchedSellDemoVideoIds.includes(video.id);
               return (
                 <div
