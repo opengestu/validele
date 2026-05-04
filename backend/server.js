@@ -1916,7 +1916,14 @@ async function createPayDunyaFallbackLink({ amount, orderId, phone, customData =
   const storeName = safeCustomData.storeName ? String(safeCustomData.storeName) : 'Validel';
 
   const basePublicUrl = String(process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com').replace(/\/+$/, '');
-  const returnUrlBase = String(process.env.PAYDUNYA_RETURN_URL || `${basePublicUrl}/payment-success`);
+  const frontendBaseUrl = String(
+    process.env.PIXPAY_PUBLIC_WEB_URL ||
+    process.env.PUBLIC_WEB_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.VITE_PUBLIC_WEB_URL ||
+    'https://www.validel.shop'
+  ).replace(/\/+$/, '');
+  const returnUrlBase = String(process.env.PAYDUNYA_RETURN_URL || `${frontendBaseUrl}/payment-success`);
   const returnUrl = returnUrlBase.includes('order_id=')
     ? returnUrlBase
     : `${returnUrlBase}${returnUrlBase.includes('?') ? '&' : '?'}order_id=${encodeURIComponent(orderId)}`;
@@ -7226,8 +7233,8 @@ app.post('/api/payments/create-order-and-invoice', async (req, res) => {
         name: storeName || 'Validèl',
       },
       actions: {
-        cancel_url: process.env.PAYDUNYA_CANCEL_URL || 'https://validele.app/payment/cancel',
-        return_url: process.env.PAYDUNYA_RETURN_URL || 'https://validele.app/payment/success',
+        cancel_url: process.env.PAYDUNYA_CANCEL_URL || 'https://www.validel.shop/buyer',
+        return_url: process.env.PAYDUNYA_RETURN_URL || 'https://www.validel.shop/payment-success',
         callback_url: process.env.PAYDUNYA_CALLBACK_URL || 'https://validele.onrender.com/api/paydunya/callback',
       }
     }, {
