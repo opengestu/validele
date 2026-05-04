@@ -2256,6 +2256,14 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     const successUrl = appendQueryParam(successUrlBase, 'order_id', orderId);
     const cancelUrl = appendQueryParam(cancelUrlBase, 'payment', 'cancelled');
 
+    console.log('[PIXPAY-WAVE] DEBUG - Configuration:', {
+      PIXPAY_WAVE_REDIRECT_URL: process.env.PIXPAY_WAVE_REDIRECT_URL,
+      configuredSuccessUrl,
+      configuredFrontendBase,
+      successUrlBaseRaw,
+      successUrlBase,
+      finalSuccessUrl: successUrl
+    });
     console.log('[PIXPAY-WAVE] Initiation paiement Wave:', { amount, phone, orderId, successUrl, cancelUrl });
 
     const result = await pixpayWaveInitiate({

@@ -37,6 +37,8 @@ console.log('[PIXPAY] Configuration chargée:', {
   wave_business_name_id: PIXPAY_CONFIG.wave_business_name_id ? '***' : 'NON DÉFINI',
   base_url: PIXPAY_CONFIG.base_url,
   ipn_base_url: PIXPAY_CONFIG.ipn_base_url,
+  wave_redirect_url: PIXPAY_CONFIG.wave_redirect_url || 'NON DÉFINI',
+  wave_redirect_error_url: PIXPAY_CONFIG.wave_redirect_error_url || 'NON DÉFINI',
   service_id_mapping: PIXPAY_SERVICE_IDS
 });
 
@@ -303,6 +305,11 @@ async function initiateWavePayment(params) {
   // Pour Wave, destination = numéro du client qui paie
   // Build redirect URL and append order_id so frontend can show invoice immediately
   let redirectUrl = successUrl || PIXPAY_CONFIG.wave_redirect_url || undefined;
+  console.log('[PIXPAY-WAVE] DEBUG - redirectUrl construction:', {
+    successUrl,
+    PIXPAY_CONFIG_wave_redirect_url: PIXPAY_CONFIG.wave_redirect_url,
+    redirectUrl_before_orderId: redirectUrl
+  });
   if (redirectUrl && orderId) {
     const hasOrderId = /[?&]order_id=/.test(redirectUrl);
     if (!hasOrderId) {
@@ -310,6 +317,11 @@ async function initiateWavePayment(params) {
     }
   }
   const redirectErrorUrl = cancelUrl || PIXPAY_CONFIG.wave_redirect_error_url || undefined;
+
+  console.log('[PIXPAY-WAVE] DEBUG - Final redirect URLs:', {
+    redirectUrl,
+    redirectErrorUrl
+  });
 
   const payload = {
     amount: parseInt(amount),
