@@ -129,6 +129,7 @@ export class PixPayService {
           // Some Capacitor AppPlugin versions don't include openUrl in typings.
           // Use a safe runtime check and cast to any to call it when available.
           // If unavailable, fall back to setting window.location.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const appAny = App as any;
           if (appAny && typeof appAny.openUrl === 'function') {
             await appAny.openUrl({ url: smsLink });
@@ -137,6 +138,7 @@ export class PixPayService {
           }
 
           // If openUrl not available, use window.location as fallback
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (window as any).location.href = smsLink;
           console.log('[PixPay] App.openUrl not available in this runtime — used window.location as fallback:', smsLink);
           return;

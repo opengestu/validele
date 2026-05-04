@@ -343,7 +343,7 @@ async function initiateWavePayment(params) {
     orderId,
     service_id: payload.service_id,
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
-    redirect_url: payload.redirect_url || 'N/A',
+    redirect_url: payload.redirect_url || 'https://www.validel.shop/payment-success',
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     payload_preview: {
       amount: logPayload.amount,
