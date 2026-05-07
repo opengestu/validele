@@ -1030,15 +1030,16 @@ app.post('/api/vendor/orders', async (req, res) => {
 // Retourne les produits d'un vendeur (bypass RLS via service or token-aware endpoint)
 app.post('/api/vendor/products', async (req, res) => {
   try {
-    const { supabase } = require('./supabase');
     const { vendor_id } = req.body || {};
     if (!vendor_id) return res.status(400).json({ success: false, error: 'vendor_id requis' });
 
     const authHeader = req.headers.authorization || null;
     let userId = null;
+    let token = null;
+    let isSupabaseUserToken = false;
 
     if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
+      token = authHeader.split(' ')[1];
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.sub) userId = decoded.sub;
@@ -1046,16 +1047,40 @@ app.post('/api/vendor/products', async (req, res) => {
         // try Supabase token
         try {
           const { data: { user }, error } = await supabase.auth.getUser(token);
-          if (!error && user) userId = user.id;
+          if (!error && user) {
+            userId = user.id;
+            isSupabaseUserToken = true;
+          }
         } catch (e2) { /* ignore */ }
       }
+    }
+
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Authentification requise' });
     }
 
     if (userId && String(userId) !== String(vendor_id)) {
       return res.status(403).json({ success: false, error: 'Accès refusé : vendor_id mismatch' });
     }
 
-    const { data, error } = await supabase
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let dbClient = null;
+
+    if (serviceRoleKey) {
+      dbClient = createClient(SUPABASE_URL, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+      });
+    } else if (isSupabaseUserToken && SUPABASE_ANON_KEY && token) {
+      dbClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: { headers: { Authorization: `Bearer ${token}` } }
+      });
+    } else {
+      console.error('[API] /api/vendor/products missing SUPABASE_SERVICE_ROLE_KEY for SMS/custom token');
+      return res.status(500).json({ success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required for this endpoint' });
+    }
+
+    const { data, error } = await dbClient
       .from('products')
       .select('*')
       .eq('vendor_id', vendor_id)

@@ -2536,35 +2536,40 @@ const BuyerDashboard = () => {
               </button>
             </div>
             
-            <div className="flex-1 overflow-auto p-6">
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex justify-between items-start gap-4">
-                    <h3 className="text-2xl font-bold text-gray-900 flex-1 min-w-0 leading-tight break-words">{searchResult.name}</h3>
-                    <div className="text-right shrink-0">
-                      <p className="text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
-                      <p className="text-sm text-gray-500 mt-1">Code: {searchResult.code}</p>
+            <div className="flex-1 overflow-auto p-4 sm:p-6">
+              <div className="space-y-3">
+                <div>
+                  <div className="flex flex-col gap-2 mb-2">
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900 leading-snug break-words">{searchResult.name}</h3>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-2xl sm:text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
+                      <p className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">Code: {searchResult.code}</p>
                     </div>
                   </div>
-                  <p className="text-gray-600 whitespace-pre-line break-words leading-relaxed">
+
+                  <p className="text-sm text-gray-600 leading-relaxed mb-3" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                     {searchResult.description}
                   </p>
-                  <div>
-                    {searchResult.is_available ? (
-                      <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
-                        Produit actif
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
-                        Produit inactif
-                      </span>
-                    )}
+
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {searchResult.is_available ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
+                          Produit actif
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
+                          Produit inactif
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-xs sm:text-sm text-gray-600">
+                      <span className="font-medium">Vendeur:</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1">
-                    <span className="font-medium">Vendeur(se):</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
-                  </p>
                 </div>
-                
+
               </div>
             </div>
 
