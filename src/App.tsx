@@ -1,5 +1,5 @@
-
 import React from "react";
+import AppInstall from "@/components/AppInstall";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -235,7 +235,6 @@ const DeepLinkHandler: React.FC = () => {
           [
             'validele.pages.dev',
             'www.validel.shop',
-            'validel.shop',
             import.meta.env.VITE_PUBLIC_WEB_URL,
             import.meta.env.VITE_SITE_URL,
             import.meta.env.VITE_WEB_APP_URL,
@@ -361,6 +360,7 @@ const App = () => {
                 {!adminOnlyMode && <Route path="/colors" element={<ColorDemo />} />}
                 {!adminOnlyMode && <Route path="/product" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/product/:code" element={<ProductSearch />} />}
+                {!adminOnlyMode && <Route path="/install" element={<AppInstall />} />}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}
                 {!adminOnlyMode && (

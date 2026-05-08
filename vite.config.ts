@@ -21,8 +21,19 @@ export default defineConfig(({ mode }) => {
     },
   };
 
+  const copyRedirectsPlugin = {
+    name: 'copy-redirects',
+    closeBundle() {
+      const sourcePath = path.resolve(__dirname, './public/_redirects');
+      const targetPath = path.resolve(__dirname, './dist/_redirects');
+
+      if (!fs.existsSync(sourcePath)) return;
+      fs.copyFileSync(sourcePath, targetPath);
+    },
+  };
+
   return {
-    plugins: [react(), copyAssetLinksPlugin],
+    plugins: [react(), copyAssetLinksPlugin, copyRedirectsPlugin],
     // Web (Cloudflare/SPA): base absolue pour supporter les routes profondes (/product/:code)
     // Mobile (Capacitor): base relative pour charger les assets depuis le bundle local
     base: isMobileBuild ? './' : '/',

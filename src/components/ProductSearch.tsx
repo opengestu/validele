@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,6 +65,19 @@ const ProductSearch = () => {
   }, [shouldAutoOpenNativeApp, codeFromUrl]);
 
   useEffect(() => {
+    if (!shouldAutoOpenNativeApp || typeof window === 'undefined') return;
+
+    const suppressInstallPrompt = (event: Event) => {
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+    };
+
+    window.addEventListener('beforeinstallprompt', suppressInstallPrompt as EventListener);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', suppressInstallPrompt as EventListener);
+    };
+  }, [shouldAutoOpenNativeApp]);
+
+  useEffect(() => {
     if (!isNativeProductLink) return;
     const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
     if (!rawCode || typeof window === 'undefined') return;
@@ -101,27 +115,73 @@ const ProductSearch = () => {
     const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
     if (!rawCode) return;
 
-    const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
-    let hasOpenedApp = false;
+    const openAppWithDeeplink = async () => {
+      try {
+        const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
+        let hasOpenedApp = false;
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        hasOpenedApp = true;
+        const handleVisibilityChange = () => {
+          if (document.visibilityState === 'hidden') {
+            hasOpenedApp = true;
+          }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        
+        // Try to open the app via Capacitor if available
+        if (Capacitor.isPluginAvailable('App')) {
+          try {
+            await CapacitorApp.openUrl({ url: deeplinkUrl });
+            hasOpenedApp = true;
+          } catch (err) {
+            console.log('CapacitorApp.openUrl failed, will try window.location.href');
+          }
+        }
+
+        // Fallback to window.location.href
+        if (!hasOpenedApp) {
+          window.location.href = deeplinkUrl;
+        }
+
+        const fallbackTimer = window.setTimeout(() => {
+          if (!hasOpenedApp) {
+            try {
+              const ua = navigator.userAgent || '';
+              const isAndroid = /Android/i.test(ua);
+              const isIos = /iPhone|iPad|iPod/i.test(ua);
+
+              if (isAndroid) {
+                // Use an intent:// URL to let Chrome open the app or fall back to Play Store automatically
+                const intentUrl = `intent://www.validel.shop/product/${encodeURIComponent(rawCode)}#Intent;scheme=https;package=${encodeURIComponent(androidPackageName)};S.browser_fallback_url=${encodeURIComponent(playStoreUrl)};end`;
+                window.location.href = intentUrl;
+                return;
+              }
+
+              if (isIos && iosStoreUrl) {
+                window.location.href = iosStoreUrl;
+                return;
+              }
+            } catch (e) {
+              // ignore and show fallback UI
+            }
+
+            setShowInstallFallback(true);
+          }
+        }, 1800);
+
+        return () => {
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+          window.clearTimeout(fallbackTimer);
+        };
+      } catch (err) {
+        console.error('Error opening app with deeplink:', err);
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.location.href = deeplinkUrl;
-
-    const fallbackTimer = window.setTimeout(() => {
-      if (!hasOpenedApp) {
-        setShowInstallFallback(true);
-      }
-    }, 1800);
-
+    const cleanup = openAppWithDeeplink();
+    
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.clearTimeout(fallbackTimer);
+      cleanup?.then(fn => fn?.());
     };
   }, [codeFromUrl, shouldAutoOpenNativeApp]);
 

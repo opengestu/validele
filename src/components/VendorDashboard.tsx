@@ -710,9 +710,42 @@ const VendorDashboard = () => {
         is_available: (p as any).is_available ?? true
       })) as Product[];
 
-      if (mappedData.length > 0) {
-        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mappedData)); } catch (e) { /* ignore */ }
-        setProducts(mappedData);
+      const backendIds = new Set(mappedData.map((p) => String(p.id)));
+      const cachedProducts = (() => {
+        try {
+          const cacheRaw = localStorage.getItem(`cached_products_${caller.id}`);
+          if (!cacheRaw) return [] as Product[];
+          const parsed = JSON.parse(cacheRaw);
+          return Array.isArray(parsed) ? (parsed as Product[]) : [];
+        } catch {
+          return [] as Product[];
+        }
+      })();
+
+      const fallbackCandidates = [...products, ...cachedProducts];
+      const missingInactiveProducts = fallbackCandidates.filter((candidate) => {
+        if (!candidate) return false;
+        if (candidate.is_available !== false) return false;
+        return !backendIds.has(String(candidate.id));
+      });
+
+      const mergedById = new Map<string, Product>();
+      [...mappedData, ...missingInactiveProducts].forEach((product) => {
+        const key = String(product.id);
+        if (!mergedById.has(key)) {
+          mergedById.set(key, product);
+        }
+      });
+
+      const mergedData = Array.from(mergedById.values()).sort((a, b) => {
+        const timeA = new Date(a.created_at || 0).getTime();
+        const timeB = new Date(b.created_at || 0).getTime();
+        return timeB - timeA;
+      });
+
+      if (mergedData.length > 0) {
+        try { localStorage.setItem(`cached_products_${caller.id}`, JSON.stringify(mergedData)); } catch (e) { /* ignore */ }
+        setProducts(mergedData);
       } else {
         // If backend says no products, trust server state and clear stale cache.
         try { localStorage.removeItem(`cached_products_${caller.id}`); } catch (e) { /* ignore */ }
@@ -731,7 +764,7 @@ const VendorDashboard = () => {
       } catch (e) { /* ignore */ }
       toast({ title: 'Erreur', description: 'Impossible de charger les produits', variant: 'destructive' });
     }
-  }, [user, smsUser, toast]);
+  }, [user, smsUser, toast, products]);
 
   const handleToggleProductAvailability = async (product: Product) => {
     const caller = smsUser || user;
@@ -1706,9 +1739,6 @@ const VendorDashboard = () => {
       const hostname = String(window.location.hostname || '').toLowerCase();
       const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
       if (isLocal) return cloudflareDefault;
-
-      const origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
-      if (origin) return origin;
     }
 
     return cloudflareDefault;

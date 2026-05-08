@@ -30,7 +30,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="validele.pages.dev" />
+                    android:host="www.validel.shop"
+                    android:pathPrefix="/product" />
             </intent-filter>
         </activity>
 

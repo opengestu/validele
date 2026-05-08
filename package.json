@@ -23,7 +23,8 @@
     "test": "vitest",
     "cypress:open": "cypress open",
     "cypress:run": "cypress run",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:products": "npm run build && npx wrangler pages deploy ./dist --project-name validele-products"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",

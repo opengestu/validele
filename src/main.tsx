@@ -20,11 +20,22 @@ const hideSplash = () => {
 window.addEventListener('app:auth-ready', hideSplash, { once: true });
 
 if (import.meta.env.PROD && !Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((error) => {
-      console.warn('[PWA] Service worker registration failed:', error);
+  const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
+  const isProductLinkRoute = pathname.startsWith('/product/');
+
+  if (isProductLinkRoute) {
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .catch(() => {
+        // ignore unregister errors on deep-link landing pages
+      });
+  } else {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((error) => {
+        console.warn('[PWA] Service worker registration failed:', error);
+      });
     });
-  });
+  }
 }
 
 root.render(
