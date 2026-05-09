@@ -37,8 +37,9 @@ const ProductSearch = () => {
         ? '/admin'
         : '/';
   const hasShareCodeInUrl = Boolean((codeFromUrl || '').trim());
-  const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
   const isWebContext = !Capacitor.isNativePlatform();
+  const shouldShowOpenAppPrompt = isWebContext && hasShareCodeInUrl;
+  const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
   const isNativeProductLink = Capacitor.isNativePlatform() && hasShareCodeInUrl;
   const isMobileWeb = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -48,7 +49,6 @@ const ProductSearch = () => {
   const androidPackageName = import.meta.env.VITE_ANDROID_APP_PACKAGE || 'com.validele.app';
   const playStoreUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(androidPackageName)}`;
   const iosStoreUrl = import.meta.env.VITE_IOS_APP_STORE_URL || '';
-  const [showInstallFallback, setShowInstallFallback] = useState(false);
 
   const persistPendingProductCode = useCallback((rawCode?: string | null) => {
     const code = String(rawCode || '').trim();
@@ -59,10 +59,6 @@ const ProductSearch = () => {
     }
     localStorage.setItem(SHARED_PRODUCT_PENDING_CODE_KEY, code);
   }, []);
-
-  useEffect(() => {
-    setShowInstallFallback(false);
-  }, [shouldAutoOpenNativeApp, codeFromUrl]);
 
   useEffect(() => {
     if (!shouldAutoOpenNativeApp || typeof window === 'undefined') return;
@@ -165,7 +161,6 @@ const ProductSearch = () => {
               // ignore and show fallback UI
             }
 
-            setShowInstallFallback(true);
           }
         }, 1800);
 
@@ -231,6 +226,10 @@ const ProductSearch = () => {
     const decodedCode = decodeURIComponent(codeFromUrl).trim();
     if (!decodedCode) return;
 
+    if (isWebContext) {
+      return;
+    }
+
     if (authLoading) return;
 
     if (isNonBuyerSession) {
@@ -259,6 +258,41 @@ const ProductSearch = () => {
     searchProductByCode,
     userProfile?.role,
   ]);
+
+  if (shouldShowOpenAppPrompt) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <Card className="w-full max-w-xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Ouverture de l'application</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-slate-700 leading-relaxed">
+              Le lien essaie d'ouvrir automatiquement l'application mobile pour continuer en toute securite.
+            </p>
+
+            <Button type="button" className="w-full" onClick={handleOpenAppNow}>
+              Reessayer d'ouvrir l'application
+            </Button>
+
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <p className="text-sm text-slate-700">
+                Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Button type="button" variant="outline" onClick={handleInstallAndroid}>
+                  Telecharger Android
+                </Button>
+                <Button type="button" variant="outline" onClick={handleInstallIos}>
+                  Telecharger iPhone
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (showNonBuyerLinkNotice) {
     return (
@@ -322,21 +356,19 @@ const ProductSearch = () => {
               Reessayer d'ouvrir l'application
             </Button>
 
-            {showInstallFallback && (
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <p className="text-sm text-slate-700">
-                  Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Button type="button" variant="outline" onClick={handleInstallAndroid}>
-                    Telecharger Android
-                  </Button>
-                  <Button type="button" variant="outline" onClick={handleInstallIos}>
-                    Telecharger iPhone
-                  </Button>
-                </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <p className="text-sm text-slate-700">
+                Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Button type="button" variant="outline" onClick={handleInstallAndroid}>
+                  Telecharger Android
+                </Button>
+                <Button type="button" variant="outline" onClick={handleInstallIos}>
+                  Telecharger iPhone
+                </Button>
               </div>
-            )}
+            </div>
           </CardContent>
         </Card>
       </div>

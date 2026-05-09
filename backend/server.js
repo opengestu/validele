@@ -2313,7 +2313,7 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     let fallbackReason = null;
     let requiresExternalValidation = false;
 
-    if (result?.success && !result?.sms_link) {
+    if (!result?.success || !result?.sms_link) {
       fallbackReason = 'pixpay_missing_sms_link';
       try {
         finalResult = await createPayDunyaFallbackLink({
@@ -2349,6 +2349,20 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
           success: false,
           error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
           fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
+        });
+      }
+    }
+
+    if (!finalResult?.success) {
+      const pixpayErrorMessage = finalResult?.message || result?.message || 'PixPay Wave a retourné une erreur';
+      if (provider === 'paydunya_wave' && finalResult?.sms_link) {
+        // Keep the PayDunya fallback result even if PixPay failed.
+      } else {
+        return res.status(502).json({
+          success: false,
+          error: pixpayErrorMessage,
+          fallback_reason: fallbackReason || 'pixpay_failed',
+          pixpay_response: process.env.DEBUG_PIXPAY === 'true' ? result : undefined
         });
       }
     }

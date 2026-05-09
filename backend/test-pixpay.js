@@ -28,10 +28,14 @@ const CONFIG = {
 // ========================================
 async function testPixPayWave(amount, destination, orderId = null) {
   const url = CONFIG.production_url;
+  let normalizedDestination = String(destination || '').replace(/[\s\-\(\)]/g, '');
+  if (normalizedDestination.startsWith('+')) normalizedDestination = normalizedDestination.substring(1);
+  if (normalizedDestination.startsWith('0')) normalizedDestination = `221${normalizedDestination.substring(1)}`;
+  if (!normalizedDestination.startsWith('221')) normalizedDestination = `221${normalizedDestination}`;
   
   const payload = {
     amount: parseInt(amount),
-    destination: String(destination),
+    destination: normalizedDestination,
     api_key: CONFIG.api_key,
     service_id: CONFIG.service_id,
     business_name_id: CONFIG.business_name_id,
@@ -92,7 +96,7 @@ async function testPixPayWave(amount, destination, orderId = null) {
 // ========================================
 async function testWavePayment() {
   console.log('\n💙 TEST: Paiement Wave de 500 FCFA');
-  await testPixPayWave(100, '774254729', 'TEST_ORDER_001');
+  await testPixPayWave(500, '774254729', 'TEST_ORDER_001');
 }
 
 // ========================================

@@ -62,8 +62,10 @@ async function initiatePayment(params) {
   // Formater le numéro de téléphone en format local (ex: 774254729)
   let formattedPhone = phone ? String(phone).replace(/[\s\-\(\)]/g, '') : '';
   if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
-  if (formattedPhone.startsWith('221')) formattedPhone = formattedPhone.substring(3);
-  if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
+  // Keep a canonical cleaned version, but keep the original country prefix info
+  let cleanedPhone = formattedPhone;
+  if (cleanedPhone.startsWith('221')) cleanedPhone = cleanedPhone.substring(3);
+  if (cleanedPhone.startsWith('0')) cleanedPhone = cleanedPhone.substring(1);
 
   const payload = {
     amount: parseInt(amount),
@@ -323,9 +325,13 @@ async function initiateWavePayment(params) {
     redirectErrorUrl
   });
 
+  // PixPay can require the destination with country code for some flows.
+  // Try to send the destination with country prefix (221) when the cleaned phone looks like a national number.
+  const destinationForApi = (cleanedPhone && cleanedPhone.length === 9) ? `221${cleanedPhone}` : formattedPhone;
+
   const payload = {
     amount: parseInt(amount),
-    destination: formattedPhone,  // Numéro du client Wave
+    destination: destinationForApi,  // Numéro du client Wave (préfixe pays si nécessaire)
     api_key: PIXPAY_CONFIG.api_key,
     service_id: PIXPAY_SERVICE_IDS.WAVE_LINK, // Forcé : Wave → PixPay (génère le lien de paiement)
     business_name_id: PIXPAY_CONFIG.wave_business_name_id,
@@ -348,6 +354,10 @@ async function initiateWavePayment(params) {
   const logPayload = { ...sanitizedPayload };
   delete logPayload.redirect_error_url;
   delete logPayload.cancel_url;
+
+  if (process.env.DEBUG_PIXPAY === 'true') {
+    console.log('[PIXPAY-WAVE] Debug payload (sanitized):', JSON.stringify(logPayload, null, 2));
+  }
 
   console.log('[PIXPAY-WAVE] Initiation paiement Wave:', {
     amount,
