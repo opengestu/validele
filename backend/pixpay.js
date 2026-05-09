@@ -67,9 +67,12 @@ async function initiatePayment(params) {
   if (cleanedPhone.startsWith('221')) cleanedPhone = cleanedPhone.substring(3);
   if (cleanedPhone.startsWith('0')) cleanedPhone = cleanedPhone.substring(1);
 
+  // Use 9-digit format (without country code) for Senegal payments
+  const destinationPhone = (cleanedPhone && cleanedPhone.length === 9) ? cleanedPhone : formattedPhone;
+
   const payload = {
     amount: parseInt(amount),
-    destination: formattedPhone,
+    destination: destinationPhone,
     api_key: PIXPAY_CONFIG.api_key,
     service_id: PIXPAY_CONFIG.service_id_client_payment, // CASHOUT (213) = client paie → argent entre chez nous
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
@@ -174,9 +177,14 @@ async function sendMoney(params) {
     throw new Error(`Type de wallet non supporté: ${walletType}. Utilisez 'wave-senegal' ou 'orange-senegal'`);
   }
 
+  // Pour Wave, utiliser le format 9 chiffres. Pour Orange Money, garder le format original
+  const destinationPhone = (walletType === 'wave-senegal' && cleanedPhone && cleanedPhone.length === 9)
+    ? cleanedPhone
+    : formattedPhone;
+
   const payload = {
     amount: Number(amount),
-    destination: formattedPhone,
+    destination: destinationPhone,
     api_key: PIXPAY_CONFIG.api_key,
     service_id: service_id,
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
@@ -327,9 +335,9 @@ async function initiateWavePayment(params) {
     redirectErrorUrl
   });
 
-  // PixPay can require the destination with country code for some flows.
-  // Try to send the destination with country prefix (221) when the cleaned phone looks like a national number.
-  const destinationForApi = (cleanedPhone && cleanedPhone.length === 9) ? `221${cleanedPhone}` : formattedPhone;
+  // Wave API expects exactly 9 digits (Senegal national format, no country code)
+  // If cleanedPhone is not exactly 9 digits, use it as fallback, but Wave will reject it
+  const destinationForApi = cleanedPhone && cleanedPhone.length === 9 ? cleanedPhone : cleanedPhone;
 
   const payload = {
     amount: parseInt(amount),

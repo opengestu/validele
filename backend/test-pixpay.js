@@ -30,8 +30,13 @@ async function testPixPayWave(amount, destination, orderId = null) {
   const url = CONFIG.production_url;
   let normalizedDestination = String(destination || '').replace(/[\s\-\(\)]/g, '');
   if (normalizedDestination.startsWith('+')) normalizedDestination = normalizedDestination.substring(1);
-  if (normalizedDestination.startsWith('0')) normalizedDestination = `221${normalizedDestination.substring(1)}`;
-  if (!normalizedDestination.startsWith('221')) normalizedDestination = `221${normalizedDestination}`;
+  // Enlever le code pays si présent (Wave s'attend à 9 chiffres sans 221)
+  if (normalizedDestination.startsWith('221')) normalizedDestination = normalizedDestination.substring(3);
+  if (normalizedDestination.startsWith('0')) normalizedDestination = normalizedDestination.substring(1);
+  // S'assurer que c'est 9 chiffres
+  if (normalizedDestination.length !== 9) {
+    throw new Error(`Numéro invalide pour Wave: ${destination}. Wave s'attend à 9 chiffres (format: 774254729)`);
+  }
   
   const payload = {
     amount: parseInt(amount),
