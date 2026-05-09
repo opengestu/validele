@@ -302,8 +302,9 @@ async function initiateWavePayment(params) {
   // Formater le numéro de téléphone en format local (ex: 774254729)
   let formattedPhone = phone ? String(phone).replace(/[\s\-\(\)]/g, '') : '';
   if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
-  if (formattedPhone.startsWith('221')) formattedPhone = formattedPhone.substring(3);
-  if (formattedPhone.startsWith('0')) formattedPhone = formattedPhone.substring(1);
+  let cleanedPhone = formattedPhone;
+  if (cleanedPhone.startsWith('221')) cleanedPhone = cleanedPhone.substring(3);
+  if (cleanedPhone.startsWith('0')) cleanedPhone = cleanedPhone.substring(1);
 
   // Pour Wave, destination = numéro du client qui paie
   // Build redirect URL and append order_id so frontend can show invoice immediately
