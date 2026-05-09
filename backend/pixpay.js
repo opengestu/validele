@@ -417,7 +417,7 @@ async function initiateWavePayment(params) {
       data: error.response?.data
     });
 
-    throw {
+    return {
       success: false,
       message: error.response?.data?.message || error.message,
       status: error.response?.status,
