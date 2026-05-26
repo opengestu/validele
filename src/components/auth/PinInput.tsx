@@ -19,8 +19,10 @@ function DigitBtn({ label, onPress }: { label: string; onPress: () => void }) {
       aria-label={`Chiffre ${label}`}
       onMouseDown={down}
       onMouseUp={up}
+      onMouseLeave={() => setPressed(false)}
       onTouchStart={(e) => { e.preventDefault(); down(); }}
       onTouchEnd={(e) => { e.preventDefault(); up(); }}
+      onTouchCancel={() => setPressed(false)}
       style={{
         width: '100%', height: BUTTON_HEIGHT,
         borderRadius: 0,
@@ -42,10 +44,11 @@ function DigitBtn({ label, onPress }: { label: string; onPress: () => void }) {
         WebkitBoxShadow: 'none',
         MozBoxShadow: 'none',
         filter: 'none',
-        transform: 'none',
+        transform: pressed ? 'scale(1.14)' : 'scale(1)',
         textShadow: 'none',
-        transition: 'none',
+        transition: 'transform 160ms ease',
         outline: 'none',
+        willChange: 'transform',
       }}
     >
       {label}
@@ -64,8 +67,10 @@ function DeleteBtn({ onPress }: { onPress: () => void }) {
       aria-label="Effacer"
       onMouseDown={down}
       onMouseUp={up}
+      onMouseLeave={() => setPressed(false)}
       onTouchStart={(e) => { e.preventDefault(); down(); }}
       onTouchEnd={(e) => { e.preventDefault(); up(); }}
+      onTouchCancel={() => setPressed(false)}
       style={{
         width: '100%', height: BUTTON_HEIGHT,
         borderRadius: 16,
@@ -85,10 +90,11 @@ function DeleteBtn({ onPress }: { onPress: () => void }) {
         WebkitBoxShadow: 'none',
         MozBoxShadow: 'none',
         filter: 'none',
-        transform: 'none',
+        transform: pressed ? 'scale(1.12)' : 'scale(1)',
         textShadow: 'none',
-        transition: 'background 0.12s ease',
+        transition: 'transform 160ms ease, background 0.12s ease',
         outline: 'none',
+        willChange: 'transform',
       }}
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"

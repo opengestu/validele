@@ -94,6 +94,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(express.json({
+  limit: '5mb',
   // Capture raw body for better debugging of invalid JSON requests (kept truncated when logged)
   verify: (req, res, buf, encoding) => {
     try {
@@ -236,7 +237,7 @@ process.on('unhandledRejection', function (reason, p) {
 });
 
 // Force le parsing URL-encoded pour les formulaires
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // Middleware de gestion d'erreur globale pour attraper les erreurs de parsing JSON
 app.use((err, req, res, next) => {
@@ -352,7 +353,7 @@ app.post('/api/vendor/add-product', async (req, res) => {
     }
     console.log('[DEBUG] /api/vendor/add-product headers.authorization:', req.headers.authorization?.slice(0, 200));
 
-    const { vendor_id, name, price, description, warranty, code, is_available, stock_quantity } = req.body || {};
+    const { vendor_id, name, price, description, warranty, image_url, code, is_available, stock_quantity } = req.body || {};
     if (!vendor_id || !name || !price || !description || !code) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
     }
@@ -411,6 +412,7 @@ app.post('/api/vendor/add-product', async (req, res) => {
         price: Number(price),
         description,
         warranty,
+        image_url: image_url || null,
         code,
         is_available: is_available !== undefined ? is_available : true,
         stock_quantity: stock_quantity !== undefined ? stock_quantity : 0

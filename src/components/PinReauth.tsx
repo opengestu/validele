@@ -206,7 +206,10 @@ const PinReauth: React.FC = () => {
         const backendError = (data && typeof data.error === 'string' && data.error.trim().length > 0)
           ? data.error
           : null;
-        setError(backendError || 'Code PIN incorrect. Veuillez réessayer.');
+        const normalizedError = backendError && /invalid\s*pin/i.test(backendError)
+          ? 'Code PIN incorrect. Veuillez réessayer.'
+          : backendError;
+        setError(normalizedError || 'Code PIN incorrect. Veuillez réessayer.');
         setLoading(false);
       }
     } catch (e) {

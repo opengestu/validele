@@ -46,7 +46,10 @@ import {
   User,
   QrCode,
   Share2,
-  MessageCircle
+  MessageCircle,
+  Image as ImageIcon,
+  Upload,
+  X
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -101,6 +104,52 @@ const SELL_DEMO_VIDEOS: SellDemoVideo[] = [
     playerTitle: 'Comment remettre une commande Pro'
   }
 ];
+
+const PRODUCT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const PRODUCT_IMAGE_MAX_DIMENSION = 1200;
+
+const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(reader.error || new Error('Lecture image impossible'));
+  reader.readAsDataURL(file);
+});
+
+const resizeProductImage = async (file: File): Promise<string> => {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Veuillez choisir un fichier image');
+  }
+
+  const sourceUrl = await fileToDataUrl(file);
+  const img = document.createElement('img');
+  img.decoding = 'async';
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Image invalide ou illisible'));
+    img.src = sourceUrl;
+  });
+
+  const scale = Math.min(
+    1,
+    PRODUCT_IMAGE_MAX_DIMENSION / Math.max(img.naturalWidth || 1, img.naturalHeight || 1)
+  );
+  const width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+  const height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Compression image impossible');
+  ctx.drawImage(img, 0, 0, width, height);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+  if (dataUrl.length > PRODUCT_IMAGE_MAX_BYTES * 1.4) {
+    throw new Error('Image trop lourde. Choisissez une image plus petite');
+  }
+  return dataUrl;
+};
 
 const VendorDashboard = () => {
     const { toast } = useToast();
@@ -403,6 +452,7 @@ const VendorDashboard = () => {
     price: '',
     description: '',
     warranty: '',
+    image_url: '',
     demo_video_url: '',
     // optional dev-only code field (visible only in dev sessions)
     code: '',
@@ -1335,6 +1385,86 @@ const VendorDashboard = () => {
     );
   };
 
+  const handleProductImageFile = async (
+    file: File | undefined,
+    onImageChange: (imageUrl: string) => void
+  ) => {
+    if (!file) return;
+    try {
+      const imageUrl = await resizeProductImage(file);
+      onImageChange(imageUrl);
+    } catch (error) {
+      toast({
+        title: 'Image non ajoutée',
+        description: (error as any)?.message || 'Impossible de préparer cette image',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const renderProductImagePicker = (
+    imageUrl: string | undefined,
+    onImageChange: (imageUrl: string) => void
+  ) => (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">Image du produit (optionnel)</label>
+      {imageUrl ? (
+        <div className="relative overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+          <img
+            src={imageUrl}
+            alt="Aperçu du produit"
+            className="h-36 w-full object-cover"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="absolute right-2 top-2 h-8 bg-white/95 px-2"
+            onClick={() => onImageChange('')}
+            aria-label="Retirer l'image"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      ) : (
+        <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-600 hover:bg-gray-100">
+          <Upload className="h-5 w-5" />
+          <span>Choisir une image</span>
+          <Input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              void handleProductImageFile(file, onImageChange);
+              e.currentTarget.value = '';
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
+
+  const renderProductImage = (product: Product, compact = false) => {
+    return (
+      <div className={compact ? 'mb-2' : 'mb-4'}>
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt={product.name ? `Image de ${product.name}` : 'Image du produit'}
+            className={`${compact ? 'h-24' : 'h-40'} w-full rounded-lg border border-gray-200 object-cover`}
+            loading="lazy"
+          />
+        ) : (
+          <div className={`${compact ? 'h-24' : 'h-40'} flex w-full flex-col items-center justify-center rounded-lg border border-gray-200 bg-gray-100 text-gray-500`}>
+            <ImageIcon className="mb-1 h-7 w-7" />
+            <span className="text-xs font-medium">Aucune image</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price || !newProduct.description) {
       toast({ title: 'Erreur', description: 'Veuillez remplir tous les champs obligatoires', variant: 'destructive' });
@@ -1363,6 +1493,7 @@ const VendorDashboard = () => {
           description: newProduct.description,
           price: Number.parseInt(newProduct.price || '0') || 0,
           warranty: newProduct.warranty || undefined,
+          image_url: newProduct.image_url || undefined,
           code: productCode,
           is_available: true,
           stock_quantity: 0,
@@ -1376,7 +1507,7 @@ const VendorDashboard = () => {
 
         setProducts(prev => [devProd, ...(prev || [])]);
         toast({ title: 'Succès', description: 'Produit ajouté (dev)' });
-        setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', image_url: '', demo_video_url: '', code: '', category: '' });
         setAddModalOpen(false);
         return;
       }
@@ -1431,6 +1562,7 @@ const VendorDashboard = () => {
           price: Number(newProduct.price),
           description: newProduct.description,
           warranty: newProduct.warranty,
+          image_url: newProduct.image_url,
           code: productCode,
           category: newProduct.category,
           is_available: true,
@@ -1468,18 +1600,18 @@ const VendorDashboard = () => {
         if (!resp.ok || !json || !json.success) throw new Error((json && json.error) ? String(json.error) : 'Erreur backend');
 
         toast({ title: 'Succès', description: 'Produit ajouté' });
-        setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
+        setNewProduct({ name: '', price: '', description: '', warranty: '', image_url: '', demo_video_url: '', code: '', category: '' });
         setAddModalOpen(false);
         fetchProducts();
         return;
       }
 
       // Supabase session
-      const { error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty ?? null, code: productCode, is_available: true, stock_quantity: 0 } as any);
+      const { error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty ?? null, image_url: newProduct.image_url || null, code: productCode, is_available: true, stock_quantity: 0 } as any);
       if (error) throw error;
 
       toast({ title: 'Succès', description: 'Produit ajouté' });
-      setNewProduct({ name: '', price: '', description: '', warranty: '', demo_video_url: '', code: '', category: '' });
+      setNewProduct({ name: '', price: '', description: '', warranty: '', image_url: '', demo_video_url: '', code: '', category: '' });
       setAddModalOpen(false);
       fetchProducts();
     } catch (err) {
@@ -1503,7 +1635,8 @@ const VendorDashboard = () => {
           name: editProduct.name,
           price: parseInt(String(editProduct.price)),
           description: editProduct.description,
-          warranty: editProduct.warranty
+          warranty: editProduct.warranty,
+          image_url: editProduct.image_url || null
         };
         const resp = await fetch(apiUrl('/api/vendor/update-product'), {
           method: 'POST',
@@ -1529,7 +1662,8 @@ const VendorDashboard = () => {
             name: editProduct.name,
             price: parseInt(String(editProduct.price)),
             description: editProduct.description,
-            warranty: editProduct.warranty ?? null
+            warranty: editProduct.warranty ?? null,
+            image_url: editProduct.image_url || null
           } as any)
           .eq('id', editProduct.id)
           .select();
@@ -2105,6 +2239,7 @@ const VendorDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {renderProductImage(product)}
                   {renderProductDemoVideo(product)}
                   <p className="text-gray-600 text-sm mb-3 line-clamp-2">
                     {product.description}
@@ -2647,43 +2782,31 @@ const VendorDashboard = () => {
                         marginLeft: 'auto',
                       }}
                     >
-                      <CardContent className="p-4">
+                      <CardContent className="p-3">
+                        {renderProductImage(product, true)}
                         {renderProductDemoVideo(product, true)}
                         <div className="flex justify-between items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <h3
-                              className="font-medium truncate"
-                              style={{
-                                fontSize: "13px",
-                                lineHeight: "1.2",
-                                maxWidth: "90%",
-                              }}
+                              className="text-[13px] font-semibold leading-snug truncate"
                               title={product.name}
                             >
                               {product.name}
                             </h3>
-                            <p className="text-sm text-gray-600 mt-1 break-words whitespace-normal">{product.description}</p>
+                            <p className="mt-1 text-xs text-gray-600 line-clamp-2 leading-snug">
+                              {product.description}
+                            </p>
 
-                            <div
-                              className="flex items-center mb-2"
-                              style={{
-                                fontSize: "12px",
-                                fontWeight: 700,
-                                wordBreak: "break-all",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                maxWidth: "100%",
-                              }}
-                              title={product.code || `PROD-${product.id}`}
-                            >
-                              <span className="font-mono" style={{ fontSize: "18px", fontWeight: 700 }}>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <span
+                                className="font-mono text-[11px] font-semibold text-gray-700 truncate"
+                                title={product.code || `PROD-${product.id}`}
+                              >
                                 Code : {product.code || `PROD-${product.id}`}
                               </span>
-                            </div>
-
-                            <div className="mt-2">
-                              <span className="text-sm font-medium text-black whitespace-nowrap">{product.price} CFA</span>
+                              <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                                {product.price?.toLocaleString()} CFA
+                              </span>
                             </div>
                           </div>
                           <Button
@@ -2718,7 +2841,7 @@ const VendorDashboard = () => {
                             )}
                           </Button>
                         </div>
-                        <div className="mb-1 flex justify-end gap-1">
+                        <div className="mt-2 flex justify-end gap-1">
                           <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" className="h-8 px-2 text-[11px] border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]">
                             <MessageCircle className="h-3.5 w-3.5 mr-1" />
                             WhatsApp
@@ -2728,11 +2851,11 @@ const VendorDashboard = () => {
                             Partager
                           </Button>
                         </div>
-                        <div className="mt-4 flex gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-sm">
+                        <div className="mt-2 flex gap-2">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-xs h-9">
                             Modifier
                           </Button>
-                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-sm">
+                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-xs h-9">
                             Supprimer
                           </Button>
                         </div>
@@ -3346,6 +3469,7 @@ const VendorDashboard = () => {
                 placeholder="Ex: 12 mois"
               />
             </div>
+            {renderProductImagePicker(newProduct.image_url, (imageUrl) => setNewProduct({ ...newProduct, image_url: imageUrl }))}
 
             {/* Dev-only: allow specifying a product code when adding in a dev session */}
             {(() => {
@@ -3427,6 +3551,7 @@ const VendorDashboard = () => {
                   placeholder="Ex: 12 mois"
                 />
               </div>
+              {renderProductImagePicker(editProduct.image_url || '', (imageUrl) => setEditProduct({ ...editProduct, image_url: imageUrl || undefined }))}
             </div>
           )}
           <DialogFooter>

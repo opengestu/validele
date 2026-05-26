@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle, Image as ImageIcon } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Capacitor } from '@capacitor/core';
@@ -31,6 +31,24 @@ import.meta.env;
 const waveLogo = '/images/wave.png';
 const orangeMoneyLogo = '/images/orange_money.png';
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
+
+const ProductImage3D = ({ imageUrl, name, compact = false }: { imageUrl?: string | null; name?: string; compact?: boolean }) => (
+  <div className={compact ? 'w-full' : 'mx-auto max-w-md'}>
+    {imageUrl ? (
+      <img
+        src={imageUrl}
+        alt={name ? `Image de ${name}` : 'Image du produit'}
+        className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} w-full rounded-xl border border-gray-200 object-cover`}
+        loading="lazy"
+      />
+    ) : (
+      <div className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} flex w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500`}>
+        <ImageIcon className="mb-2 h-9 w-9" />
+        <span className="text-sm font-medium">Aucune image</span>
+      </div>
+    )}
+  </div>
+);
 
 
 // Fonction utilitaire pour fetch avec timeout (générique TypeScript)
@@ -109,6 +127,7 @@ const BuyerDashboard = () => {
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<Product | null>(null);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const autoSharedCodeRef = React.useRef<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [transactions, setTransactions] = useState<Array<{id: string; order_id: string; status: string; amount?: number; transaction_type?: string; created_at: string}>>([]);
@@ -169,11 +188,18 @@ const BuyerDashboard = () => {
     setSearchResult(null);
     setPurchaseQuantity(1);
     setPaymentMethod('wave');
+    setIsDescriptionExpanded(false);
     setSearchCode('');
     if (opts?.clearSharedContext !== false) {
       clearSharedProductContext();
     }
   }, [clearSharedProductContext]);
+
+  useEffect(() => {
+    if (searchModalOpen) {
+      setIsDescriptionExpanded(false);
+    }
+  }, [searchModalOpen, searchResult?.id]);
 
   async function openInvoiceInModal(url: string, title = 'Facture', requiresAuth = false) {
     try {
@@ -2519,174 +2545,191 @@ const BuyerDashboard = () => {
 
       {/* Modal de résultat de recherche produit */}
       {searchModalOpen && searchResult && (
-        <div className="fixed inset-0 z-[60] bg-black bg-opacity-70 flex items-center justify-center backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
-            <div className="p-6 border-b flex items-center justify-between">
-              <h3 className="text-xl font-bold flex items-center gap-2">
-                <Package className="h-6 w-6 text-black" />
-                Produit trouvé
-              </h3>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-2 backdrop-blur-sm sm:p-4">
+          <div className="w-full max-w-[520px] rounded-[28px] border border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 text-slate-900 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.5)] ring-1 ring-slate-100/80">
+            <div className="flex items-center justify-between border-b border-slate-200/70 bg-slate-50/70 px-6 py-4">
+              <p className="text-lg font-semibold tracking-tight text-slate-800">Produit trouvé</p>
               <button
                 onClick={() => closeSearchModal()}
-                className="text-gray-400 hover:text-gray-600"
+                className="grid h-9 w-9 place-items-center rounded-full border border-slate-200/70 bg-white text-slate-500 shadow-sm transition-all hover:bg-slate-50 hover:text-slate-900"
                 aria-label="Fermer la fenêtre"
                 title="Fermer"
               >
-                <XCircle className="h-6 w-6" />
+                <XCircle className="h-5 w-5" />
               </button>
             </div>
-            
-            <div className="flex-1 overflow-auto p-4 sm:p-6">
-              <div className="space-y-3">
-                <div>
-                  <div className="flex flex-col gap-2 mb-2">
-                    <h3 className="text-lg sm:text-xl font-bold text-gray-900 leading-snug break-words">{searchResult.name}</h3>
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-2xl sm:text-3xl font-bold text-black">{searchResult.price.toLocaleString()} FCFA</p>
-                      <p className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">Code: {searchResult.code}</p>
-                    </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <div className="flex gap-4 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm">
+                {searchResult.image_url ? (
+                  <img
+                    src={searchResult.image_url}
+                    alt={searchResult.name ? `Image de ${searchResult.name}` : 'Image du produit'}
+                    className="h-16 w-16 rounded-2xl border border-slate-200/70 bg-white object-cover shadow-sm"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="grid h-16 w-16 place-items-center rounded-2xl border border-slate-200/70 bg-slate-50 text-slate-400">
+                    <ImageIcon className="h-6 w-6" />
                   </div>
+                )}
 
-                  <p className="text-sm text-gray-600 leading-relaxed mb-3" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {searchResult.description}
-                  </p>
-
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-lg font-bold text-slate-900">{searchResult.name}</h3>
+                      <p className="text-xs text-slate-500">Code · {searchResult.code || 'NA'}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-extrabold text-slate-900">
+                        {searchResult.price.toLocaleString()}
+                        <span className="ml-1 text-xs font-semibold text-slate-400">FCFA</span>
+                      </p>
                       {searchResult.is_available ? (
-                        <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1">
-                          Produit actif
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          Actif
                         </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1">
-                          Produit inactif
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                          Inactif
                         </span>
                       )}
                     </div>
-
-                    <div className="text-xs sm:text-sm text-gray-600">
-                      <span className="font-medium">Vendeur:</span> {searchResult.profiles?.full_name || searchResult.profiles?.company_name}
-                    </div>
                   </div>
-                </div>
 
-              </div>
-            </div>
-
-            <div className="p-4 sm:p-6 border-t bg-gray-50 space-y-4">
-              <div className="rounded-lg border bg-white px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="text-base font-medium text-gray-900">Quantité:</label>
-                  <div className="flex items-center gap-2">
-                    <Button
+                  <p className={`mt-2 text-sm text-slate-600 ${isDescriptionExpanded ? '' : 'line-clamp-3'}`}>
+                    {searchResult.description || 'Aucune description disponible pour ce produit.'}
+                  </p>
+                  {searchResult.description && searchResult.description.length > 120 && (
+                    <button
                       type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-10 w-10 bg-white text-gray-900 hover:bg-gray-50 active:bg-white focus-visible:ring-0 [-webkit-tap-highlight-color:transparent]"
-                      onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
-                      disabled={!searchResult.is_available || purchaseQuantity <= 1}
-                      aria-label="Diminuer la quantité"
+                      onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                      className="mt-1 text-xs font-semibold text-slate-500 hover:text-slate-900"
                     >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <Input
-                      type="number"
-                      min="1"
-                      inputMode="numeric"
-                      value={purchaseQuantity}
-                      onChange={(e) => {
-                        const next = Number.parseInt(e.target.value, 10);
-                        setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
-                      }}
-                      onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
-                      disabled={!searchResult.is_available}
-                      className="w-24 h-12 text-center text-xl font-semibold md:h-10 md:text-lg"
-                      style={{ fontSize: '20px' }}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-10 w-10 bg-white text-gray-900 hover:bg-gray-50 active:bg-white focus-visible:ring-0 [-webkit-tap-highlight-color:transparent]"
-                      onClick={() => setPurchaseQuantity(q => q + 1)}
-                      disabled={!searchResult.is_available}
-                      aria-label="Augmenter la quantité"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                      {isDescriptionExpanded ? 'Voir moins' : 'Voir plus'}
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="rounded-lg border bg-white px-4 py-3">
-                <p className="text-2xl font-bold text-gray-900">
-                  Total: {(searchResult.price * purchaseQuantity).toLocaleString()} FCFA
+              <div className="grid grid-cols-1 gap-3">
+                <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3 shadow-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Vendeur</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-700">
+                    {searchResult.profiles?.company_name && searchResult.profiles?.full_name
+                      ? `${searchResult.profiles.company_name} - ${searchResult.profiles.full_name}`
+                      : searchResult.profiles?.company_name || searchResult.profiles?.full_name || 'NA'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-sm">
+                <p className="text-sm font-medium text-slate-600">Quantité</p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
+                    disabled={!searchResult.is_available || purchaseQuantity <= 1}
+                    aria-label="Diminuer la quantité"
+                  >
+                    <Minus className="h-4 w-4" />
+                  </Button>
+                  <Input
+                    type="number"
+                    min="1"
+                    inputMode="numeric"
+                    value={purchaseQuantity}
+                    onChange={(e) => {
+                      const next = Number.parseInt(e.target.value, 10);
+                      setPurchaseQuantity(Number.isFinite(next) && next > 0 ? next : 1);
+                    }}
+                    onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
+                    disabled={!searchResult.is_available}
+                    className="h-9 w-14 border-0 bg-transparent text-center text-lg font-bold text-slate-900 shadow-none focus-visible:ring-0"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    onClick={() => setPurchaseQuantity(q => q + 1)}
+                    disabled={!searchResult.is_available}
+                    aria-label="Augmenter la quantité"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-slate-50 px-4 py-3 shadow-sm">
+                <p className="text-sm font-semibold text-slate-700">Total à payer</p>
+                <p className="text-lg font-extrabold text-slate-900">
+                  {(searchResult.price * purchaseQuantity).toLocaleString()}
+                  <span className="ml-1 text-xs font-semibold text-slate-500">FCFA</span>
                 </p>
               </div>
 
-              {/* Garder le paiement visible hors zone scrollable */}
               <div>
-                <label className="text-base font-medium mb-2 block">Moyen de paiement</label>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-slate-400">Moyen de paiement</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => searchResult.is_available && setPaymentMethod('wave')}
                     disabled={!searchResult.is_available}
-                    className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
                       paymentMethod === 'wave'
-                        ? 'border-black bg-black/5'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-slate-900 bg-slate-50 shadow-sm'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                     } ${
-                      !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
+                      !searchResult.is_available ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:shadow-md'
                     }`}
                   >
-                    <img src={waveLogo} alt="Wave" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
-                    <span className="text-sm font-semibold">Wave</span>
-                    {paymentMethod === 'wave' && (
-                      <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center">
-                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                    )}
+                    <img src={waveLogo} alt="Wave" className="h-10 w-10 rounded-xl bg-slate-900 object-contain" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold">Wave</span>
+                      <span className="block text-xs text-slate-500">Mobile money</span>
+                    </span>
+                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'wave' ? 'border-slate-900 bg-slate-900' : 'border-slate-300'}`} />
                   </button>
                   <button
                     type="button"
                     onClick={() => searchResult.is_available && setPaymentMethod('orange_money')}
                     disabled={!searchResult.is_available}
-                    className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
                       paymentMethod === 'orange_money'
-                        ? 'border-orange-500 bg-orange-50'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-orange-500 bg-orange-50 shadow-sm'
+                        : 'border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40'
                     } ${
-                      !searchResult.is_available ? 'opacity-50 cursor-not-allowed' : ''
+                      !searchResult.is_available ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:shadow-md'
                     }`}
                   >
-                    <img src={orangeMoneyLogo} alt="Orange Money" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6, background: '#fff' }} />
-                    <span className="text-sm font-semibold">Orange Money</span>
-                    {paymentMethod === 'orange_money' && (
-                      <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
-                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                    )}
+                    <img src={orangeMoneyLogo} alt="Orange Money" className="h-10 w-10 rounded-xl bg-orange-500 object-contain" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold">Orange</span>
+                      <span className="block text-xs text-slate-500">Orange Money</span>
+                    </span>
+                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'orange_money' ? 'border-orange-500 bg-orange-500' : 'border-slate-300'}`} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-1">
                 <Button
                   variant="outline"
                   onClick={() => closeSearchModal()}
-                  className="flex-1"
+                  className="h-12 flex-1 rounded-2xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 >
                   Annuler
                 </Button>
                 <Button
                   onClick={handleCreateOrderAndShowPayment}
                   disabled={processingPayment || !searchResult.is_available}
-                  className={`flex-1 ${paymentMethod === 'wave' ? 'bg-black hover:bg-black/80 text-white' : 'bg-orange-600 hover:bg-orange-700'}`}
+                  className={`min-w-0 h-12 flex-[2] rounded-2xl px-3 text-center text-sm font-semibold leading-tight text-white whitespace-normal transition-all sm:px-4 sm:text-base ${paymentMethod === 'wave' ? 'bg-slate-900 hover:bg-black' : 'bg-orange-600 hover:bg-orange-700'} ${processingPayment ? '' : 'hover:-translate-y-0.5 hover:shadow-md'}`}
                 >
                   {processingPayment ? (
                     <>

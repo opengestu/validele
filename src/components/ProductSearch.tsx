@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield, Image as ImageIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +11,23 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
+
+const ProductImage3D = ({ imageUrl, name }: { imageUrl?: string | null; name?: string }) => (
+  imageUrl ? (
+    <img
+      src={imageUrl}
+      alt={name ? `Image de ${name}` : 'Image du produit'}
+      className="h-64 w-full rounded-xl border border-gray-200 object-cover"
+      loading="lazy"
+    />
+  ) : (
+    <div className="flex h-64 w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500">
+      <ImageIcon className="mb-2 h-9 w-9" />
+      <span className="text-sm font-medium">Aucune image</span>
+    </div>
+  )
+);
+
 const ProductSearch = () => {
   const { code: codeFromUrl } = useParams<{ code?: string }>();
   const navigate = useNavigate();
@@ -429,17 +446,7 @@ const ProductSearch = () => {
             <CardContent className="p-8">
               <div className="grid md:grid-cols-2 gap-8">
                 <div className="space-y-4">
-                  {searchResult.image_url ? (
-                    <img 
-                      src={searchResult.image_url} 
-                      alt={searchResult.name}
-                      className="w-full h-64 object-cover rounded-lg"
-                    />
-                  ) : (
-                    <div className="w-full h-64 bg-gray-200 rounded-lg flex items-center justify-center">
-                      <span className="text-gray-500">Aucune image</span>
-                    </div>
-                  )}
+                  <ProductImage3D imageUrl={searchResult.image_url} name={searchResult.name} />
                   <div className="flex items-center space-x-2">
                     <Shield className="h-5 w-5 text-green-600" />
                     <span className={`text-sm font-medium ${searchResult.is_available ? 'text-green-600' : 'text-red-600'}`}>

@@ -1532,7 +1532,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   onPointerDown={provideHaptic}
                   onClick={handleKeypadBackspace}
                   onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className={`${btnSize} rounded-[14px] bg-slate-200 text-slate-700 shadow-none transition-colors hover:bg-slate-300 active:scale-[0.98] focus:outline-none flex items-center justify-center touch-manipulation`}
+                  className={`${btnSize} rounded-[14px] bg-slate-200 text-slate-700 shadow-none transition-all duration-170 ease-out hover:bg-slate-300 active:scale-[1.12] focus:outline-none flex items-center justify-center touch-manipulation`}
                 >
                   <Delete className="h-6 w-6" strokeWidth={2.25} />
                 </button>
@@ -1544,7 +1544,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   onPointerDown={provideHaptic}
                   onClick={() => handleKeypadDigit(key.num)}
                   onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className={`${btnSize} rounded-[14px] bg-white shadow-none transition-colors hover:bg-slate-50 active:scale-[0.98] focus:outline-none flex flex-col items-center justify-center touch-manipulation`}
+                  className={`${btnSize} rounded-[14px] bg-white shadow-none transition-all duration-170 ease-out hover:bg-slate-50 active:scale-[1.12] focus:outline-none flex flex-col items-center justify-center touch-manipulation`}
                 >
                   <span className="text-[29px] font-bold text-slate-950 leading-none">{key.num}</span>
                   {key.letters && <span className="mt-0.5 text-[9px] font-semibold leading-none text-slate-500">{key.letters}</span>}
