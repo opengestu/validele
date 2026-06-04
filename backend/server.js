@@ -502,7 +502,7 @@ const getVersionPayload = (req) => {
     message:
       process.env.UPDATE_MESSAGE ||
       process.env.APP_UPDATE_MESSAGE ||
-      'Une nouvelle version est disponible. Veuillez mettre a jour l\'application.',
+      'Une nouvelle version est disponible. Veuillez mettre à jour l\'application.',
   };
 };
 
