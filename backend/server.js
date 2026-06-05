@@ -473,12 +473,14 @@ const getAndroidVersionFromGradle = () => {
 };
 
 const getVersionPayload = (req) => {
+  // Utiliser la version depuis build.gradle par défaut (plus fiable)
+  const gradleVersion = getAndroidVersionFromGradle();
   const latestVersionRaw =
     process.env.APP_LATEST_VERSION ||
     process.env.LATEST_APP_VERSION ||
     process.env.ANDROID_LATEST_VERSION ||
     process.env.LATEST_VERSION ||
-    getAndroidVersionFromGradle();
+    gradleVersion;
 
   const latestVersion = normalizeVersion(latestVersionRaw);
   let forceUpdate = parseBooleanEnv(
