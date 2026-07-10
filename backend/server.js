@@ -1576,6 +1576,54 @@ app.post('/api/debug/admin/reconcile-payments', requireAdmin, async (req, res) =
 // ENDPOINTS OTP (Direct7Networks)
 // ==========================================
 
+// --- Rate limiting OTP (best-effort, en mémoire) ---
+// Protège contre le spam d'envoi (coût SMS) et le brute-force de vérification.
+const OTP_SEND_MAX_ATTEMPTS = Number.parseInt(process.env.OTP_SEND_MAX_ATTEMPTS || '3', 10);
+const OTP_SEND_WINDOW_MS = Number.parseInt(process.env.OTP_SEND_WINDOW_MS || String(10 * 60 * 1000), 10);
+const OTP_VERIFY_MAX_ATTEMPTS = Number.parseInt(process.env.OTP_VERIFY_MAX_ATTEMPTS || '5', 10);
+const OTP_VERIFY_WINDOW_MS = Number.parseInt(process.env.OTP_VERIFY_WINDOW_MS || String(10 * 60 * 1000), 10);
+const OTP_LOCK_MS = Number.parseInt(process.env.OTP_LOCK_MS || String(15 * 60 * 1000), 10);
+
+const otpSendAttempts = new Map();
+const otpVerifyAttempts = new Map();
+
+function getOtpClientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length > 0) return fwd.split(',')[0].trim();
+  return req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
+}
+
+function otpRateKey(phone, req) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const last9 = digits.slice(-9) || digits || 'unknown';
+  return `${last9}:${getOtpClientIp(req)}`;
+}
+
+// Incrémente le compteur et retourne { limited, retryAfterSeconds }.
+function registerOtpAttempt(store, key, maxAttempts, windowMs) {
+  const now = Date.now();
+  const entry = store.get(key);
+  if (entry && entry.lockedUntil && entry.lockedUntil > now) {
+    return { limited: true, retryAfterSeconds: Math.ceil((entry.lockedUntil - now) / 1000) };
+  }
+  if (!entry || now - entry.windowStart > windowMs) {
+    store.set(key, { attempts: 1, windowStart: now, lockedUntil: 0 });
+    return { limited: false };
+  }
+  entry.attempts += 1;
+  if (entry.attempts > maxAttempts) {
+    entry.lockedUntil = now + OTP_LOCK_MS;
+    store.set(key, entry);
+    return { limited: true, retryAfterSeconds: Math.ceil(OTP_LOCK_MS / 1000) };
+  }
+  store.set(key, entry);
+  return { limited: false };
+}
+
+function clearOtpAttempts(store, key) {
+  store.delete(key);
+}
+
 // Envoyer un code OTP
 app.post('/api/otp/send', async (req, res) => {
   try {
@@ -1603,6 +1651,19 @@ app.post('/api/otp/send', async (req, res) => {
     }
 
     console.log(`[OTP] Demande d'envoi pour: ${formattedPhone} (allowExisting: ${!!allowExisting})`);
+
+    // Rate limiting: limiter le nombre d'envois par numéro/IP (coût SMS + anti-abus)
+    const sendRateKey = otpRateKey(formattedPhone, req);
+    const sendLimit = registerOtpAttempt(otpSendAttempts, sendRateKey, OTP_SEND_MAX_ATTEMPTS, OTP_SEND_WINDOW_MS);
+    if (sendLimit.limited) {
+      console.warn(`[OTP] Envoi bloqué (rate limit) pour ${formattedPhone}`);
+      return res.status(429).json({
+        success: false,
+        error: `Trop de demandes de code. Réessayez dans ${sendLimit.retryAfterSeconds} secondes.`,
+        code: 'OTP_RATE_LIMITED',
+        retry_after_seconds: sendLimit.retryAfterSeconds,
+      });
+    }
 
     // Protection serveur : empêcher l'envoi d'OTP si un profil existe déjà pour ce numéro
     try {
@@ -1677,13 +1738,30 @@ app.post('/api/otp/verify', async (req, res) => {
       }
     }
 
-    console.log(`[OTP] Vérification pour: ${formattedPhone}, code: ${code}`);
+    console.log(`[OTP] Vérification pour: ${formattedPhone}`);
+
+    // Rate limiting: limiter le brute-force de codes OTP
+    const verifyRateKey = otpRateKey(formattedPhone, req);
+    const verifyLimit = registerOtpAttempt(otpVerifyAttempts, verifyRateKey, OTP_VERIFY_MAX_ATTEMPTS, OTP_VERIFY_WINDOW_MS);
+    if (verifyLimit.limited) {
+      console.warn(`[OTP] Vérification bloquée (rate limit) pour ${formattedPhone}`);
+      return res.status(429).json({
+        success: false,
+        valid: false,
+        error: `Trop de tentatives. Réessayez dans ${verifyLimit.retryAfterSeconds} secondes.`,
+        code: 'OTP_RATE_LIMITED',
+        retry_after_seconds: verifyLimit.retryAfterSeconds,
+      });
+    }
 
     const result = await verifyOTP(formattedPhone, code);
 
     // New endpoint support: /api/auth/reset-pin will re-call verifyOTP server-side; no changes here
 
     if (result.valid) {
+      // Succès: réinitialiser les compteurs anti-abus pour ce numéro/IP
+      clearOtpAttempts(otpVerifyAttempts, verifyRateKey);
+      clearOtpAttempts(otpSendAttempts, verifyRateKey);
       res.json({ success: true, valid: true });
     } else {
       res.status(400).json({ success: false, valid: false, error: result.error });
