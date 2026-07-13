@@ -1858,7 +1858,7 @@ app.post('/api/sms/register', async (req, res) => {
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from('profiles')
-      .select('id, phone')
+      .select('id, phone, role, full_name, pin_hash')
       .ilike('phone', `%${last9}%`)
       .limit(1);
 
@@ -1867,6 +1867,46 @@ app.post('/api/sms/register', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Erreur serveur (vérification profil)' });
     }
     if (existing && existing.length > 0) {
+      // Idempotence: si le profil existe déjà ET que le PIN correspond, c'est le même
+      // utilisateur qui réessaie (ex: la réponse du 1er clic sur "Terminer" a été perdue
+      // sur un cold-start Render alors que le compte a bien été créé). On le connecte
+      // au lieu de renvoyer une erreur bloquante.
+      const existingProfile = existing[0];
+      try {
+        const bcrypt = require('bcryptjs');
+        const pinHash = existingProfile.pin_hash;
+        const pinMatches = pinHash
+          ? (/^\$2[aby]\$/.test(String(pinHash))
+              ? await bcrypt.compare(String(pin), String(pinHash))
+              : String(pin) === String(pinHash))
+          : false;
+        if (pinMatches) {
+          const token = jwt.sign(
+            {
+              sub: existingProfile.id,
+              phone: formattedPhone,
+              role: existingProfile.role || safeRole,
+              auth_mode: 'sms'
+            },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+          );
+          console.log('[SMS] Register idempotent: profil déjà présent + PIN valide, reconnexion', existingProfile.id);
+          return res.json({
+            success: true,
+            alreadyExisted: true,
+            profileId: existingProfile.id,
+            phone: formattedPhone,
+            role: existingProfile.role || safeRole,
+            fullName: existingProfile.full_name || full_name,
+            token,
+            expiresIn: 7 * 24 * 60 * 60
+          });
+        }
+      } catch (cmpErr) {
+        console.error('[SMS] Erreur comparaison PIN (idempotence register):', cmpErr);
+      }
+      // Profil existant avec un PIN différent -> vrai conflit (numéro déjà pris)
       return res.status(409).json({ success: false, error: 'Un compte existe déjà pour ce numéro' });
     }
 
