@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield, Image as ImageIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Search, ShoppingCart, Shield, Image as ImageIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { apiUrl } from '@/lib/api';
 
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
@@ -112,6 +114,77 @@ const ProductSearch = () => {
   const handleSearch = useCallback(async () => {
     await searchProductByCode(searchCode);
   }, [searchCode, searchProductByCode]);
+
+  // --- Paiement invité (sans compte) ----------------------------------------
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [buyerName, setBuyerName] = useState('');
+  const [buyerPhone, setBuyerPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [payMethod, setPayMethod] = useState<'wave' | 'orange_money'>('wave');
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [checkoutNotice, setCheckoutNotice] = useState('');
+
+  const handleGuestCheckout = useCallback(async () => {
+    setCheckoutError('');
+    setCheckoutNotice('');
+    const code = String(searchResult?.code || searchCode || '').trim();
+    if (!code) { setCheckoutError('Produit introuvable.'); return; }
+    if (!buyerName.trim() || !buyerPhone.trim() || !deliveryAddress.trim()) {
+      setCheckoutError('Merci de renseigner votre nom, téléphone et adresse.');
+      return;
+    }
+
+    setCheckoutLoading(true);
+    try {
+      // 1) Créer l'acheteur invité + la commande (backend, sans compte/PIN).
+      const orderResp = await fetch(apiUrl('/api/guest/order'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productCode: code,
+          buyerName: buyerName.trim(),
+          buyerPhone: buyerPhone.trim(),
+          deliveryAddress: deliveryAddress.trim(),
+        }),
+      });
+      const orderJson: any = await orderResp.json().catch(() => null);
+      if (!orderResp.ok || !orderJson?.success) {
+        throw new Error(orderJson?.error || 'Impossible de créer la commande.');
+      }
+
+      // 2) Lancer le paiement Wave ou Orange Money (endpoints publics existants).
+      const payEndpoint = payMethod === 'wave'
+        ? '/api/payment/pixpay-wave/initiate'
+        : '/api/payment/pixpay/initiate';
+      const payResp = await fetch(apiUrl(payEndpoint), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: orderJson.totalAmount,
+          phone: orderJson.buyerPhone,
+          orderId: orderJson.orderId,
+        }),
+      });
+      const payJson: any = await payResp.json().catch(() => null);
+      if (!payResp.ok || !payJson?.success) {
+        throw new Error(payJson?.error || 'Impossible de lancer le paiement.');
+      }
+
+      // 3) Rediriger vers le lien de paiement Wave/OM si fourni.
+      if (payJson.sms_link) {
+        window.location.href = payJson.sms_link;
+        return;
+      }
+      // Wave sans redirection : validation à faire dans l'app Wave / par SMS.
+      setCheckoutNotice(payJson.message
+        || 'Paiement initié. Ouvrez Wave ou consultez vos SMS pour valider. Votre commande sera confirmée automatiquement.');
+    } catch (e: any) {
+      setCheckoutError(e?.message || 'Une erreur est survenue, réessayez.');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, [buyerName, buyerPhone, deliveryAddress, payMethod, searchResult, searchCode]);
 
   useEffect(() => {
     if (!codeFromUrl) return;
@@ -294,24 +367,26 @@ const ProductSearch = () => {
                         Vous êtes connecté(e) en tant que {roleLabel}. Pour acheter ce produit, connectez-vous avec un compte acheteur.
                       </div>
                     ) : (
-                      <Link
-                        to={(() => {
-                          const rawCode = String(searchResult?.code || searchCode || '').trim();
-                          return rawCode ? `/buyer?productCode=${encodeURIComponent(rawCode)}` : '/buyer';
-                        })()}
+                      <Button
+                        className="w-full btn-buyer text-lg py-3"
+                        disabled={!searchResult.is_available}
                         onClick={() => {
                           const rawCode = String(searchResult?.code || searchCode || '').trim();
-                          persistPendingProductCode(rawCode);
+                          if (isWebContext) {
+                            // Web : paiement invité sans compte (formulaire ci-dessous).
+                            setCheckoutError('');
+                            setCheckoutNotice('');
+                            setCheckoutOpen(true);
+                          } else {
+                            // App native : parcours acheteur connecté existant.
+                            persistPendingProductCode(rawCode);
+                            navigate(rawCode ? `/buyer?productCode=${encodeURIComponent(rawCode)}` : '/buyer');
+                          }
                         }}
                       >
-                        <Button
-                          className="w-full btn-buyer text-lg py-3"
-                          disabled={!searchResult.is_available}
-                        >
-                          <ShoppingCart className="h-5 w-5 mr-2" />
-                          {searchResult.is_available ? 'Acheter maintenant' : 'Produit inactif'}
-                        </Button>
-                      </Link>
+                        <ShoppingCart className="h-5 w-5 mr-2" />
+                        {searchResult.is_available ? 'Acheter maintenant' : 'Produit inactif'}
+                      </Button>
                     )}
 
                   </div>
@@ -363,6 +438,124 @@ const ProductSearch = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={checkoutOpen}
+        onOpenChange={(open) => { if (!checkoutLoading) setCheckoutOpen(open); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Payer en toute sécurité</DialogTitle>
+            <DialogDescription>
+              Aucun compte à créer. Votre argent est protégé jusqu'à la réception du produit.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {searchResult && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">{searchResult.name}</span>
+                  <span className="font-semibold text-gray-900">
+                    {Number(searchResult.price).toLocaleString()} FCFA
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Nom complet</label>
+              <Input
+                value={buyerName}
+                onChange={(e) => setBuyerName(e.target.value)}
+                placeholder="Votre nom"
+                disabled={checkoutLoading}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Téléphone (Wave / Orange Money)</label>
+              <Input
+                value={buyerPhone}
+                onChange={(e) => setBuyerPhone(e.target.value)}
+                placeholder="77 123 45 67"
+                inputMode="tel"
+                disabled={checkoutLoading}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Adresse de livraison</label>
+              <Input
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder="Quartier, ville, point de repère"
+                disabled={checkoutLoading}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Moyen de paiement</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayMethod('wave')}
+                  disabled={checkoutLoading}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    payMethod === 'wave'
+                      ? 'border-green-600 bg-green-50 text-green-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  Wave
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayMethod('orange_money')}
+                  disabled={checkoutLoading}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    payMethod === 'orange_money'
+                      ? 'border-orange-500 bg-orange-50 text-orange-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  Orange Money
+                </button>
+              </div>
+            </div>
+
+            {checkoutError && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {checkoutError}
+              </div>
+            )}
+            {checkoutNotice && (
+              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                {checkoutNotice}
+              </div>
+            )}
+
+            <Button
+              className="w-full btn-buyer text-base py-3"
+              onClick={handleGuestCheckout}
+              disabled={checkoutLoading}
+            >
+              {checkoutLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Traitement…
+                </>
+              ) : (
+                `Payer ${searchResult ? Number(searchResult.price).toLocaleString() : ''} FCFA`
+              )}
+            </Button>
+
+            <p className="text-center text-xs text-gray-400">
+              🔒 Validèl ne vous demandera jamais votre code secret Wave ou Orange Money.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

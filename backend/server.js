@@ -230,6 +230,152 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
+// --- Paiement invité (parcours acheteur web sans compte Validèl) --------------
+// Le client ouvre le lien produit dans un navigateur, saisit nom + téléphone +
+// adresse, et paie Wave/OM sans jamais créer de compte ni saisir de PIN.
+// Cet endpoint : (1) retrouve/crée un acheteur identifié par son téléphone (compte
+// auth minimal -> le trigger handle_new_user crée le profil ; l'acheteur est donc
+// bien enregistré dans Supabase), (2) crée la commande. Le frontend enchaîne ensuite
+// sur /api/payment/pixpay(-wave)/initiate (déjà publics) pour obtenir le lien de paiement.
+// L'invité pourra plus tard "revendiquer" son compte en définissant un PIN (même numéro).
+function normalizeGuestPhone(phone) {
+  let p = String(phone || '').replace(/[\s\-()]/g, '');
+  if (!p) return '';
+  if (!p.startsWith('+')) {
+    if (p.startsWith('221')) p = '+' + p;
+    else if (p.startsWith('0')) p = '+221' + p.substring(1);
+    else p = '+221' + p;
+  }
+  // +221 suivi de 9 chiffres (numéros sénégalais)
+  return /^\+221\d{9}$/.test(p) ? p : '';
+}
+
+app.post('/api/guest/order', async (req, res) => {
+  try {
+    const { productCode, buyerName, buyerPhone, deliveryAddress } = req.body || {};
+    if (!productCode || !buyerName || !buyerPhone || !deliveryAddress) {
+      return res.status(400).json({ success: false, error: 'Champs obligatoires manquants (produit, nom, téléphone, adresse).' });
+    }
+
+    const formattedPhone = normalizeGuestPhone(buyerPhone);
+    if (!formattedPhone) {
+      return res.status(400).json({ success: false, error: 'Numéro de téléphone invalide (ex: 77 123 45 67).' });
+    }
+
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // 1) Produit par code
+    const { data: product, error: productError } = await supabaseAdmin
+      .from('products')
+      .select('id, name, price, vendor_id, is_available')
+      .ilike('code', String(productCode).trim())
+      .maybeSingle();
+    if (productError) {
+      console.error('[GUEST] Erreur lecture produit:', productError);
+      return res.status(500).json({ success: false, error: 'Erreur serveur (produit).' });
+    }
+    if (!product) return res.status(404).json({ success: false, error: 'Produit introuvable.' });
+    if (product.is_available === false) return res.status(409).json({ success: false, error: 'Ce produit n\'est plus disponible.' });
+
+    // 2) Retrouver ou créer l'acheteur invité (identifié par son téléphone)
+    let buyerId = null;
+    const { data: existingProfile, error: profileLookupError } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('phone', formattedPhone)
+      .limit(1)
+      .maybeSingle();
+    if (profileLookupError) console.error('[GUEST] Erreur recherche profil:', profileLookupError);
+
+    if (existingProfile?.id) {
+      buyerId = existingProfile.id;
+    } else {
+      const virtualEmail = `${formattedPhone.replace('+', '')}@sms.validele.app`;
+      const randomPassword = `Guest#${Math.random().toString(36).slice(2)}${Date.now()}`;
+      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email: virtualEmail,
+        password: randomPassword,
+        email_confirm: true,
+        user_metadata: { full_name: buyerName, phone: formattedPhone, role: 'buyer', auth_mode: 'guest' },
+      });
+
+      if (createErr || !created?.user?.id) {
+        // Compte auth peut-être déjà présent (course / profil manquant) -> le retrouver.
+        if (createErr && (createErr.code === 'email_exists' || /exists/i.test(createErr.message || ''))) {
+          try {
+            const { data: list } = await supabaseAdmin.auth.admin.listUsers();
+            const found = list?.users?.find((u) => u.email === virtualEmail);
+            if (found?.id) buyerId = found.id;
+          } catch (e) {
+            console.error('[GUEST] Erreur listUsers fallback:', e);
+          }
+        }
+        if (!buyerId) {
+          console.error('[GUEST] Erreur création acheteur:', createErr);
+          return res.status(500).json({ success: false, error: 'Impossible de créer l\'acheteur.' });
+        }
+      } else {
+        buyerId = created.user.id;
+      }
+
+      // Compléter le profil (le trigger le crée déjà ; upsert idempotent pour nom/adresse).
+      const { error: upsertErr } = await supabaseAdmin
+        .from('profiles')
+        .upsert({
+          id: buyerId,
+          full_name: buyerName,
+          phone: formattedPhone,
+          role: 'buyer',
+          address: deliveryAddress,
+        }, { onConflict: 'id' });
+      if (upsertErr) console.error('[GUEST] Erreur upsert profil:', upsertErr);
+    }
+
+    // 3) Créer la commande. payment_method='wave' pour satisfaire la contrainte CHECK ;
+    // la vraie méthode (Wave/OM) est choisie à l'étape paiement, comme dans l'app.
+    // total_amount = prix (quantité 1), aligné sur le flux acheteur existant.
+    const total_amount = Number(product.price) || 0;
+    const qr_code = generateSecureQrCode('C-');
+    const qr_code_vendor = generateSecureQrCode('V-');
+    const order_code = await generateUniqueReadableOrderCode(supabaseAdmin);
+
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from('orders')
+      .insert({
+        buyer_id: buyerId,
+        vendor_id: product.vendor_id,
+        product_id: product.id,
+        total_amount,
+        payment_method: 'wave',
+        delivery_address: deliveryAddress,
+        buyer_phone: formattedPhone,
+        qr_code,
+        qr_code_vendor,
+        order_code,
+        status: 'pending',
+      })
+      .select('*')
+      .single();
+
+    if (orderError) {
+      console.error('[GUEST] Erreur création commande:', orderError);
+      return res.status(500).json({ success: false, error: orderError.message || 'Erreur création commande.' });
+    }
+
+    return res.json({
+      success: true,
+      orderId: order.id,
+      orderCode: order.order_code,
+      totalAmount: total_amount,
+      productName: product.name,
+      buyerPhone: formattedPhone,
+    });
+  } catch (err) {
+    console.error('[GUEST] /api/guest/order error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+  }
+});
+
 // Mount auth routes (added for phone existence check and PIN login)
 try {
   const authRoutes = require('./routes/auth');
