@@ -40,7 +40,12 @@ function makeRecorder() {
 
 function makeBot(extra = {}) {
   const rec = makeRecorder();
-  const b = bot.createBot({ findProduct, ...rec, ...extra });
+  // Déduplication en mémoire, propre à chaque bot : garde les tests hermétiques
+  // (aucun accès à la vraie table Supabase whatsapp_processed_messages). Un test
+  // qui veut sa propre logique de dédup peut la passer via `extra` (elle gagne).
+  const seen = new Set();
+  const isDuplicate = async (id) => { if (seen.has(id)) return true; seen.add(id); return false; };
+  const b = bot.createBot({ findProduct, isDuplicate, ...rec, ...extra });
   return { b, rec };
 }
 
@@ -165,12 +170,14 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends[0].buttons.length, 3);
   });
 
-  // FAQ réponse -> repropose « Payer en sécurité »
-  await test('faq:marche:PD3431 -> texte + bouton Payer', async () => {
+  // FAQ réponse -> repropose « Payer en sécurité » ET « Autres questions »
+  await test('faq:marche:PD3431 -> texte + boutons Payer & Autres questions', async () => {
     const { b, rec } = makeBot();
     await b.processWebhook(inboundButton('faq:marche:PD3431'));
     assert.strictEqual(rec.sends[0].kind, 'buttons');
+    assert.strictEqual(rec.sends[0].buttons.length, 2);
     assert.strictEqual(rec.sends[0].buttons[0].id, 'pay:PD3431');
+    assert.strictEqual(rec.sends[0].buttons[1].id, 'faq:PD3431');
     assert.ok(rec.sends[0].body.includes('protège'));
   });
 

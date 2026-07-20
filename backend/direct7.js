@@ -283,30 +283,37 @@ async function sendSMS(phone, message) {
   }
 }
 
-// Envoyer un message WhatsApp via Direct7Networks
+// Envoyer un message WhatsApp texte simple via Direct7Networks.
+// IMPORTANT : passe par l'API WhatsApp v2 (whatsapp/v2/send) avec le NUMÉRO WhatsApp
+// Business comme originator — exactement comme les messages interactifs. L'ancienne
+// implémentation utilisait messages/v1/send avec l'originator SMS 'VALIDEL' : D7
+// « acceptait » la requête (status: accepted) mais WhatsApp ne livrait jamais le message
+// (VALIDEL n'est pas un numéro WhatsApp). C'est ce qui rendait muettes les réponses
+// texte du bot (code inconnu, « bonjour »…), alors que les boutons (déjà en v2) passaient.
 async function sendWhatsApp(phone, message) {
   if (!DIRECT7_API_KEY) {
     throw new Error('DIRECT7_API_KEY non configurée');
   }
-
-  const formattedPhone = phone.startsWith('+') ? phone.substring(1) : phone;
+  if (!WHATSAPP_BOT_ORIGINATOR) {
+    throw new Error('WHATSAPP_BOT_NUMBER non configuré (numéro WhatsApp Business requis pour l\'envoi WhatsApp)');
+  }
 
   try {
     const response = await axios.post(
-      DIRECT7_API_URL,
+      D7_WHATSAPP_URL,
       {
         messages: [
           {
-            channel: 'whatsapp',
-            recipients: [formattedPhone],
-            content: message,
-            msg_type: 'text'
-          }
+            originator: WHATSAPP_BOT_ORIGINATOR,
+            recipients: [
+              { recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' },
+            ],
+            content: {
+              message_type: 'TEXT',
+              text: { preview_url: false, body: String(message || '') },
+            },
+          },
         ],
-        message_globals: {
-          originator: D7_OTP_ORIGINATOR,
-          report_url: null
-        }
       },
       {
         headers: {
@@ -315,7 +322,7 @@ async function sendWhatsApp(phone, message) {
       }
     );
 
-    console.log('[DIRECT7] WhatsApp envoyé avec succès:', response.data);
+    console.log('[DIRECT7] WhatsApp texte envoyé avec succès:', response.data);
     return { success: true, data: response.data };
   } catch (error) {
     const apiData = error?.response?.data;

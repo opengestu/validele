@@ -261,8 +261,9 @@ async function decideReplies(parsed, deps) {
       else if (sujet === 'frais') body = txtFaqFrais(produit);
       else if (sujet === 'probleme') body = TXT_FAQ_PROBLEME;
       else body = TXT_AUCUN_CODE;
-      // Chaque réponse FAQ se termine en reproposant « Payer en sécurité ».
-      return [{ kind: 'buttons', body, buttons: [btnPayer(code)] }];
+      // Chaque réponse FAQ se termine en reproposant « Payer en sécurité » ET
+      // « Autres questions » pour ne jamais laisser le client dans une impasse.
+      return [{ kind: 'buttons', body, buttons: [btnPayer(code), btnAutresQuestions(code)] }];
     }
     // Bouton inconnu -> invite neutre
     return [{ kind: 'text', body: TXT_AUCUN_CODE }];
