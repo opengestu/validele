@@ -388,7 +388,7 @@ app.get('/api/guest/order/:id', async (req, res) => {
 
     const { data: order, error } = await supabaseAdmin
       .from('orders')
-      .select('id, order_code, status, total_amount, delivery_address, created_at, product_id, vendor_id, delivery_person_id')
+      .select('id, order_code, status, total_amount, delivery_address, created_at, product_id, vendor_id, delivery_person_id, qr_code')
       .eq('id', id)
       .maybeSingle();
     if (error) {
@@ -428,6 +428,9 @@ app.get('/api/guest/order/:id', async (req, res) => {
         totalAmount: order.total_amount,
         deliveryAddress: order.delivery_address,
         createdAt: order.created_at,
+        // QR code de réception acheteur : à présenter/scanner au livreur pour confirmer
+        // la remise du colis (même mécanisme que l'app, cf. QRScanner.tsx).
+        qrCode: order.qr_code || null,
         product: product ? { name: product.name, price: product.price, imageUrl: product.image_url } : null,
         vendor: vendor ? { name: vendor.company_name || vendor.full_name || 'Vendeur', phone: vendor.phone || null } : null,
         delivery: delivery ? { name: delivery.full_name || 'Livreur', phone: delivery.phone || null } : null,

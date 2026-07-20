@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, Phone, MessageCircle, Package, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Loader2, Phone, MessageCircle, Package, ShieldCheck, AlertTriangle, QrCode } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import SimpleQRCode from '@/components/ui/SimpleQRCode';
 import { apiUrl } from '@/lib/api';
 
 type OrderContact = { name: string; phone: string | null };
@@ -13,6 +14,7 @@ type OrderData = {
   totalAmount: number;
   deliveryAddress: string | null;
   createdAt: string;
+  qrCode: string | null;
   product: { name: string; price: number; imageUrl: string | null } | null;
   vendor: OrderContact | null;
   delivery: OrderContact | null;
@@ -154,6 +156,28 @@ const GuestOrderTracking = () => {
                       );
                     })}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* QR code de réception : à présenter au livreur pour confirmer la remise du
+                colis. Disponible dès le paiement pour que l'acheteur l'ait sous la main. */}
+            {order.qrCode && ['paid', 'in_delivery'].includes(status) && (
+              <Card className="border-orange-200">
+                <CardContent className="p-6 text-center">
+                  <h3 className="text-base font-semibold text-gray-900 mb-1 flex items-center justify-center gap-2">
+                    <QrCode className="h-5 w-5 text-orange-500" />
+                    Votre QR code de réception
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Présentez ce QR code au livreur au moment de la livraison pour confirmer que vous avez bien reçu votre colis.
+                  </p>
+                  <div className="inline-block bg-white p-4 rounded-lg border-2 border-gray-200">
+                    <SimpleQRCode value={order.qrCode} size={200} />
+                  </div>
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-4">
+                    ⚠️ Ne montrez ce code qu'au livreur officiel, au moment de la remise du colis.
+                  </p>
                 </CardContent>
               </Card>
             )}
