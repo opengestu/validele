@@ -26,7 +26,9 @@ import { Spinner } from "@/components/ui/spinner";
 import HomePage from "@/components/HomePage";
 import AuthPage from "@/components/AuthPage";
 import UpdateModal from "@/components/updates/UpdateModal";
+import UpdateInstallSnackbar from "@/components/updates/UpdateInstallSnackbar";
 import useAppUpdateChecker from "@/hooks/useAppUpdateChecker";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
@@ -83,6 +85,7 @@ import VendorDashboard from "@/components/VendorDashboard";
 import BuyerDashboard from "@/components/BuyerDashboard";
 import DeliveryDashboard from "@/components/DeliveryDashboard";
 import ProductSearch from "@/components/ProductSearch";
+import GuestOrderTracking from "@/components/GuestOrderTracking";
 import OrderDetails from "@/components/OrderDetails";
 import QRScanner from "@/components/QRScanner";
 import AdminDashboard from "@/components/AdminDashboard";
@@ -132,7 +135,7 @@ const FirstLaunchLegalGate: React.FC = () => {
 const AnimatedRoutes: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   return (
-    <div key={location.pathname} className="animate-page-in contents">
+    <div key={location.pathname} className="animate-page-in min-h-[100svh]">
       {children}
     </div>
   );
@@ -313,8 +316,13 @@ const App = () => {
     updateInfo,
     isOpen,
     isOpeningStore,
+    showInstallSnackbar,
+    downloadProgress,
+    isCompletingInstall,
     handleUpdateNow,
     handleLater,
+    handleCompleteInstall,
+    dismissInstallSnackbar,
   } = useAppUpdateChecker();
 
   return (
@@ -324,6 +332,7 @@ const App = () => {
           MODE TEST PAYDUNYA (SANDBOX)
         </div>
       )}
+
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
@@ -360,6 +369,7 @@ const App = () => {
                 {!adminOnlyMode && <Route path="/colors" element={<ColorDemo />} />}
                 {!adminOnlyMode && <Route path="/product" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/product/:code" element={<ProductSearch />} />}
+                {!adminOnlyMode && <Route path="/order/:id" element={<GuestOrderTracking />} />}
                 {!adminOnlyMode && <Route path="/install" element={<AppInstall />} />}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}
@@ -443,18 +453,27 @@ const App = () => {
               </AnimatedRoutes>
               {LEGAL_FEATURE_ENABLED && <LegalQuickLinks />}
 
-              {updateInfo && (
-                <UpdateModal
-                  open={isOpen}
-                  latestVersion={updateInfo.latestVersion}
-                  currentVersion={currentVersion}
-                  message={updateInfo.message}
-                  forceUpdate={updateInfo.forceUpdate}
-                  isOpeningStore={isOpeningStore}
-                  onUpdateNow={handleUpdateNow}
-                  onLater={handleLater}
-                />
-              )}
+              <UpdateModal
+                open={isOpen && Boolean(updateInfo)}
+                latestVersion={updateInfo?.latestVersion ?? currentVersion}
+                currentVersion={currentVersion}
+                message={updateInfo?.message ?? 'Une nouvelle version est disponible. Veuillez mettre à jour l\'application.'}
+                forceUpdate={updateInfo?.forceUpdate ?? false}
+                isOpeningStore={isOpeningStore}
+                onUpdateNow={handleUpdateNow}
+                onLater={handleLater}
+              />
+
+              <UpdateInstallSnackbar
+                visible={showInstallSnackbar}
+                progress={downloadProgress}
+                isCompleting={isCompletingInstall}
+                onInstall={handleCompleteInstall}
+                onDismiss={dismissInstallSnackbar}
+              />
+
+              <PWAInstallPrompt />
+
             </BrowserRouter>
           </AuthProvider>
         </TooltipProvider>

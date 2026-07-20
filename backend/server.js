@@ -376,6 +376,69 @@ app.post('/api/guest/order', async (req, res) => {
   }
 });
 
+// Suivi de commande public (page web de suivi pour l'acheteur invité, sans compte).
+// L'id est un UUID non devinable -> sert de jeton d'accès. Ne renvoie que des champs
+// non sensibles + les contacts (vendeur/livreur) pour appeler/WhatsApp.
+app.get('/api/guest/order/:id', async (req, res) => {
+  try {
+    const { id } = req.params || {};
+    if (!id) return res.status(400).json({ success: false, error: 'Identifiant manquant.' });
+
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: order, error } = await supabaseAdmin
+      .from('orders')
+      .select('id, order_code, status, total_amount, delivery_address, created_at, product_id, vendor_id, delivery_person_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) {
+      console.error('[GUEST] Erreur lecture commande:', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+    }
+    if (!order) return res.status(404).json({ success: false, error: 'Commande introuvable.' });
+
+    const { data: product } = await supabaseAdmin
+      .from('products')
+      .select('name, price, image_url')
+      .eq('id', order.product_id)
+      .maybeSingle();
+
+    const { data: vendor } = await supabaseAdmin
+      .from('profiles')
+      .select('full_name, company_name, phone')
+      .eq('id', order.vendor_id)
+      .maybeSingle();
+
+    let delivery = null;
+    if (order.delivery_person_id) {
+      const { data: d } = await supabaseAdmin
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', order.delivery_person_id)
+        .maybeSingle();
+      delivery = d || null;
+    }
+
+    return res.json({
+      success: true,
+      order: {
+        id: order.id,
+        orderCode: order.order_code,
+        status: order.status,
+        totalAmount: order.total_amount,
+        deliveryAddress: order.delivery_address,
+        createdAt: order.created_at,
+        product: product ? { name: product.name, price: product.price, imageUrl: product.image_url } : null,
+        vendor: vendor ? { name: vendor.company_name || vendor.full_name || 'Vendeur', phone: vendor.phone || null } : null,
+        delivery: delivery ? { name: delivery.full_name || 'Livreur', phone: delivery.phone || null } : null,
+      },
+    });
+  } catch (err) {
+    console.error('[GUEST] /api/guest/order/:id error:', err);
+    return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+  }
+});
+
 // Mount auth routes (added for phone existence check and PIN login)
 try {
   const authRoutes = require('./routes/auth');
@@ -6836,13 +6899,34 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       console.warn('[MARK-IN-DELIVERY] Exception fetching updated order:', e);
     }
 
-    res.json({ 
-      success: true, 
-      orderId, 
+    // Notifier l'acheteur sur WhatsApp : commande en cours de livraison + lien de suivi
+    // (page web publique) pour contacter le livreur/vendeur. C'est la SEULE notification
+    // de statut demandée. NOTE: message initié hors fenêtre 24h -> nécessite un template
+    // Meta approuvé pour être délivré de façon fiable (chantier "templates" à finaliser).
+    try {
+      const buyerPhone = order?.buyer?.phone
+        || (updatedOrder && (updatedOrder.buyer_profile?.phone || updatedOrder.buyer_phone))
+        || null;
+      if (buyerPhone) {
+        const { sendWhatsAppCtaUrl } = require('./direct7');
+        const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
+        const trackingUrl = `${webBase}/order/${orderId}`;
+        const productName = order?.product?.name || 'votre commande';
+        const body = `🚚 Bonne nouvelle ! *${productName}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
+        await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+        console.log('[MARK-IN-DELIVERY] Notification WhatsApp suivi envoyée à', buyerPhone);
+      }
+    } catch (waErr) {
+      console.warn('[MARK-IN-DELIVERY] Echec notification WhatsApp (non bloquant):', waErr?.message || waErr);
+    }
+
+    res.json({
+      success: true,
+      orderId,
       updated: safeRes.used,
       removedColumns: safeRes.removed || [],
       order: updatedOrder,
-      message: 'Livraison démarrée avec succès' 
+      message: 'Livraison démarrée avec succès'
     });
   } catch (err) {
     console.error('[MARK-IN-DELIVERY] Error:', err);
