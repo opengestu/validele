@@ -1,14 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Search, ShoppingCart, Shield, Image as ImageIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
-import { App as CapacitorApp } from '@capacitor/app';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { useToast } from '@/hooks/use-toast';
 
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
@@ -32,7 +30,6 @@ const ProductSearch = () => {
   const { code: codeFromUrl } = useParams<{ code?: string }>();
   const navigate = useNavigate();
   const { user, userProfile, loading: authLoading } = useAuth();
-  const { toast } = useToast();
   const [searchCode, setSearchCode] = useState('');
   const [searchResult, setSearchResult] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,17 +52,8 @@ const ProductSearch = () => {
         : '/';
   const hasShareCodeInUrl = Boolean((codeFromUrl || '').trim());
   const isWebContext = !Capacitor.isNativePlatform();
-  const shouldShowOpenAppPrompt = isWebContext && hasShareCodeInUrl;
-  const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
   const isNativeProductLink = Capacitor.isNativePlatform() && hasShareCodeInUrl;
-  const isMobileWeb = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator.userAgent);
-  }, []);
-  const shouldAutoOpenNativeApp = isWebContext && isMobileWeb && hasShareCodeInUrl;
-  const androidPackageName = import.meta.env.VITE_ANDROID_APP_PACKAGE || 'com.validele.app';
-  const playStoreUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(androidPackageName)}`;
-  const iosStoreUrl = import.meta.env.VITE_IOS_APP_STORE_URL || '';
+  const showNonBuyerLinkNotice = !authLoading && isNonBuyerSession && hasShareCodeInUrl;
 
   const persistPendingProductCode = useCallback((rawCode?: string | null) => {
     const code = String(rawCode || '').trim();
@@ -78,124 +66,11 @@ const ProductSearch = () => {
   }, []);
 
   useEffect(() => {
-    if (!shouldAutoOpenNativeApp || typeof window === 'undefined') return;
-
-    const suppressInstallPrompt = (event: Event) => {
-      if (typeof event.preventDefault === 'function') event.preventDefault();
-    };
-
-    window.addEventListener('beforeinstallprompt', suppressInstallPrompt as EventListener);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', suppressInstallPrompt as EventListener);
-    };
-  }, [shouldAutoOpenNativeApp]);
-
-  useEffect(() => {
     if (!isNativeProductLink) return;
     const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
     if (!rawCode || typeof window === 'undefined') return;
     persistPendingProductCode(rawCode);
   }, [codeFromUrl, isNativeProductLink, persistPendingProductCode]);
-
-  const handleInstallAndroid = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    window.open(playStoreUrl, '_blank', 'noopener,noreferrer');
-  }, [playStoreUrl]);
-
-  const handleInstallIos = useCallback(() => {
-    if (typeof window !== 'undefined' && iosStoreUrl) {
-      window.open(iosStoreUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    toast({
-      title: 'Bientot disponible',
-      description: 'La version iOS n\'est pas encore disponible sur l\'App Store.',
-    });
-  }, [iosStoreUrl, toast]);
-
-  const handleOpenAppNow = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
-    if (!rawCode) return;
-    const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
-    window.location.href = deeplinkUrl;
-  }, [codeFromUrl]);
-
-  useEffect(() => {
-    if (!shouldAutoOpenNativeApp) return;
-    if (typeof window === 'undefined') return;
-
-    const rawCode = decodeURIComponent(String(codeFromUrl || '')).trim();
-    if (!rawCode) return;
-
-    const openAppWithDeeplink = async () => {
-      try {
-        const deeplinkUrl = `validel://product/${encodeURIComponent(rawCode)}`;
-        let hasOpenedApp = false;
-
-        const handleVisibilityChange = () => {
-          if (document.visibilityState === 'hidden') {
-            hasOpenedApp = true;
-          }
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        
-        // Try to open the app via Capacitor if available
-        if (Capacitor.isPluginAvailable('App')) {
-          try {
-            await CapacitorApp.openUrl({ url: deeplinkUrl });
-            hasOpenedApp = true;
-          } catch (err) {
-            console.log('CapacitorApp.openUrl failed, will try window.location.href');
-          }
-        }
-
-        // Fallback to window.location.href
-        if (!hasOpenedApp) {
-          window.location.href = deeplinkUrl;
-        }
-
-        const fallbackTimer = window.setTimeout(() => {
-          if (!hasOpenedApp) {
-            try {
-              const ua = navigator.userAgent || '';
-              const isAndroid = /Android/i.test(ua);
-              const isIos = /iPhone|iPad|iPod/i.test(ua);
-
-              if (isAndroid) {
-                // Use an intent:// URL to let Chrome open the app or fall back to Play Store automatically
-                const intentUrl = `intent://www.validel.shop/product/${encodeURIComponent(rawCode)}#Intent;scheme=https;package=${encodeURIComponent(androidPackageName)};S.browser_fallback_url=${encodeURIComponent(playStoreUrl)};end`;
-                window.location.href = intentUrl;
-                return;
-              }
-
-              if (isIos && iosStoreUrl) {
-                window.location.href = iosStoreUrl;
-                return;
-              }
-            } catch (e) {
-              // ignore and show fallback UI
-            }
-
-          }
-        }, 1800);
-
-        return () => {
-          document.removeEventListener('visibilitychange', handleVisibilityChange);
-          window.clearTimeout(fallbackTimer);
-        };
-      } catch (err) {
-        console.error('Error opening app with deeplink:', err);
-      }
-    };
-
-    const cleanup = openAppWithDeeplink();
-    
-    return () => {
-      cleanup?.then(fn => fn?.());
-    };
-  }, [codeFromUrl, shouldAutoOpenNativeApp]);
 
   const prepareBuyerAuthEntry = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -243,7 +118,12 @@ const ProductSearch = () => {
     const decodedCode = decodeURIComponent(codeFromUrl).trim();
     if (!decodedCode) return;
 
+    // Web (parcours acheteur sans app) : on affiche directement la fiche produit,
+    // sans mur « ouvrir/installer l'application ». L'app reste accessible via son
+    // propre deep link (validel://) et l'App Link Android, mais n'est plus imposée.
     if (isWebContext) {
+      setSearchCode(decodedCode);
+      void searchProductByCode(decodedCode);
       return;
     }
 
@@ -269,47 +149,13 @@ const ProductSearch = () => {
   }, [
     codeFromUrl,
     authLoading,
+    isWebContext,
     isNonBuyerSession,
     navigate,
     persistPendingProductCode,
     searchProductByCode,
     userProfile?.role,
   ]);
-
-  if (shouldShowOpenAppPrompt) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <Card className="w-full max-w-xl border-slate-200 shadow-sm">
-          <CardHeader>
-            <CardTitle>Ouverture de l'application</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-slate-700 leading-relaxed">
-              Le lien essaie d'ouvrir automatiquement l'application mobile pour continuer en toute securite.
-            </p>
-
-            <Button type="button" className="w-full" onClick={handleOpenAppNow}>
-              Reessayer d'ouvrir l'application
-            </Button>
-
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <p className="text-sm text-slate-700">
-                Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={handleInstallAndroid}>
-                  Telecharger Android
-                </Button>
-                <Button type="button" variant="outline" onClick={handleInstallIos}>
-                  Telecharger iPhone
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   if (showNonBuyerLinkNotice) {
     return (
@@ -357,41 +203,6 @@ const ProductSearch = () => {
     }
   }
 
-  if (shouldAutoOpenNativeApp) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <Card className="w-full max-w-xl border-slate-200 shadow-sm">
-          <CardHeader>
-            <CardTitle>Ouverture de l'application</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-slate-700 leading-relaxed">
-              Le lien essaie d'ouvrir automatiquement l'application mobile pour continuer en toute securite.
-            </p>
-
-            <Button type="button" className="w-full" onClick={handleOpenAppNow}>
-              Reessayer d'ouvrir l'application
-            </Button>
-
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <p className="text-sm text-slate-700">
-                Application non detectee sur cet appareil. Telechargez-la puis revenez sur ce lien.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={handleInstallAndroid}>
-                  Telecharger Android
-                </Button>
-                <Button type="button" variant="outline" onClick={handleInstallIos}>
-                  Telecharger iPhone
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm border-b">
@@ -429,7 +240,7 @@ const ProductSearch = () => {
                 className="flex-1"
                 onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
               />
-              <Button 
+              <Button
                 onClick={handleSearch}
                 disabled={loading}
                 className="btn-buyer"
@@ -457,9 +268,9 @@ const ProductSearch = () => {
 
                 <div className="space-y-6">
                   <h2 className="text-3xl font-bold text-gray-900">{searchResult.name}</h2>
-                  
+
                   <p className="text-gray-600 leading-relaxed">{searchResult.description}</p>
-                  
+
                   <div className="space-y-3">
                     <div className="flex justify-between">
                       <span className="font-medium text-gray-700">Catégorie:</span>
@@ -472,7 +283,7 @@ const ProductSearch = () => {
                       </span>
                     </div>
                   </div>
-                  
+
                   <div className="border-t pt-6">
                     <p className="text-4xl font-bold text-green-600 mb-6">
                       {searchResult.price.toLocaleString()} FCFA
