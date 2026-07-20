@@ -106,6 +106,15 @@ app.use(express.json({
 }));
 app.use(cookieParser());
 
+// Bot WhatsApp conversationnel (D7) : POST /api/whatsapp/webhook/:secret
+// Sécurisé par token secret dans l'URL. Ne modifie aucun statut (lecture/notification).
+try {
+  const { registerWhatsAppBot } = require('./whatsapp-bot');
+  registerWhatsAppBot(app);
+} catch (e) {
+  console.error('[INIT] Échec du montage du bot WhatsApp:', e && (e.message || e));
+}
+
 // Helper: normalize a provider/raw response into a JSON object for DB jsonb columns
 function normalizeJsonField(val) {
   try {
@@ -7141,7 +7150,7 @@ app.get('/api/buyer/orders', async (req, res) => {
             id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address, payment_method,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
-            vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
+            vendor:profiles!orders_vendor_id_fkey(id, company_name, full_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, phone),
             qr_code, delivery_person_id
           `)
@@ -7157,7 +7166,7 @@ app.get('/api/buyer/orders', async (req, res) => {
             id, order_code, quantity, total_amount, status, vendor_id, product_id, created_at, delivery_address, payment_method,
             product:products(id, name, price, description),
             buyer:profiles!orders_buyer_id_fkey(id, address),
-            vendor:profiles!orders_vendor_id_fkey(id, company_name, phone, wallet_type, address),
+            vendor:profiles!orders_vendor_id_fkey(id, company_name, full_name, phone, wallet_type, address),
             delivery:profiles!orders_delivery_person_id_fkey(id, phone),
             qr_code, delivery_person_id
           `)

@@ -7,6 +7,14 @@ const axios = require('axios');
 const DIRECT7_API_KEY = process.env.DIRECT7_API_KEY;
 const DIRECT7_API_URL = process.env.D7_SMS_URL || 'https://api.d7networks.com/messages/v1/send';
 
+// Endpoint WhatsApp interactif (boutons / CTA url). D7 expose une API v2 distincte de messages/v1/send.
+// ✅ Confirmé le 2026-07-20 sur le compte réel (numéro 221768171175) : l'envoi interactif passe bien
+// par cette v2 (réponse status: 'accepted'). Reste surchargeable via env par sécurité.
+const D7_WHATSAPP_URL = process.env.D7_WHATSAPP_URL || 'https://api.d7networks.com/whatsapp/v2/send';
+// Originator WhatsApp = le NUMÉRO WhatsApp Business enregistré (format international sans +),
+// distinct du sender ID SMS alphanumérique (D7_OTP_ORIGINATOR = 'VALIDEL').
+const WHATSAPP_BOT_ORIGINATOR = process.env.WHATSAPP_BOT_NUMBER || process.env.D7_WHATSAPP_ORIGINATOR || '';
+
 const D7_OTP_PROVIDER_ENABLED = String(process.env.D7_OTP_PROVIDER_ENABLED || 'true').toLowerCase() === 'true';
 const D7_OTP_PROVIDER_STRICT = String(process.env.D7_OTP_PROVIDER_STRICT || 'false').toLowerCase() === 'true';
 const D7_OTP_SEND_URL = process.env.D7_OTP_SEND_URL || 'https://api.d7networks.com/verify/v1/otp/send-otp';
@@ -325,6 +333,85 @@ async function sendWhatsApp(phone, message) {
   }
 }
 
+// --- WhatsApp interactif (bot conversationnel Validèl) -----------------------
+// Ces fonctions envoient des messages interactifs (boutons de réponse, bouton CTA url)
+// via l'API WhatsApp v2 de D7. Elles sont séparées de sendWhatsApp (texte simple, v1)
+// pour isoler l'incertitude sur le shape exact — voir D7_WHATSAPP_URL plus haut.
+
+function normalizeWhatsAppPhone(phone) {
+  return String(phone || '').startsWith('+') ? String(phone).substring(1) : String(phone || '');
+}
+
+async function postD7Whatsapp(messagePayload) {
+  if (!DIRECT7_API_KEY) {
+    throw new Error('DIRECT7_API_KEY non configurée');
+  }
+  if (!WHATSAPP_BOT_ORIGINATOR) {
+    throw new Error('WHATSAPP_BOT_NUMBER non configuré (numéro WhatsApp Business Validèl requis pour l\'envoi interactif)');
+  }
+  try {
+    const response = await axios.post(
+      D7_WHATSAPP_URL,
+      { messages: [messagePayload] },
+      { headers: { ...getAuthHeaders() } }
+    );
+    console.log('[DIRECT7] WhatsApp interactif envoyé:', response.data);
+    return { success: true, data: response.data };
+  } catch (error) {
+    const apiData = error?.response?.data;
+    console.error('[DIRECT7] Erreur envoi WhatsApp interactif:', apiData || error?.message || error);
+    throw new Error(apiData?.message || error?.message || "Erreur lors de l'envoi WhatsApp interactif");
+  }
+}
+
+// Envoi d'un message avec 1 à 3 boutons de réponse rapide.
+// buttons = [{ id, title }] ; title tronqué à 20 caractères (contrainte WhatsApp),
+// id limité à 256 caractères. Max 3 boutons.
+async function sendWhatsAppButtons(phone, bodyText, buttons) {
+  const safeButtons = (Array.isArray(buttons) ? buttons : []).slice(0, 3).map((b) => ({
+    type: 'reply',
+    reply: {
+      id: String(b.id || '').slice(0, 256),
+      title: String(b.title || '').slice(0, 20),
+    },
+  }));
+  return postD7Whatsapp({
+    originator: WHATSAPP_BOT_ORIGINATOR,
+    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+    content: {
+      message_type: 'INTERACTIVE',
+      interactive: {
+        type: 'button',
+        body: { text: String(bodyText || '').slice(0, 1024) },
+        action: { buttons: safeButtons },
+      },
+    },
+  });
+}
+
+// Envoi d'un message avec un unique bouton CTA url (ouvre un lien). Ne se combine pas
+// avec des boutons de réponse -> message séparé (contrainte WhatsApp).
+async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url) {
+  return postD7Whatsapp({
+    originator: WHATSAPP_BOT_ORIGINATOR,
+    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+    content: {
+      message_type: 'INTERACTIVE',
+      interactive: {
+        type: 'cta_url',
+        body: { text: String(bodyText || '').slice(0, 1024) },
+        action: {
+          name: 'cta_url',
+          parameters: {
+            display_text: String(displayText || '').slice(0, 20),
+            url: String(url || ''),
+          },
+        },
+      },
+    },
+  });
+}
+
 async function sendProviderOTP(phone) {
   requireOtpProviderConfig();
 
@@ -515,5 +602,8 @@ async function verifyOTP(phone, code) {
 module.exports = {
   sendOTP,
   verifyOTP,
-  sendSMS
+  sendSMS,
+  sendWhatsApp,
+  sendWhatsAppButtons,
+  sendWhatsAppCtaUrl
 };
