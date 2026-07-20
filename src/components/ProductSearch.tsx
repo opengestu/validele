@@ -153,6 +153,11 @@ const ProductSearch = () => {
         throw new Error(orderJson?.error || 'Impossible de créer la commande.');
       }
 
+      // Mémoriser la commande pour la page de succès + le suivi (acheteur sans compte).
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem('validel_last_order_id', String(orderJson.orderId)); } catch { /* ignore */ }
+      }
+
       // 2) Lancer le paiement Wave ou Orange Money (endpoints publics existants).
       const payEndpoint = payMethod === 'wave'
         ? '/api/payment/pixpay-wave/initiate'

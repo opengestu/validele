@@ -5,7 +5,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { getProfileById } from '@/lib/api';
+import { apiUrl, getProfileById } from '@/lib/api';
 const validelLogo = '/icons/validel-logo.svg';
 
 const PaymentSuccess = () => {
@@ -21,9 +21,11 @@ const PaymentSuccess = () => {
   const pollRef = useRef<number | null>(null);
   const pollAttemptsRef = useRef(0);
 
-  // Récupère l'order_id dans l'URL (query string)
+  // Récupère l'order_id dans l'URL (query string), avec repli sur le stockage local
+  // pour l'acheteur invité (le lien de retour Wave/OM ne porte pas toujours l'order_id).
   const params = new URLSearchParams(location.search);
-  const orderId = params.get('order_id');
+  const orderId = params.get('order_id')
+    || (typeof window !== 'undefined' ? localStorage.getItem('validel_last_order_id') : null);
 
   const isPaid = order?.status === 'paid' || order?.status === 'in_delivery' || order?.status === 'delivered';
 
@@ -83,6 +85,29 @@ const PaymentSuccess = () => {
           if (local) setProduct({ name: local.products?.name || 'Produit démo', price: local.total_amount });
           setLoading(false);
           return;
+        }
+
+        // Acheteur invité (pas de session) : la lecture RLS échoue -> passer par
+        // l'endpoint public de suivi pour afficher le statut + proposer le suivi.
+        try {
+          const resp = await fetch(apiUrl(`/api/guest/order/${encodeURIComponent(orderId)}`));
+          const json: any = await resp.json().catch(() => null);
+          if (resp.ok && json?.success && json.order) {
+            const o = json.order;
+            setOrder({
+              id: o.id,
+              order_code: o.orderCode,
+              status: o.status,
+              total_amount: o.totalAmount,
+              delivery_address: o.deliveryAddress,
+              created_at: o.createdAt,
+            });
+            setProduct(o.product ? { name: o.product.name, price: o.product.price } : null);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[PaymentSuccess] repli commande publique échoué', e);
         }
 
         setError("Commande introuvable ou erreur de chargement.");
@@ -384,6 +409,28 @@ const PaymentSuccess = () => {
             }}
           >
             🔄 Rafraîchir le statut
+          </Button>
+        )}
+        {orderId && (
+          <Button
+            onClick={() => navigate(`/order/${orderId}`)}
+            style={{
+              width: '100%',
+              background: '#16a34a',
+              color: 'white',
+              fontWeight: 700,
+              fontSize: 18,
+              padding: '16px 28px',
+              borderRadius: 14,
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(22, 163, 74, 0.18)',
+              transition: 'all 0.3s',
+              letterSpacing: '0.3px',
+              marginBottom: 10
+            }}
+          >
+            🚚 Suivre ma commande
           </Button>
         )}
         <Button
