@@ -9,6 +9,7 @@
         android:theme="@style/AppTheme">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:screenOrientation="portrait"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
@@ -24,15 +25,11 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="validel" android:host="product" />
             </intent-filter>
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="www.validel.shop"
-                    android:pathPrefix="/product" />
-            </intent-filter>
+            <!-- App Link https://www.validel.shop/product/* volontairement retiré :
+                 les liens produit partagés (WhatsApp/vendeur) doivent TOUJOURS ouvrir
+                 la page web (paiement invité sans compte), même si l'app est installée.
+                 L'app garde son propre lien validel://product/... ci-dessus pour les
+                 cas où elle veut s'ouvrir explicitement elle-même (notifications, etc.). -->
         </activity>
 
         <provider
