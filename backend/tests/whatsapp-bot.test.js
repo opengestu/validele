@@ -40,12 +40,24 @@ function makeRecorder() {
 
 function makeBot(extra = {}) {
   const rec = makeRecorder();
-  // Déduplication en mémoire, propre à chaque bot : garde les tests hermétiques
-  // (aucun accès à la vraie table Supabase whatsapp_processed_messages). Un test
-  // qui veut sa propre logique de dédup peut la passer via `extra` (elle gagne).
+  // Déduplication + mémoire de conversation en mémoire, propres à chaque bot :
+  // garde les tests hermétiques (aucun accès aux vraies tables Supabase). Un
+  // test qui veut sa propre logique peut la passer via `extra` (elle gagne).
   const seen = new Set();
   const isDuplicate = async (id) => { if (seen.has(id)) return true; seen.add(id); return false; };
-  const b = bot.createBot({ findProduct, isDuplicate, ...rec, ...extra });
+  const convState = new Map();
+  const getConversationState = async (phone) => convState.get(phone) || null;
+  const setConversationState = async (phone, patch) => {
+    const next = { ...(convState.get(phone) || {}), ...patch, updatedAt: Date.now() };
+    convState.set(phone, next);
+    return next;
+  };
+  // Stub IA par défaut : pas d'appel réseau réel dans les tests.
+  const askProductQuestion = async (produit, question) => `Réponse IA test sur ${produit.nom} pour: ${question}`;
+  const b = bot.createBot({
+    findProduct, isDuplicate, getConversationState, setConversationState, askProductQuestion,
+    ...rec, ...extra,
+  });
   return { b, rec };
 }
 
@@ -189,6 +201,43 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends[0].kind, 'text');
     assert.ok(rec.sends[0].body.includes('code produit'));
     // Le module n'expose et n'appelle aucune fonction de mutation de statut : garantie structurelle.
+  });
+
+  // Question libre APRÈS avoir consulté un produit -> réponse IA + 2 boutons
+  await test('question libre après code produit -> réponse IA + boutons Payer/Autres', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('PD3431')); // consulte le produit -> contexte actif
+    await b.processWebhook(inboundText('est-ce que ça a une garantie ?'));
+    assert.strictEqual(rec.sends.length, 2);
+    assert.strictEqual(rec.sends[1].kind, 'buttons');
+    assert.ok(rec.sends[1].body.includes('Caisse de Yaourt'));
+    assert.strictEqual(rec.sends[1].buttons[0].id, 'pay:PD3431');
+    assert.strictEqual(rec.sends[1].buttons[1].id, 'faq:PD3431');
+  });
+
+  // Question libre SANS avoir jamais consulté de produit -> invite classique (pas d'appel IA)
+  await test('question libre sans contexte produit actif -> invite classique', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('est-ce que ça a une garantie ?'));
+    assert.strictEqual(rec.sends.length, 1);
+    assert.strictEqual(rec.sends[0].kind, 'text');
+    assert.ok(rec.sends[0].body.includes('code produit'));
+  });
+
+  // Garde-fou anti-abus : au-delà du quota, on n'appelle plus l'IA
+  await test('quota IA dépassé -> message de garde-fou, IA non rappelée', async () => {
+    let aiCalls = 0;
+    const askProductQuestion = async () => { aiCalls += 1; return 'réponse'; };
+    const { b, rec } = makeBot({ askProductQuestion });
+    await b.processWebhook(inboundText('PD3431'));
+    // 8 questions autorisées (WHATSAPP_AI_QA_MAX_PER_DAY par défaut) + 1 de trop
+    for (let i = 0; i < 9; i += 1) {
+      await b.processWebhook(inboundText(`question numéro ${i}`));
+    }
+    assert.strictEqual(aiCalls, 8, `attendu 8 appels IA, obtenu ${aiCalls}`);
+    const lastSend = rec.sends[rec.sends.length - 1];
+    assert.strictEqual(lastSend.kind, 'text');
+    assert.ok(lastSend.body.includes('beaucoup de questions'));
   });
 
   console.log(`\n${passed} réussis, ${failed} échoués`);

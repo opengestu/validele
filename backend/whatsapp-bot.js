@@ -13,6 +13,7 @@
 // secret imprévisible dans l'URL (WHATSAPP_WEBHOOK_SECRET), comparé à temps constant.
 
 const crypto = require('crypto');
+const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('./supabase');
 const {
   sendWhatsApp,
@@ -33,6 +34,19 @@ const DRY_RUN = /^true$/i.test(process.env.WHATSAPP_BOT_DRY_RUN || '');
 
 // Regex tolérante : « bonjour PD3431 svp » -> PD3431. Insensible à la casse.
 const PRODUCT_CODE_RE = /\b(PD\d{3,})\b/i;
+
+function parsePositiveIntLocal(value, fallback) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// Questions libres sur le produit en cours (sans redonner le code) : combien de
+// temps le "produit actif" reste en mémoire pour un numéro donné.
+const PRODUCT_CONTEXT_TTL_MS = 45 * 60 * 1000;
+// Garde-fou anti-abus : nombre max de questions répondues par l'IA par numéro,
+// sur une fenêtre glissante de 24h (coût maîtrisé même en cas de spam).
+const AI_QA_MAX_PER_WINDOW = parsePositiveIntLocal(process.env.WHATSAPP_AI_QA_MAX_PER_DAY, 8);
+const AI_QA_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Utilitaires
@@ -106,7 +120,7 @@ async function trouverProduit(code) {
   if (!supabase || !code) return null;
   const { data: product, error } = await supabase
     .from('products')
-    .select('id, name, price, code, is_available, vendor_id')
+    .select('id, name, price, code, is_available, vendor_id, description')
     .ilike('code', code)
     .maybeSingle();
   if (error) {
@@ -134,6 +148,7 @@ async function trouverProduit(code) {
     prix: Number(product.price) || 0,
     vendeurNom,
     vendeurQuartier,
+    description: product.description || '',
   };
 }
 
@@ -175,6 +190,9 @@ const TXT_CODE_INTROUVABLE = (code) =>
 
 const TXT_AUCUN_CODE =
   'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.';
+
+const TXT_AI_QUOTA_DEPASSE =
+  'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, contactez directement le vendeur ou utilisez le menu "Autres questions".';
 
 const TXT_FAQ_MARCHE = [
   '*Comment Validèl protège votre achat*',
@@ -221,6 +239,10 @@ const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Autres questi
 // ---------------------------------------------------------------------------
 async function decideReplies(parsed, deps) {
   const findProduct = (deps && deps.findProduct) || trouverProduit;
+  const getConvState = (deps && deps.getConversationState) || defaultGetConversationState;
+  const setConvState = (deps && deps.setConversationState) || defaultSetConversationState;
+  const askProductQuestion = (deps && deps.askProductQuestion) || askProductQuestionAI;
+  const phone = parsed.from;
 
   // 1) Réponse à un bouton interactif
   if (parsed.buttonId) {
@@ -229,6 +251,7 @@ async function decideReplies(parsed, deps) {
 
     if (kindId === 'pay') {
       const code = parts[1];
+      if (phone && code) await setConvState(phone, { productCode: code });
       const produit = await findProduct(code);
       if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
       return [{
@@ -240,6 +263,8 @@ async function decideReplies(parsed, deps) {
     }
 
     if (kindId === 'faq') {
+      const faqCode = parts.length === 2 ? parts[1] : parts[2];
+      if (phone && faqCode) await setConvState(phone, { productCode: faqCode });
       // faq:CODE -> menu ; faq:SUJET:CODE -> réponse
       if (parts.length === 2) {
         const code = parts[1];
@@ -271,18 +296,59 @@ async function decideReplies(parsed, deps) {
 
   // 2) Message texte
   const code = extractProductCode(parsed.text);
-  if (!code) {
-    // Note : « j'ai payé », « bonjour », etc. tombent ici. On NE change aucun statut,
-    // on invite simplement à envoyer un code. (Règle centrale respectée.)
-    return [{ kind: 'text', body: TXT_AUCUN_CODE }];
+  if (code) {
+    const produit = await findProduct(code);
+    if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
+    // Nouveau produit consulté -> repart avec un quota IA frais.
+    if (phone) await setConvState(phone, { productCode: code, aiCount: 0, aiWindowStart: null });
+    return [{
+      kind: 'buttons',
+      body: ficheProduitText(produit),
+      buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)],
+    }];
   }
-  const produit = await findProduct(code);
-  if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
-  return [{
-    kind: 'buttons',
-    body: ficheProduitText(produit),
-    buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)],
-  }];
+
+  // Pas de code dans le message : si un produit est "actif" pour ce numéro
+  // (consulté récemment), on traite le message comme une question libre à ce
+  // sujet, répondue par IA en se basant UNIQUEMENT sur les vraies données produit.
+  if (phone) {
+    const state = await getConvState(phone);
+    const hasActiveProduct = state
+      && state.productCode
+      && (Date.now() - (state.updatedAt || 0)) < PRODUCT_CONTEXT_TTL_MS;
+
+    if (hasActiveProduct) {
+      if (isAiQuotaExceeded(state)) {
+        return [{ kind: 'text', body: TXT_AI_QUOTA_DEPASSE }];
+      }
+      const produit = await findProduct(state.productCode);
+      if (produit) {
+        const now = Date.now();
+        const windowStillValid = state.aiWindowStart && (now - state.aiWindowStart) < AI_QA_WINDOW_MS;
+        const nextWindowStart = windowStillValid ? state.aiWindowStart : now;
+        const nextCount = (windowStillValid ? (state.aiCount || 0) : 0) + 1;
+        await setConvState(phone, { aiWindowStart: nextWindowStart, aiCount: nextCount });
+
+        let answer = null;
+        try {
+          answer = await askProductQuestion(produit, parsed.text);
+        } catch (e) {
+          console.error('[WABOT] Erreur réponse IA:', e && e.message);
+        }
+        if (answer) {
+          return [{
+            kind: 'buttons',
+            body: answer.slice(0, 1024),
+            buttons: [btnPayer(state.productCode), btnAutresQuestions(state.productCode)],
+          }];
+        }
+      }
+    }
+  }
+
+  // Note : « j'ai payé », « bonjour » sans produit actif, etc. tombent ici. On NE
+  // change aucun statut, on invite simplement à envoyer un code. (Règle centrale.)
+  return [{ kind: 'text', body: TXT_AUCUN_CODE }];
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +377,113 @@ async function defaultIsDuplicate(msgId) {
   if (memProcessed.has(msgId)) return true;
   memProcessed.set(msgId, now);
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Mémoire de conversation (quel produit un numéro consulte "en ce moment")
+// -> permet de répondre à une question libre sans redonner le code produit.
+// Persistance Supabase (multi-instance) + secours mémoire.
+// ---------------------------------------------------------------------------
+const memConversationState = new Map();
+
+async function defaultGetConversationState(phone) {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('whatsapp_conversation_state')
+        .select('product_code, ai_question_count, ai_window_started_at, updated_at')
+        .eq('phone', phone)
+        .maybeSingle();
+      if (!error) {
+        return data ? {
+          productCode: data.product_code,
+          updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : 0,
+          aiCount: data.ai_question_count || 0,
+          aiWindowStart: data.ai_window_started_at ? new Date(data.ai_window_started_at).getTime() : 0,
+        } : null;
+      }
+      console.warn('[WABOT] getConversationState Supabase indisponible, secours mémoire:', error.message);
+    } catch (e) {
+      console.warn('[WABOT] getConversationState exception, secours mémoire:', e && e.message);
+    }
+  }
+  return memConversationState.get(phone) || null;
+}
+
+async function defaultSetConversationState(phone, patch) {
+  const existing = (await defaultGetConversationState(phone)) || {};
+  const next = { ...existing, ...patch, updatedAt: Date.now() };
+  memConversationState.set(phone, next);
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('whatsapp_conversation_state')
+        .upsert({
+          phone,
+          product_code: next.productCode || null,
+          ai_question_count: next.aiCount || 0,
+          ai_window_started_at: next.aiWindowStart ? new Date(next.aiWindowStart).toISOString() : null,
+          updated_at: new Date(next.updatedAt).toISOString(),
+        }, { onConflict: 'phone' });
+      if (error) console.warn('[WABOT] setConversationState Supabase erreur:', error.message);
+    } catch (e) {
+      console.warn('[WABOT] setConversationState exception:', e && e.message);
+    }
+  }
+  return next;
+}
+
+function isAiQuotaExceeded(state) {
+  if (!state || !state.aiWindowStart) return false;
+  if ((Date.now() - state.aiWindowStart) >= AI_QA_WINDOW_MS) return false; // fenêtre expirée
+  return (state.aiCount || 0) >= AI_QA_MAX_PER_WINDOW;
+}
+
+// ---------------------------------------------------------------------------
+// Questions libres sur le produit -> réponse IA (Claude Haiku)
+// Contrainte stricte : répondre UNIQUEMENT à partir des données produit
+// fournies, jamais inventer une caractéristique/délai/garantie non indiquée.
+// ---------------------------------------------------------------------------
+let anthropicClient = null;
+function getAnthropicClient() {
+  if (!anthropicClient) anthropicClient = new Anthropic();
+  return anthropicClient;
+}
+
+async function askProductQuestionAI(produit, question) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.warn('[WABOT] ANTHROPIC_API_KEY manquante, réponse IA impossible');
+    return null;
+  }
+  const client = getAnthropicClient();
+  const { prix, frais, total } = computeFees(produit.prix);
+  const systeme = [
+    'Tu es l\'assistant WhatsApp de Validèl, un service qui sécurise les paiements entre',
+    'acheteurs et vendeurs au Sénégal (l\'argent est bloqué jusqu\'à confirmation de réception).',
+    'Réponds UNIQUEMENT à partir des informations produit ci-dessous. N\'invente JAMAIS une',
+    'caractéristique, une couleur, un délai de livraison ou une garantie qui n\'est pas indiquée.',
+    'Si tu ne sais pas, dis-le clairement et invite le client à utiliser le menu "Autres questions"',
+    'ou à contacter le vendeur directement.',
+    'Ne demande et ne discute JAMAIS de code secret, mot de passe ou code PIN Wave/Orange Money.',
+    'Réponds en français, 2 à 3 phrases maximum, ton chaleureux et direct, texte simple (pas de #).',
+    '',
+    'Informations produit :',
+    `- Nom : ${produit.nom}`,
+    `- Prix : ${formatFcfa(prix)} FCFA`,
+    `- Frais Validèl : ${formatFcfa(frais)} FCFA (total à payer : ${formatFcfa(total)} FCFA)`,
+    `- Vendeur : ${produit.vendeurNom}${produit.vendeurQuartier ? ' — ' + produit.vendeurQuartier : ''}`,
+    produit.description ? `- Description : ${produit.description}` : null,
+  ].filter(Boolean).join('\n');
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 300,
+    system: systeme,
+    messages: [{ role: 'user', content: String(question || '').slice(0, 500) }],
+  });
+
+  const textBlock = (response.content || []).find((b) => b.type === 'text');
+  return textBlock ? textBlock.text.trim() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +518,9 @@ async function executeAction(action, to, senders) {
 function createBot(deps = {}) {
   const findProduct = deps.findProduct || trouverProduit;
   const isDuplicate = deps.isDuplicate || defaultIsDuplicate;
+  const getConversationState = deps.getConversationState || defaultGetConversationState;
+  const setConversationState = deps.setConversationState || defaultSetConversationState;
+  const askProductQuestion = deps.askProductQuestion || askProductQuestionAI;
   const senders = {
     sendText: deps.sendText,
     sendButtons: deps.sendButtons,
@@ -362,7 +538,12 @@ function createBot(deps = {}) {
       console.warn('[WABOT] message sans expéditeur, ignoré:', parsed.msgId);
       return;
     }
-    const actions = await decideReplies(parsed, { findProduct });
+    const actions = await decideReplies(parsed, {
+      findProduct,
+      getConversationState,
+      setConversationState,
+      askProductQuestion,
+    });
     for (const action of actions) {
       await executeAction(action, parsed.from, senders);
     }
