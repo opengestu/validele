@@ -224,6 +224,23 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(rec.sends[0].body.includes('code produit'));
   });
 
+  // Accusé de réception ("Oui", "Merci"...) après une réponse IA -> réponse fixe,
+  // PAS une nouvelle question IA (évite la réponse générique incohérente).
+  await test('accusé "Oui" après réponse IA -> réponse fixe, IA non rappelée', async () => {
+    let aiCalls = 0;
+    const askProductQuestion = async () => { aiCalls += 1; return 'réponse IA'; };
+    const { b, rec } = makeBot({ askProductQuestion });
+    await b.processWebhook(inboundText('PD3431'));
+    await b.processWebhook(inboundText('il y a une garantie ?'));
+    assert.strictEqual(aiCalls, 1);
+    await b.processWebhook(inboundText('Oui'));
+    assert.strictEqual(aiCalls, 1, 'l\'IA ne doit pas être rappelée pour un simple "Oui"');
+    const lastSend = rec.sends[rec.sends.length - 1];
+    assert.strictEqual(lastSend.kind, 'buttons');
+    assert.ok(lastSend.body.includes('Avec plaisir'));
+    assert.strictEqual(lastSend.buttons[0].id, 'pay:PD3431');
+  });
+
   // Garde-fou anti-abus : au-delà du quota, on n'appelle plus l'IA
   await test('quota IA dépassé -> message de garde-fou, IA non rappelée', async () => {
     let aiCalls = 0;

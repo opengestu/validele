@@ -318,6 +318,16 @@ async function decideReplies(parsed, deps) {
       && (Date.now() - (state.updatedAt || 0)) < PRODUCT_CONTEXT_TTL_MS;
 
     if (hasActiveProduct) {
+      // Accusé de réception court ("Oui", "Merci", "Ok"...) : le client répond
+      // souvent ainsi après une réponse IA. Ce n'est PAS une nouvelle question ->
+      // réponse fixe, sans consommer de quota ni rappeler l'IA.
+      if (isAcknowledgment(parsed.text)) {
+        return [{
+          kind: 'buttons',
+          body: 'Avec plaisir 😊 N\'hésitez pas si vous avez d\'autres questions.',
+          buttons: [btnPayer(state.productCode), btnAutresQuestions(state.productCode)],
+        }];
+      }
       if (isAiQuotaExceeded(state)) {
         return [{ kind: 'text', body: TXT_AI_QUOTA_DEPASSE }];
       }
@@ -433,6 +443,23 @@ async function defaultSetConversationState(phone, patch) {
   return next;
 }
 
+// Détecte un accusé de réception court ("Oui", "D'accord", "Merci !", "Ok 👍"...)
+// pour éviter de le traiter comme une nouvelle question produit.
+const ACK_PHRASES = new Set([
+  'oui', 'ok', 'okay', 'daccord', 'merci', 'mercii', 'nickel', 'parfait',
+  'super', 'cool', 'bien', 'compris', 'top', 'ca marche', 'entendu', 'ca va',
+  'davance merci', 'merci beaucoup',
+]);
+function isAcknowledgment(text) {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // retire les accents
+    .replace(/[^a-z\s]/g, '') // retire ponctuation/emoji/chiffres
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized.length > 0 && ACK_PHRASES.has(normalized);
+}
+
 function isAiQuotaExceeded(state) {
   if (!state || !state.aiWindowStart) return false;
   if ((Date.now() - state.aiWindowStart) >= AI_QA_WINDOW_MS) return false; // fenêtre expirée
@@ -466,6 +493,9 @@ async function askProductQuestionAI(produit, question) {
     'ou à contacter le vendeur directement.',
     'Ne demande et ne discute JAMAIS de code secret, mot de passe ou code PIN Wave/Orange Money.',
     'Réponds en français, 2 à 3 phrases maximum, ton chaleureux et direct, texte simple (pas de #).',
+    'Termine TOUJOURS par une affirmation complète et autonome. Ne pose JAMAIS de question de',
+    'relance en fin de réponse (pas de "c\'est bon pour toi ?", "voulez-vous que...", "avez-vous',
+    'd\'autres questions ?") : le client n\'a pas besoin de répondre pour clore l\'échange.',
     '',
     'Informations produit :',
     `- Nom : ${produit.nom}`,
