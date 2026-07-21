@@ -2763,6 +2763,41 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
 });
 
 // Webhook IPN PixPay
+// Notifie l'acheteur sur WhatsApp que son paiement est confirmé, avec un lien vers
+// la page de suivi publique. Couvre les acheteurs invités (web, sans push token app).
+// Appelée depuis les 3 webhooks de paiement (Pixpay direct, PayDunya x2) au moment où
+// une commande passe à 'paid' pour la première fois. Non bloquante : n'importe quel
+// échec est avalé (le paiement est déjà confirmé en base, la notif est un bonus).
+// NOTE: comme mark-in-delivery, ce message est initié par nous hors fenêtre 24h ->
+// pour un acheteur invité qui n'a jamais écrit au bot, il ne sera livré de façon
+// fiable qu'une fois un template Meta approuvé en place.
+async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
+  try {
+    const { data: order } = await supabase
+      .from('orders')
+      .select('buyer_phone, total_amount, product_id')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!order?.buyer_phone) return;
+
+    let productName = 'votre commande';
+    if (order.product_id) {
+      const { data: prod } = await supabase.from('products').select('name').eq('id', order.product_id).maybeSingle();
+      if (prod?.name) productName = prod.name;
+    }
+
+    const { sendWhatsAppCtaUrl } = require('./direct7');
+    const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
+    const trackingUrl = `${webBase}/order/${orderId}`;
+    const amount = Number(order.total_amount || 0).toLocaleString('fr-FR');
+    const body = `✅ Paiement confirmé pour *${productName}* (${amount} FCFA).\n\nVotre argent est protégé jusqu'à la réception. Suivez votre commande à tout moment.`;
+    await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Suivre ma commande', trackingUrl);
+    console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
+  } catch (waErr) {
+    console.warn('[WHATSAPP] Echec notification paiement confirmé (non bloquant):', waErr?.message || waErr);
+  }
+}
+
 app.post('/api/payment/pixpay-webhook', async (req, res) => {
   try {
     const ipnData = req.body;
@@ -2889,7 +2924,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           console.log('[PIXPAY-WEBHOOK] ℹ️ Statut déjà confirmé, notifications non renvoyées');
         } else {
           console.log('[PIXPAY-WEBHOOK] ✅ Commande', orderId, 'marquée comme payée. QR code existant:', orderData?.qr_code);
-          
+          await notifyBuyerWhatsAppPaymentConfirmed(orderId);
+
           // Notifier l'acheteur et le vendeur du paiement confirmé
           try {
             const { data: orderDetails } = await dbClient
@@ -8144,6 +8180,7 @@ app.post('/api/payment/webhook', async (req, res) => {
     // Notifications push (acheteur + vendeur) quand le paiement est confirmé
     // et seulement si cette requête a réellement changé le statut.
     if ((status === 'completed' || status === 'success') && updatedRows && updatedRows.length > 0) {
+      await notifyBuyerWhatsAppPaymentConfirmed(orderId);
       try {
         const { data: orderDetails } = await supabase
           .from('orders')
@@ -8287,6 +8324,7 @@ app.post('/api/paydunya/notification', async (req, res) => {
     // Notifications push (acheteur + vendeur) quand le paiement est confirmé
     // et seulement si cette requête a réellement changé le statut.
     if ((status === 'completed' || status === 'success') && updatedRows && updatedRows.length > 0) {
+      await notifyBuyerWhatsAppPaymentConfirmed(orderId);
       try {
         const { data: orderDetails } = await supabase
           .from('orders')
