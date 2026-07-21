@@ -3111,10 +3111,11 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       });
 
       try {
-        // Récupérer infos commande pour notifier l'acheteur
+        // Récupérer infos commande pour notifier l'acheteur (+ nom produit, pour
+        // éviter le message cassé "Le paiement de votre commande votre produit a échoué").
         const { data: orderInfo, error: orderInfoErr } = await supabase
           .from('orders')
-          .select('id, order_code, buyer_id')
+          .select('id, order_code, buyer_id, product:products(name)')
           .eq('id', orderId)
           .maybeSingle();
 
@@ -3126,7 +3127,8 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           try {
             await notificationService.notifyBuyerPaymentFailed(orderInfo.buyer_id, {
               orderId: orderInfo.id,
-              orderCode: orderInfo.order_code
+              orderCode: orderInfo.order_code,
+              productName: orderInfo.product?.name || null
             });
           } catch (notifErr) {
             console.error('[PIXPAY] Erreur notification paiement échoué:', notifErr);
@@ -6576,9 +6578,29 @@ app.post('/api/notify/order-confirmed', async (req, res) => {
       return res.status(400).json({ success: false, error: 'buyerId et orderId requis' });
     }
 
+    // Nom du produit récupéré côté serveur (pas de dépendance au client) : évite le
+    // message cassé "Votre commande votre produit a été confirmée..." (productName
+    // jamais transmis par certains appelants) — même correctif que delivery-completed.
+    let productName = null;
+    let order_code = orderCode;
+    try {
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .select('order_code, product:products(name)')
+        .eq('id', orderId)
+        .single();
+      if (!orderError && order) {
+        if (order.product && order.product.name) productName = order.product.name;
+        if (order.order_code) order_code = order.order_code;
+      }
+    } catch (e) {
+      console.error('[NOTIFY] Erreur récupération infos commande (order-confirmed):', e);
+    }
+
     const result = await notificationService.notifyBuyerOrderConfirmed(buyerId, {
       orderId,
-      orderCode
+      orderCode: order_code,
+      productName
     });
 
     res.json({ success: true, ...result });
@@ -6675,9 +6697,29 @@ app.post('/api/notify/delivery-completed', async (req, res) => {
       return res.status(400).json({ success: false, error: 'vendorId, buyerId et orderId requis' });
     }
 
+    // Nom du produit récupéré côté serveur (pas de dépendance au client, qui ne
+    // le transmettait jamais depuis QRScanner.tsx) : corrige le message cassé
+    // "La commande le produit a été livrée avec succès." (productName undefined).
+    let productName = null;
+    let order_code = orderCode;
+    try {
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .select('order_code, product:products(name)')
+        .eq('id', orderId)
+        .single();
+      if (!orderError && order) {
+        if (order.product && order.product.name) productName = order.product.name;
+        if (order.order_code) order_code = order.order_code;
+      }
+    } catch (e) {
+      console.error('[NOTIFY] Erreur récupération infos commande (delivery-completed):', e);
+    }
+
     const results = await notificationService.notifyDeliveryCompleted(vendorId, buyerId, {
       orderId,
-      orderCode
+      orderCode: order_code,
+      productName
     });
 
     res.json({ success: true, results });
