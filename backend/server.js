@@ -333,8 +333,13 @@ app.post('/api/guest/order', async (req, res) => {
 
     // 3) Créer la commande. payment_method='wave' pour satisfaire la contrainte CHECK ;
     // la vraie méthode (Wave/OM) est choisie à l'étape paiement, comme dans l'app.
-    // total_amount = prix (quantité 1), aligné sur le flux acheteur existant.
-    const total_amount = Number(product.price) || 0;
+    // total_amount = prix + frais de protection (quantité 1). Frais de protection
+    // = VALIDEL_COMMISSION_PCT (même variable que le bot WhatsApp, seule source de
+    // vérité) ; SANS RAPPORT avec la commission vendeur (payout admin, séparée).
+    const price = Number(product.price) || 0;
+    const protectionFeePct = getProtectionFeePct();
+    const protectionFee = Math.round((price * protectionFeePct) / 100);
+    const total_amount = price + protectionFee;
     const qr_code = generateSecureQrCode('C-');
     const qr_code_vendor = generateSecureQrCode('V-');
     const order_code = await generateUniqueReadableOrderCode(supabaseAdmin);
@@ -366,6 +371,9 @@ app.post('/api/guest/order', async (req, res) => {
       success: true,
       orderId: order.id,
       orderCode: order.order_code,
+      price,
+      protectionFee,
+      protectionFeePct,
       totalAmount: total_amount,
       productName: product.name,
       buyerPhone: formattedPhone,
@@ -374,6 +382,20 @@ app.post('/api/guest/order', async (req, res) => {
     console.error('[GUEST] /api/guest/order error:', err);
     return res.status(500).json({ success: false, error: 'Erreur serveur.' });
   }
+});
+
+// Frais de protection acheteur : lu en temps réel (pas au build du frontend),
+// pour que changer VALIDEL_COMMISSION_PCT sur Render se répercute immédiatement
+// sur la page de paiement, sans reconstruire/redéployer le site. Défaut 0 = pas
+// de frais surprise si la variable n'est pas réglée. SANS RAPPORT avec la
+// commission vendeur (réglée par un admin au moment du payout).
+function getProtectionFeePct() {
+  const n = Number(process.env.VALIDEL_COMMISSION_PCT);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+app.get('/api/config/protection-fee', (req, res) => {
+  res.json({ success: true, pct: getProtectionFeePct() });
 });
 
 // Suivi de commande public (page web de suivi pour l'acheteur invité, sans compte).

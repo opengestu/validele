@@ -125,6 +125,29 @@ const ProductSearch = () => {
   const [checkoutError, setCheckoutError] = useState('');
   const [checkoutNotice, setCheckoutNotice] = useState('');
 
+  // Frais de protection : lu en temps réel à chaque ouverture du dialog (pas figé
+  // au build du site), pour refléter immédiatement un changement de
+  // VALIDEL_COMMISSION_PCT côté backend, sans reconstruire/redéployer le site.
+  const [protectionFeePct, setProtectionFeePct] = useState(0);
+  useEffect(() => {
+    if (!checkoutOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(apiUrl('/api/config/protection-fee'));
+        const json: any = await resp.json().catch(() => null);
+        if (!cancelled && json?.success && typeof json.pct === 'number') {
+          setProtectionFeePct(json.pct);
+        }
+      } catch { /* défaut 0 conservé en cas d'échec réseau */ }
+    })();
+    return () => { cancelled = true; };
+  }, [checkoutOpen]);
+
+  const productPrice = searchResult ? Number(searchResult.price) || 0 : 0;
+  const protectionFeeAmount = Math.round((productPrice * protectionFeePct) / 100);
+  const totalToPay = productPrice + protectionFeeAmount;
+
   const handleGuestCheckout = useCallback(async () => {
     setCheckoutError('');
     setCheckoutNotice('');
@@ -458,12 +481,18 @@ const ProductSearch = () => {
 
           <div className="space-y-4">
             {searchResult && (
-              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-600">{searchResult.name}</span>
-                  <span className="font-semibold text-gray-900">
-                    {Number(searchResult.price).toLocaleString()} FCFA
-                  </span>
+                  <span className="text-gray-900">{productPrice.toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">Frais de protection{protectionFeePct ? ` (${protectionFeePct}%)` : ''}</span>
+                  <span className="text-gray-900">{protectionFeeAmount.toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex items-center justify-between text-sm border-t border-gray-200 pt-1.5">
+                  <span className="font-medium text-gray-700">Total à payer</span>
+                  <span className="font-semibold text-gray-900">{totalToPay.toLocaleString()} FCFA</span>
                 </div>
               </div>
             )}
@@ -551,7 +580,7 @@ const ProductSearch = () => {
                   Traitement…
                 </>
               ) : (
-                `Payer ${searchResult ? Number(searchResult.price).toLocaleString() : ''} FCFA`
+                `Payer ${searchResult ? totalToPay.toLocaleString() : ''} FCFA`
               )}
             </Button>
 

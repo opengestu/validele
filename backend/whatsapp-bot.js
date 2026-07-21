@@ -23,9 +23,13 @@ const {
 
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || '';
 const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://www.validel.shop').replace(/\/+$/, '');
+// Frais de protection acheteur (SANS rapport avec la commission vendeur, gérée
+// séparément par un admin au moment du payout). Défaut 0 = pas de frais surprise
+// si la variable n'est pas réglée ; réglable à tout moment via Render, lu en
+// temps réel par la page de paiement web (voir GET /api/config/protection-fee).
 const COMMISSION_PCT = (() => {
   const n = Number(process.env.VALIDEL_COMMISSION_PCT);
-  return Number.isFinite(n) && n >= 0 ? n : 3;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 })();
 
 // Mode test : n'appelle PAS D7, affiche dans les logs ce que le bot AURAIT envoyé.
@@ -168,7 +172,7 @@ function ficheProduitText(produit) {
     '',
     '✅ Ce produit est bien enregistré sur Validèl.',
     '',
-    `Frais Validèl : ${formatFcfa(frais)} FCFA`,
+    `Frais de protection : ${formatFcfa(frais)} FCFA`,
     `*Total à payer : ${formatFcfa(total)} FCFA*`,
     '',
     'Votre argent est protégé : le vendeur n\'est payé qu\'après votre confirmation de réception.',
@@ -208,15 +212,15 @@ const TXT_FAQ_MARCHE = [
 function txtFaqFrais(produit) {
   if (!produit) {
     return [
-      '*Les frais*',
-      `Validèl prélève ${COMMISSION_PCT} % sur la transaction, affichés avant toute confirmation. Aucun frais caché.`,
+      '*Frais de protection*',
+      `Un frais de protection de ${COMMISSION_PCT} % s'applique sur la transaction, affiché avant toute confirmation. Aucun frais caché.`,
       'Le vendeur ne paie rien.',
     ].join('\n');
   }
   const { frais, total } = computeFees(produit.prix);
   return [
-    '*Les frais*',
-    `Validèl prélève ${COMMISSION_PCT} % sur la transaction, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
+    '*Frais de protection*',
+    `Frais de protection de ${COMMISSION_PCT} %, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
     `Total à payer : *${formatFcfa(total)} FCFA*, affiché avant toute confirmation. Aucun frais caché.`,
     'Le vendeur ne paie rien.',
   ].join('\n');
@@ -500,7 +504,7 @@ async function askProductQuestionAI(produit, question) {
     'Informations produit :',
     `- Nom : ${produit.nom}`,
     `- Prix : ${formatFcfa(prix)} FCFA`,
-    `- Frais Validèl : ${formatFcfa(frais)} FCFA (total à payer : ${formatFcfa(total)} FCFA)`,
+    `- Frais de protection : ${formatFcfa(frais)} FCFA (total à payer : ${formatFcfa(total)} FCFA)`,
     `- Vendeur : ${produit.vendeurNom}${produit.vendeurQuartier ? ' — ' + produit.vendeurQuartier : ''}`,
     produit.description ? `- Description : ${produit.description}` : null,
   ].filter(Boolean).join('\n');
