@@ -54,9 +54,12 @@ function makeBot(extra = {}) {
   };
   // Stub IA par défaut : pas d'appel réseau réel dans les tests.
   const askProductQuestion = async (produit, question) => `Réponse IA test sur ${produit.nom} pour: ${question}`;
+  // Stub no-op par défaut : évite de toucher la vraie table Supabase si un test
+  // envoie par erreur un événement de statut sans l'injecter explicitement.
+  const markDeliveryNotificationRead = async () => {};
   const b = bot.createBot({
     findProduct, isDuplicate, getConversationState, setConversationState, askProductQuestion,
-    ...rec, ...extra,
+    markDeliveryNotificationRead, ...rec, ...extra,
   });
   return { b, rec };
 }
@@ -65,6 +68,14 @@ let _mid = 0;
 const nextMid = () => `m${++_mid}`;
 function inboundText(text, msgId, from = '221771112233') {
   return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'TEXT', text: { body: text } } } };
+}
+function inboundStatusEvent(requestId, status) {
+  return {
+    event: { event_type: 'DELIVERY_EVENTS' },
+    event_content: {
+      message_status: { request_id: requestId, msg_id: 'wamid.abc', status, recipient: '+221771112233' },
+    },
+  };
 }
 function inboundButton(id, msgId, from = '221771112233') {
   return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { button_reply: { id } } } } };
@@ -255,6 +266,36 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const lastSend = rec.sends[rec.sends.length - 1];
     assert.strictEqual(lastSend.kind, 'text');
     assert.ok(lastSend.body.includes('beaucoup de questions'));
+  });
+
+  // Fallback SMS anti-doublon : parsing de l'accusé de statut D7
+  await test('parseD7StatusEvent reconnaît un accusé "read" et extrait request_id', () => {
+    const parsed = bot.parseD7StatusEvent(inboundStatusEvent('req-123', 'read'));
+    assert.deepStrictEqual(parsed, { requestId: 'req-123', msgId: 'wamid.abc', status: 'read', recipient: '+221771112233' });
+  });
+  await test('parseD7StatusEvent renvoie null pour un message entrant normal', () => {
+    assert.strictEqual(bot.parseD7StatusEvent(inboundText('PD3431')), null);
+  });
+
+  // Un accusé "read" marque la lecture (annule le SMS de secours) SANS déclencher
+  // de réponse du bot (ce n'est pas un message, pas d'action à exécuter).
+  await test('webhook accusé "read" -> markDeliveryNotificationRead appelé, aucune réponse envoyée', async () => {
+    let markedRequestId = null;
+    const markDeliveryNotificationRead = async (requestId) => { markedRequestId = requestId; };
+    const { b, rec } = makeBot({ markDeliveryNotificationRead });
+    await b.processWebhook(inboundStatusEvent('req-456', 'read'));
+    assert.strictEqual(markedRequestId, 'req-456');
+    assert.strictEqual(rec.sends.length, 0);
+  });
+
+  // Un accusé "delivered" (pas "read") ne doit PAS annuler le fallback SMS.
+  await test('webhook accusé "delivered" -> markDeliveryNotificationRead NON appelé', async () => {
+    let called = false;
+    const markDeliveryNotificationRead = async () => { called = true; };
+    const { b, rec } = makeBot({ markDeliveryNotificationRead });
+    await b.processWebhook(inboundStatusEvent('req-789', 'delivered'));
+    assert.strictEqual(called, false);
+    assert.strictEqual(rec.sends.length, 0);
   });
 
   console.log(`\n${passed} réussis, ${failed} échoués`);

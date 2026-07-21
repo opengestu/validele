@@ -103,6 +103,22 @@ function parseD7Message(body) {
   };
 }
 
+// Payload D7 (accusé de statut/livraison) :
+//   { event: { event_type: 'DELIVERY_EVENTS', ... },
+//     event_content: { message_status: { request_id, msg_id, status: 'sent'|'delivered'|'read', recipient, ... } } }
+// Confirmé sur la doc officielle D7 (receive-whatsapp-postback). Sert au fallback
+// SMS : on ne renvoie JAMAIS un SMS si D7 confirme que le WhatsApp a été lu.
+function parseD7StatusEvent(body) {
+  const status = body && body.event_content && body.event_content.message_status;
+  if (!status || !status.request_id) return null;
+  return {
+    requestId: status.request_id,
+    msgId: status.msg_id || null,
+    status: String(status.status || '').toLowerCase(),
+    recipient: status.recipient || null,
+  };
+}
+
 // ⚠️ À CONFIRMER sur un vrai payload D7 : la structure exacte d'une réponse de bouton
 // interactif n'est pas entièrement documentée. On teste plusieurs chemins connus.
 function extractButtonId(message) {
@@ -521,6 +537,108 @@ async function askProductQuestionAI(produit, question) {
 }
 
 // ---------------------------------------------------------------------------
+// Notification "en cours de livraison" avec fallback SMS anti-doublon
+// ---------------------------------------------------------------------------
+// Règle : WhatsApp d'abord, JAMAIS WhatsApp + SMS en même temps. On envoie le
+// WhatsApp, on trace le request_id renvoyé par D7. Si D7 confirme "read" via
+// webhook (parseD7StatusEvent), on marque lu -> pas de SMS. Sinon, le
+// reconciler périodique (runDeliveryReadFallbackCheck) envoie le SMS de
+// secours après 10 min, une seule fois (sms_sent).
+const DELIVERY_READ_FALLBACK_DELAY_MS = 10 * 60 * 1000;
+
+async function recordDeliveryNotificationSent(requestId, orderId, buyerPhone) {
+  if (!supabase || !requestId) return;
+  try {
+    const { error } = await supabase
+      .from('whatsapp_delivery_read_tracking')
+      .insert({ request_id: requestId, order_id: orderId, buyer_phone: buyerPhone });
+    if (error) console.warn('[WABOT] recordDeliveryNotificationSent erreur:', error.message);
+  } catch (e) {
+    console.warn('[WABOT] recordDeliveryNotificationSent exception:', e && e.message);
+  }
+}
+
+async function markDeliveryNotificationRead(requestId) {
+  if (!supabase || !requestId) return;
+  try {
+    const { error } = await supabase
+      .from('whatsapp_delivery_read_tracking')
+      .update({ read_at: new Date().toISOString() })
+      .eq('request_id', requestId)
+      .is('read_at', null);
+    if (error) console.warn('[WABOT] markDeliveryNotificationRead erreur:', error.message);
+    else console.log('[WABOT] WhatsApp lu, SMS de secours annulé pour request_id:', requestId);
+  } catch (e) {
+    console.warn('[WABOT] markDeliveryNotificationRead exception:', e && e.message);
+  }
+}
+
+// Envoie la notification "en cours de livraison" par WhatsApp et enregistre le
+// suivi de lecture pour le fallback SMS. Appelée depuis server.js (mark-in-delivery).
+async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl }) {
+  if (!buyerPhone) return { success: false, reason: 'no_phone' };
+  const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
+  const result = await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+  const requestId = result && result.data && result.data.request_id;
+  if (requestId) {
+    await recordDeliveryNotificationSent(requestId, orderId, buyerPhone);
+  } else {
+    console.warn('[WABOT] Pas de request_id dans la réponse D7, fallback SMS impossible à tracer pour cette commande:', orderId);
+  }
+  return result;
+}
+
+// Reconciler : envoie un SMS de secours pour tout WhatsApp "en cours de livraison"
+// non lu après 10 minutes. Ne renvoie JAMAIS 2 fois (sms_sent) et respecte la
+// lecture confirmée par D7 entre-temps (read_at renseigné par le webhook).
+async function runDeliveryReadFallbackCheck() {
+  if (!supabase) return;
+  try {
+    const { sendSMS } = require('./direct7');
+    const cutoff = new Date(Date.now() - DELIVERY_READ_FALLBACK_DELAY_MS).toISOString();
+    const { data: rows, error } = await supabase
+      .from('whatsapp_delivery_read_tracking')
+      .select('request_id, order_id, buyer_phone')
+      .is('read_at', null)
+      .eq('sms_sent', false)
+      .lt('created_at', cutoff)
+      .limit(50);
+    if (error) {
+      console.error('[WABOT] runDeliveryReadFallbackCheck erreur lecture:', error.message);
+      return;
+    }
+    for (const row of rows || []) {
+      try {
+        const text = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
+        await sendSMS(row.buyer_phone, text);
+        await supabase
+          .from('whatsapp_delivery_read_tracking')
+          .update({ sms_sent: true })
+          .eq('request_id', row.request_id);
+        console.log('[WABOT] SMS de secours envoyé (WhatsApp non lu après 10 min):', row.buyer_phone);
+      } catch (e) {
+        console.error('[WABOT] Echec SMS de secours pour', row.buyer_phone, ':', e && e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[WABOT] runDeliveryReadFallbackCheck exception:', e && e.message);
+  }
+}
+
+// Actif par défaut ; ENABLE_WHATSAPP_READ_FALLBACK=false pour désactiver.
+if (String(process.env.ENABLE_WHATSAPP_READ_FALLBACK || 'true').toLowerCase() !== 'false') {
+  try {
+    const cron = require('node-cron');
+    cron.schedule('*/2 * * * *', () => {
+      runDeliveryReadFallbackCheck().catch((e) => console.error('[WABOT] Erreur reconciler fallback SMS:', e));
+    });
+    console.log('[WABOT] Reconciler fallback SMS (livraison non lue après 10 min) actif, vérifié toutes les 2 min.');
+  } catch (e) {
+    console.warn('[WABOT] node-cron indisponible, reconciler fallback SMS désactivé:', e && e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exécution des actions -> envoi via D7
 // ---------------------------------------------------------------------------
 // Loggers utilisés en DRY_RUN (aucun appel réseau).
@@ -555,6 +673,7 @@ function createBot(deps = {}) {
   const getConversationState = deps.getConversationState || defaultGetConversationState;
   const setConversationState = deps.setConversationState || defaultSetConversationState;
   const askProductQuestion = deps.askProductQuestion || askProductQuestionAI;
+  const markRead = deps.markDeliveryNotificationRead || markDeliveryNotificationRead;
   const senders = {
     sendText: deps.sendText,
     sendButtons: deps.sendButtons,
@@ -562,6 +681,15 @@ function createBot(deps = {}) {
   };
 
   async function processWebhook(body) {
+    // Accusé de statut D7 (sent/delivered/read) -> pas un message, traité à part.
+    const statusEvent = parseD7StatusEvent(body);
+    if (statusEvent) {
+      if (statusEvent.status === 'read') {
+        await markRead(statusEvent.requestId);
+      }
+      return;
+    }
+
     const parsed = parseD7Message(body);
     if (!parsed) return; // DLR / statut / payload sans message -> rien à faire
     if (await isDuplicate(parsed.msgId)) {
@@ -611,8 +739,11 @@ function registerWhatsAppBot(app, deps) {
 module.exports = {
   registerWhatsAppBot,
   createBot,
+  // Envoi "en cours de livraison" avec fallback SMS anti-doublon (utilisé par server.js).
+  notifyDeliveryStartedWithFallback,
   // exportés pour les tests
   parseD7Message,
+  parseD7StatusEvent,
   extractProductCode,
   extractButtonId,
   decideReplies,
@@ -623,4 +754,6 @@ module.exports = {
   safeEqual,
   trouverProduit,
   paymentLink,
+  markDeliveryNotificationRead,
+  runDeliveryReadFallbackCheck,
 };

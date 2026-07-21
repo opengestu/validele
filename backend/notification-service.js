@@ -76,16 +76,12 @@ const supabase = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey)
   : null;
 
-const DELIVERY_STARTED_SMS_DELAY_MS = 2 * 60 * 1000;
-const DELIVERY_STARTED_ACTIVE_THRESHOLD_MS = 2 * 60 * 1000;
-const deliveryStartedSmsTimers = new Map();
-
 /**
  * Récupérer le token push d'un utilisateur
  */
 async function getUserPushToken(userId) {
   if (!supabase) return null;
-  
+
   const { data, error } = await supabase
     .from('profiles')
     .select('push_token, full_name')
@@ -98,61 +94,6 @@ async function getUserPushToken(userId) {
   }
 
   return { token: data.push_token, name: data.full_name };
-}
-
-async function getUserPresence(userId) {
-  if (!supabase) return null;
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('phone, full_name, last_seen_at')
-    .eq('id', userId)
-    .single();
-
-  if (error || !data) return null;
-
-  const lastSeenAtMs = Date.parse(data.last_seen_at || '');
-  return {
-    phone: data.phone || null,
-    fullName: data.full_name || null,
-    lastSeenAtMs: Number.isFinite(lastSeenAtMs) ? lastSeenAtMs : null
-  };
-}
-
-async function isUserActiveRecently(userId, thresholdMs = DELIVERY_STARTED_ACTIVE_THRESHOLD_MS) {
-  const presence = await getUserPresence(userId);
-  if (!presence?.lastSeenAtMs) {
-    return { known: false, active: false, ageMs: null };
-  }
-  const ageMs = Date.now() - presence.lastSeenAtMs;
-  return { known: true, active: ageMs <= thresholdMs, ageMs };
-}
-
-async function sendDeliveryStartedSmsIfNeeded(buyerId, orderDetails, phoneOverride = null) {
-  const activity = await isUserActiveRecently(buyerId, DELIVERY_STARTED_ACTIVE_THRESHOLD_MS);
-  if (!activity.known) {
-    // Safety-first: without reliable activity timestamp, do not send fallback SMS.
-    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (activité inconnue: last_seen_at absent)`);
-    return { sent: false, reason: 'unknown_activity' };
-  }
-
-  if (activity.active) {
-    console.log(`[NOTIF] SMS livraison en cours annulé pour ${buyerId} (actif récemment, age=${activity.ageMs}ms)`);
-    return { sent: false, reason: 'active_recently' };
-  }
-
-  const presence = await getUserPresence(buyerId);
-  const phone = phoneOverride || orderDetails.buyerPhone || presence?.phone;
-  if (!phone) {
-    console.warn(`[NOTIF] Pas de numéro pour user ${buyerId}, SMS livraison en cours non envoyé.`);
-    return { sent: false, reason: 'no_phone' };
-  }
-
-  const productName = orderDetails.productName || 'votre produit';
-  const smsText = `Votre Produit "${productName}" sur Validel est en cours de livraison.`;
-  const smsResult = await sendD7SMSNotify(phone, smsText);
-  console.log(`[NOTIF] Acheteur ${buyerId} notifié (SMS différé) - livraison en cours`, smsResult);
-  return { sent: true, smsResult };
 }
 
 // Utility to send a push to a user id with a simple interface
@@ -303,28 +244,19 @@ async function notifyDeliveryPersonAssigned(deliveryPersonId, orderDetails) {
 async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
   const user = await getUserPushToken(buyerId);
   let pushResult = null;
-  // Prefer buyerPhone provided in orderDetails, else try to fetch from profiles
-  let phone = orderDetails.buyerPhone || null;
-  if (!phone && supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('phone')
-        .eq('id', buyerId)
-        .single();
-      if (!error && data?.phone) phone = data.phone;
-    } catch (e) { /* ignore */ }
-  }
 
-  // Envoi push
+  // Envoi push (in-app uniquement). Le SMS de secours "livraison en cours" est
+  // désormais géré par le fallback WhatsApp -> SMS après 10 min si non lu (voir
+  // notifyDeliveryStartedWithFallback dans whatsapp-bot.js) : ne PAS dupliquer
+  // ici, sous peine de renvoyer WhatsApp + SMS en même temps.
   if (user?.token) {
     try {
       pushResult = await sendPushNotification(
         user.token,
         '🚗 Livraison en cours!',
         `Votre commande ${orderDetails.productName || 'votre produit'} est en route vers vous.`,
-        { 
-          type: 'delivery_started', 
+        {
+          type: 'delivery_started',
           orderId: orderDetails.orderId,
           click_action: 'OPEN_ORDER_TRACKING'
         }
@@ -335,25 +267,7 @@ async function notifyBuyerDeliveryStarted(buyerId, orderDetails) {
     }
   }
 
-  const timerKey = String(orderDetails.orderId || buyerId);
-  const previousTimer = deliveryStartedSmsTimers.get(timerKey);
-  if (previousTimer) {
-    clearTimeout(previousTimer);
-  }
-
-  const timer = setTimeout(async () => {
-    try {
-      await sendDeliveryStartedSmsIfNeeded(buyerId, orderDetails, phone);
-    } catch (error) {
-      console.error(`[NOTIF] Erreur SMS différé livraison acheteur:`, error?.message || error);
-    } finally {
-      deliveryStartedSmsTimers.delete(timerKey);
-    }
-  }, DELIVERY_STARTED_SMS_DELAY_MS);
-
-  deliveryStartedSmsTimers.set(timerKey, timer);
-
-  return { sent: !!pushResult, pushResult, smsScheduled: true, smsDelayMs: DELIVERY_STARTED_SMS_DELAY_MS };
+  return { sent: !!pushResult, pushResult };
 }
 
 /**

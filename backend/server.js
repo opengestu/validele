@@ -6892,7 +6892,9 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       });
     }
 
-    // Notification livraison en cours: push immédiat, SMS différé seulement si inactif récemment.
+    // Notification livraison en cours: push immédiat (in-app). Le SMS de secours
+    // est désormais géré par le fallback WhatsApp ci-dessous (jamais les 2 canaux
+    // à la fois) : voir notifyDeliveryStartedWithFallback / whatsapp-bot.js.
     console.log('[MARK-IN-DELIVERY] Preparing delivery-start notification flow...');
     try {
       const buyerPhone = order.buyer?.phone;
@@ -6960,22 +6962,22 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       console.warn('[MARK-IN-DELIVERY] Exception fetching updated order:', e);
     }
 
-    // Notifier l'acheteur sur WhatsApp : commande en cours de livraison + lien de suivi
-    // (page web publique) pour contacter le livreur/vendeur. C'est la SEULE notification
-    // de statut demandée. NOTE: message initié hors fenêtre 24h -> nécessite un template
-    // Meta approuvé pour être délivré de façon fiable (chantier "templates" à finaliser).
+    // Notifier l'acheteur : WhatsApp d'abord (commande en cours de livraison + lien
+    // de suivi). Si D7 confirme que ce n'est PAS lu après 10 min, un SMS de secours
+    // part automatiquement (reconciler dans whatsapp-bot.js) — jamais les 2 à la fois.
+    // NOTE: message WhatsApp initié hors fenêtre 24h -> nécessite un template Meta
+    // approuvé pour être délivré de façon fiable (chantier "templates" à finaliser).
     try {
       const buyerPhone = order?.buyer?.phone
         || (updatedOrder && (updatedOrder.buyer_profile?.phone || updatedOrder.buyer_phone))
         || null;
       if (buyerPhone) {
-        const { sendWhatsAppCtaUrl } = require('./direct7');
+        const { notifyDeliveryStartedWithFallback } = require('./whatsapp-bot');
         const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
         const trackingUrl = `${webBase}/order/${orderId}`;
         const productName = order?.product?.name || 'votre commande';
-        const body = `🚚 Bonne nouvelle ! *${productName}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
-        await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
-        console.log('[MARK-IN-DELIVERY] Notification WhatsApp suivi envoyée à', buyerPhone);
+        await notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl });
+        console.log('[MARK-IN-DELIVERY] Notification WhatsApp (+ fallback SMS si non lu) programmée pour', buyerPhone);
       }
     } catch (waErr) {
       console.warn('[MARK-IN-DELIVERY] Echec notification WhatsApp (non bloquant):', waErr?.message || waErr);
