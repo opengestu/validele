@@ -49,6 +49,7 @@ import {
   MessageCircle,
   Image as ImageIcon,
   Upload,
+  PlayCircle,
   X
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1349,7 +1350,7 @@ const VendorDashboard = () => {
     return (
       <div className={compact ? 'mb-2' : 'mb-3'}>
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Video demo</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Video demo</span>
           <a
             href={demoVideoUrl}
             target="_blank"
@@ -1361,7 +1362,7 @@ const VendorDashboard = () => {
         </div>
         {vimeoEmbedUrl ? (
           <iframe
-            className="aspect-video w-full rounded-lg border border-gray-200 bg-black"
+            className="aspect-video w-full rounded-lg border border-border bg-black"
             src={vimeoEmbedUrl}
             title={`Demo ${product.name}`}
             allow="autoplay; fullscreen; picture-in-picture"
@@ -1370,7 +1371,7 @@ const VendorDashboard = () => {
           />
         ) : isPlayableVideoUrl(demoVideoUrl) ? (
           <video
-            className="w-full rounded-lg border border-gray-200 bg-black"
+            className="w-full rounded-lg border border-border bg-black"
             controls
             preload="none"
             playsInline
@@ -1409,7 +1410,7 @@ const VendorDashboard = () => {
     <div className="space-y-2">
       <label className="text-sm font-medium">Image du produit (optionnel)</label>
       {imageUrl ? (
-        <div className="relative overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+        <div className="relative overflow-hidden rounded-lg border border-border bg-muted">
           <img
             src={imageUrl}
             alt="Aperçu du produit"
@@ -1427,7 +1428,7 @@ const VendorDashboard = () => {
           </Button>
         </div>
       ) : (
-        <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-600 hover:bg-gray-100">
+        <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted text-sm text-muted-foreground hover:bg-muted">
           <Upload className="h-5 w-5" />
           <span>Choisir une image</span>
           <Input
@@ -1445,25 +1446,61 @@ const VendorDashboard = () => {
     </div>
   );
 
-  const renderProductImage = (product: Product, compact = false) => {
+  const renderProductImage = (product: Product, compact = false, overlay?: React.ReactNode) => {
     return (
-      <div className={compact ? 'mb-2' : 'mb-4'}>
+      <div className={compact ? 'relative mb-2' : 'relative mb-3'}>
         {product.image_url ? (
           <img
             src={product.image_url}
             alt={product.name ? `Image de ${product.name}` : 'Image du produit'}
-            className={`${compact ? 'h-24' : 'h-40'} w-full rounded-lg border border-gray-200 object-cover`}
+            className={`${compact ? 'h-28' : 'h-44'} w-full rounded-xl border border-border object-cover`}
             loading="lazy"
           />
         ) : (
-          <div className={`${compact ? 'h-24' : 'h-40'} flex w-full flex-col items-center justify-center rounded-lg border border-gray-200 bg-gray-100 text-gray-500`}>
+          <div className={`${compact ? 'h-28' : 'h-44'} flex w-full flex-col items-center justify-center rounded-xl border border-border bg-muted text-muted-foreground`}>
             <ImageIcon className="mb-1 h-7 w-7" />
             <span className="text-xs font-medium">Aucune image</span>
           </div>
         )}
+        {overlay ? <div className="absolute right-2 top-2 z-10">{overlay}</div> : null}
       </div>
     );
   };
+
+  // Toggle Actif/Inactif — extrait pour être réutilisé (desktop + mobile) en overlay sur l'image
+  const renderAvailabilityToggle = (product: Product) => (
+    <Button
+      type="button"
+      variant="ghost"
+      className={`relative h-7 w-16 rounded-full border-0 px-0 text-[10px] font-bold text-white shadow-premium-sm ${
+        product.is_available
+          ? 'bg-success hover:bg-success/90'
+          : 'bg-destructive hover:bg-destructive/90'
+      }`}
+      disabled={togglingProductId === product.id}
+      onClick={() => handleToggleProductAvailability(product)}
+      aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
+      aria-pressed={product.is_available}
+      title={product.is_available ? 'Actif (cliquer pour inactif)' : 'Inactif (cliquer pour actif)'}
+    >
+      {togglingProductId === product.id ? (
+        <span className="inline-flex items-center gap-1">
+          <Spinner size="sm" className="h-3 w-3" hideWhenGlobal={false} />
+          {product.is_available ? 'Actif' : 'Inactif'}
+        </span>
+      ) : product.is_available ? (
+        <>
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Actif</span>
+          <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+        </>
+      ) : (
+        <>
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Inactif</span>
+          <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
+        </>
+      )}
+    </Button>
+  );
 
   const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price || !newProduct.description) {
@@ -1948,6 +1985,9 @@ const VendorDashboard = () => {
     }
 
     try {
+      // Même lien que le bouton "Partager" : la fiche produit s'affiche directement
+      // au clic (zéro friction), au lieu du deep-link bot qui exige un tap "Envoyer"
+      // supplémentaire dans WhatsApp (contrainte incontournable de la plateforme).
       const text = `${product.name}\n${product.description || ''}\n${webLink}`.trim();
       const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
       const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
@@ -2127,7 +2167,7 @@ const VendorDashboard = () => {
   // (Global overlay spinner removed)
   // Suppression du rendu conditionnel de chargement (plus d'overlay, plus de texte 'Chargement...')
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
+    <div className="min-h-screen bg-muted pb-20 md:pb-0 relative">
       {/* Header Moderne - Style similaire à BuyerDashboard */}
       <header className="bg-primary rounded-b-2xl shadow-lg mb-2 md:mb-6 sticky top-0 z-40 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
@@ -2137,12 +2177,6 @@ const VendorDashboard = () => {
           <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
         </div>
       </header>
-      {/* Offline banner */}
-      {!isOnline && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
-        </div>
-      )}
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1 md:py-8">
       {/* ...section stats supprimée... */}
@@ -2166,25 +2200,29 @@ const VendorDashboard = () => {
         {/* Products Tab */}
         <TabsContent value="products" className="space-y-6">
           {!allSellDemoVideosWatched && (
-            <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-4 shadow-sm">
-              <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-orange-200/40 blur-2xl" />
-              <div className="pointer-events-none absolute -bottom-8 left-10 h-20 w-20 rounded-full bg-amber-200/40 blur-2xl" />
-              <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/50 p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                  <PlayCircle className="h-5 w-5" />
                 </div>
-                <Button
-                  type="button"
-                  onClick={handleSellDemoClick}
-                  className="bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
-                >
-                  Regarder demo
-                </Button>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Comment vendre avec Validel ?</p>
+                  <p className="text-xs text-muted-foreground">Un guide rapide en vidéo pour bien démarrer.</p>
+                </div>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSellDemoClick}
+                className="shrink-0"
+              >
+                Regarder la démo
+              </Button>
             </div>
           )}
           <div className="flex justify-between items-center gap-2">
-            <h2 className="text-lg md:text-xl font-bold text-gray-900 flex-shrink-0">Mes Produits ({products.length})</h2>
+            <h2 className="text-lg md:text-xl font-bold text-foreground flex-shrink-0">Mes Produits ({products.length})</h2>
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
@@ -2199,103 +2237,58 @@ const VendorDashboard = () => {
             {products.map((product) => (
               <Card
                 key={product.id}
-                className={`hover:shadow-lg transition-shadow h-fit ${!product.is_available ? 'opacity-70' : ''}`}
+                className={`group h-fit overflow-hidden transition-shadow hover:shadow-premium ${!product.is_available ? 'opacity-70' : ''}`}
                 style={{ maxWidth: "100%", boxSizing: "border-box" }} // Empêche le débordement
               >
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="text-lg">{product.name}</CardTitle>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className={`relative h-7 w-16 rounded-full border-0 px-0 text-[10px] font-bold text-white ${
-                        product.is_available
-                          ? 'bg-gradient-to-r from-emerald-700 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600'
-                          : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
-                      }`}
-                      disabled={togglingProductId === product.id}
-                      onClick={() => handleToggleProductAvailability(product)}
-                      aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
-                      aria-pressed={product.is_available}
-                      title={product.is_available ? 'Actif (cliquer pour inactif)' : 'Inactif (cliquer pour actif)'}
-                    >
-                      {togglingProductId === product.id ? (
-                        <span className="inline-flex items-center gap-1">
-                          <Spinner size="sm" className="h-3 w-3" hideWhenGlobal={false} />
-                          {product.is_available ? 'Actif' : 'Inactif'}
-                        </span>
-                      ) : product.is_available ? (
-                        <>
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Actif</span>
-                          <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
-                        </>
-                      ) : (
-                        <>
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Inactif</span>
-                          <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {renderProductImage(product)}
+                <CardContent className="p-4">
+                  {renderProductImage(product, false, renderAvailabilityToggle(product))}
                   {renderProductDemoVideo(product)}
-                  <p className="text-gray-600 text-sm mb-3 line-clamp-2">
-                    {product.description}
-                  </p>
-                
-                  {/* Code Produit - Format texte simple avec bouton copier */}
-                  <div className="flex items-center mb-2">
-                    <span
-                      className="font-mono"
-                      style={{
-                        fontSize: "22px",
-                        fontWeight: 700,
-                        color: "#333",
-                        letterSpacing: "1px",
-                        marginRight: 8,
-                        userSelect: "all"
-                      }}
-                    >
-                      Code : {product.code || `PROD-${product.id}`}
-                    </span>
-                    {/* Bouton Copier supprimé */}
+
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-base font-semibold leading-snug">{product.name}</CardTitle>
+                    <div className="whitespace-nowrap font-heading text-base font-bold text-foreground">
+                      {product.price?.toLocaleString()} <span className="text-xs font-medium text-muted-foreground">CFA</span>
+                    </div>
                   </div>
 
-                  <div className="space-y-2 mb-3">
-                    <div className="flex items-center justify-between gap-2 text-sm">
-                      <div className="flex items-center gap-1">
-                        <span className="text-gray-500">Prix:</span>
-                        <span className="font-semibold text-black">
-                          {product.price?.toLocaleString()} CFA
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 px-2 text-xs border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]"
-                          onClick={() => handleWhatsAppProduct(product)}
-                        >
-                          <MessageCircle className="h-3.5 w-3.5 mr-1" />
-                          WhatsApp
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 px-2 text-xs border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]"
-                          onClick={() => handleShareProduct(product)}
-                        >
-                          <Share2 className="h-3.5 w-3.5 mr-1" />
-                          Partager
-                        </Button>
+                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                    {product.description}
+                  </p>
+
+                  {/* Code Produit */}
+                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Code produit</div>
+                      <div className="truncate font-mono text-base font-semibold tracking-wide text-foreground" style={{ userSelect: 'all' }}>
+                        {product.code || `PROD-${product.id}`}
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => handleWhatsAppProduct(product)}
+                    >
+                      <MessageCircle className="h-3.5 w-3.5 mr-1" />
+                      WhatsApp
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => handleShareProduct(product)}
+                    >
+                      <Share2 className="h-3.5 w-3.5 mr-1" />
+                      Partager
+                    </Button>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -2314,7 +2307,7 @@ const VendorDashboard = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full"
+                      className="w-full text-destructive hover:text-destructive"
                       onClick={() => {
                         setDeleteProductId(product.id);
                         setDeleteDialogOpen(true);
@@ -2343,8 +2336,8 @@ const VendorDashboard = () => {
             </div>
           )}
           {!pageLoading && products.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              <Package className="h-10 w-10 mx-auto mb-2 text-gray-400" />
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-10 w-10 mx-auto mb-2 text-muted-foreground" />
               <p className="text-sm">Aucun produit pour le moment.</p>
               <div className="mt-3">
                 <Button
@@ -2362,8 +2355,8 @@ const VendorDashboard = () => {
         <TabsContent value="orders" className="space-y-6">
           <div className="flex items-center justify-between gap-3 flex-nowrap">
             <div className="flex items-center gap-1 whitespace-nowrap">
-              <h3 className="text-xs md:text-sm font-semibold text-gray-900 m-0 leading-none">Commandes</h3>
-              <span className="text-[11px] md:text-xs text-gray-600 font-medium leading-none">({totalOrders})</span>
+              <h3 className="text-xs md:text-sm font-semibold text-foreground m-0 leading-none">Commandes</h3>
+              <span className="text-[11px] md:text-xs text-muted-foreground font-medium leading-none">({totalOrders})</span>
               <span className="ml-2 text-[11px] md:text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
             </div>
             <div>
@@ -2412,35 +2405,35 @@ const VendorDashboard = () => {
                       <div className="px-4 pt-3.5 pb-2 pr-28">
                         <div className="flex items-center gap-2">
                           <span role="img" aria-label="box" className="text-base">📦</span>
-                          <span className="font-bold text-[16px] text-gray-900 truncate flex-1">{order.products?.name}</span>
+                          <span className="font-bold text-[16px] text-foreground truncate flex-1">{order.products?.name}</span>
                           {typeof order.quantity === 'number' && (
-                            <span className="text-[11px] font-medium text-gray-400 flex-shrink-0">×{order.quantity}</span>
+                            <span className="text-[11px] font-medium text-muted-foreground flex-shrink-0">×{order.quantity}</span>
                           )}
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
                           <span className="font-mono font-bold text-orange-500 text-[15px] tracking-wide">{order.order_code || order.id}</span>
-                          <span className="font-bold text-[16px] text-gray-900">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
+                          <span className="font-bold text-[16px] text-foreground">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
                         </div>
                       </div>
 
-                      <div className="h-px bg-gray-100 mx-4" />
+                      <div className="h-px bg-muted mx-4" />
 
                       {/* Infos client */}
                       <div className="px-4 py-2 flex flex-col gap-1.5">
                         {order.created_at && (
-                          <div className="flex items-center gap-1.5 text-[12px] text-gray-400">
+                          <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
                             <span>🕐</span>
                             <span>{new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                         )}
                         {getOrderBuyerName(order) && (
                           <div className="flex items-center gap-2 text-[13px]">
-                            <span className="font-semibold text-gray-500">Client :</span>
-                            <span className="font-semibold text-gray-900">{getOrderBuyerName(order)}</span>
+                            <span className="font-semibold text-muted-foreground">Client :</span>
+                            <span className="font-semibold text-foreground">{getOrderBuyerName(order)}</span>
                           </div>
                         )}
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-gray-500 text-[13px]">Contact :</span>
+                          <span className="font-semibold text-muted-foreground text-[13px]">Contact :</span>
                           <button
                             type="button"
                             onClick={() => handleCallClient(order)}
@@ -2452,8 +2445,8 @@ const VendorDashboard = () => {
                           </button>
                         </div>
                         <div className="flex items-start gap-2 text-[13px]">
-                          <span className="font-semibold text-gray-500 whitespace-nowrap">Adresse :</span>
-                          <span className="text-gray-700">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
+                          <span className="font-semibold text-muted-foreground whitespace-nowrap">Adresse :</span>
+                          <span className="text-muted-foreground">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
                         </div>
                       </div>
 
@@ -2461,7 +2454,7 @@ const VendorDashboard = () => {
                       <div className="px-4 pb-4 pt-1 flex gap-2">
                         <button
                           onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                          className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[13px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
+                          className="flex-1 h-[40px] rounded-2xl border border-border text-[13px] font-semibold text-muted-foreground bg-muted hover:bg-muted transition-all"
                         >
                           Voir facture
                         </button>
@@ -2496,8 +2489,8 @@ const VendorDashboard = () => {
               )}
               {!pageLoading && orders.length === 0 && (
                 <div className="text-center py-8">
-                  <ShoppingCart className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-500">Aucune commande pour le moment</p>
+                  <ShoppingCart className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-muted-foreground">Aucune commande pour le moment</p>
                 </div>
               )}
             </CardContent>
@@ -2505,7 +2498,7 @@ const VendorDashboard = () => {
         </TabsContent>
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-6">
-          <h2 className="text-2xl font-bold text-gray-900">Statistiques</h2>
+          <h2 className="text-2xl font-bold text-foreground">Statistiques</h2>
         
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
@@ -2560,7 +2553,7 @@ const VendorDashboard = () => {
         </TabsContent>
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
-          <h2 className="text-2xl font-bold text-gray-900">Mon Profil</h2>
+          <h2 className="text-2xl font-bold text-foreground">Mon Profil</h2>
         
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
@@ -2571,15 +2564,15 @@ const VendorDashboard = () => {
                 {!isEditingProfile ? (
                   <>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Nom complet</label>
+                      <label className="text-sm font-medium text-muted-foreground">Nom complet</label>
                       <p className="text-lg">{userProfile?.full_name || 'Non renseigné'}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Téléphone</label>
+                      <label className="text-sm font-medium text-muted-foreground">Téléphone</label>
                       <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
+                      <label className="text-sm font-medium text-muted-foreground">Compte de paiement</label>
                       <p className="text-lg">
                         {userProfile?.wallet_type === 'wave-senegal' ? (
                           <span className="inline-flex items-center gap-2">
@@ -2632,7 +2625,7 @@ const VendorDashboard = () => {
                       />
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-500">Wallet utilisé</label>
+                      <label className="text-sm font-medium text-muted-foreground">Wallet utilisé</label>
                       <p className="text-lg">
                         {userProfile?.wallet_type === 'wave-senegal' ? 'Wave' : userProfile?.wallet_type === 'orange-senegal' ? 'Orange Money' : 'Non défini'}
                       </p>
@@ -2646,7 +2639,7 @@ const VendorDashboard = () => {
                           className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                             editProfile.wallet_type === 'wave-senegal'
                               ? 'border-black bg-black/5'
-                              : 'border-gray-200 hover:border-gray-300'
+                              : 'border-border hover:border-border'
                           }`}
                           aria-pressed={editProfile.wallet_type === 'wave-senegal'}
                           title="Wave"
@@ -2667,7 +2660,7 @@ const VendorDashboard = () => {
                           className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                             editProfile.wallet_type === 'orange-senegal'
                               ? 'border-orange-500 bg-orange-50'
-                              : 'border-gray-200 hover:border-gray-300'
+                              : 'border-border hover:border-border'
                           }`}
                           aria-pressed={editProfile.wallet_type === 'orange-senegal'}
                           title="Orange Money"
@@ -2709,18 +2702,18 @@ const VendorDashboard = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium text-gray-500">Statut du compte</label>
+                  <label className="text-sm font-medium text-muted-foreground">Statut du compte</label>
                   <StatusBadge status="active" size="sm" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-500">Date d'inscription</label>
+                  <label className="text-sm font-medium text-muted-foreground">Date d'inscription</label>
                   <p className="text-lg">
                     {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'Non disponible'}
                   </p>
                 </div>
                 {/* Wallet utilisé supprimé */}
                 <div>
-                  <label className="text-sm font-medium text-gray-500">Rôle</label>
+                  <label className="text-sm font-medium text-muted-foreground">Rôle</label>
                   <p className="text-lg">Vendeur(se)</p>
                 </div>
                 <Button
@@ -2743,18 +2736,20 @@ const VendorDashboard = () => {
             <TabsContent value="products" className="mt-0">
               <div className="space-y-6">
                 {!allSellDemoVideosWatched && (
-                  <div className="relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white p-3 shadow-sm">
-                    <div className="pointer-events-none absolute -right-10 -top-10 h-20 w-20 rounded-full bg-orange-200/40 blur-2xl" />
-                    <div className="relative">
-                      <p className="text-sm font-semibold tracking-wide text-orange-700 animate-pulse">Comment vendre avec Validel ?</p>
-                      <Button
-                        type="button"
-                        onClick={handleSellDemoClick}
-                        className="mt-3 h-8 px-3 text-xs bg-black text-white hover:bg-gray-900 animate-[pulse_2.4s_ease-in-out_infinite]"
-                      >
-                        Regarder la démo
-                      </Button>
+                  <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                      <PlayCircle className="h-4 w-4" />
                     </div>
+                    <p className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">Comment vendre avec Validel ?</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSellDemoClick}
+                      className="h-8 shrink-0 px-3 text-xs"
+                    >
+                      Voir
+                    </Button>
                   </div>
                 )}
                 <div className="flex justify-between items-center gap-2">
@@ -2773,7 +2768,7 @@ const VendorDashboard = () => {
                   {products.map((product) => (
                     <Card
                       key={product.id}
-                      className="border border-gray-200 relative"
+                      className="relative overflow-hidden border border-border"
                       style={{
                         width: "100%",
                         maxWidth: "calc(100vw - 32px)",
@@ -2783,79 +2778,52 @@ const VendorDashboard = () => {
                       }}
                     >
                       <CardContent className="p-3">
-                        {renderProductImage(product, true)}
+                        {renderProductImage(product, true, renderAvailabilityToggle(product))}
                         {renderProductDemoVideo(product, true)}
-                        <div className="flex justify-between items-start gap-2">
-                          <div className="flex-1 min-w-0">
-                            <h3
-                              className="text-[13px] font-semibold leading-snug truncate"
-                              title={product.name}
-                            >
-                              {product.name}
-                            </h3>
-                            <p className="mt-1 text-xs text-gray-600 line-clamp-2 leading-snug">
-                              {product.description}
-                            </p>
 
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <span
-                                className="font-mono text-[11px] font-semibold text-gray-700 truncate"
-                                title={product.code || `PROD-${product.id}`}
-                              >
-                                Code : {product.code || `PROD-${product.id}`}
-                              </span>
-                              <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
-                                {product.price?.toLocaleString()} CFA
-                              </span>
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className={`relative h-7 w-16 rounded-full border-0 px-0 text-[10px] flex-shrink-0 font-bold text-white ${
-                              product.is_available
-                                ? 'bg-gradient-to-r from-emerald-700 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600'
-                                : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
-                            }`}
-                            disabled={togglingProductId === product.id}
-                            onClick={() => handleToggleProductAvailability(product)}
-                            aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
-                            aria-pressed={product.is_available}
-                            title={product.is_available ? 'Actif (cliquer pour inactif)' : 'Inactif (cliquer pour actif)'}
+                        <div className="flex items-start justify-between gap-2">
+                          <h3
+                            className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-snug"
+                            title={product.name}
                           >
-                            {togglingProductId === product.id ? (
-                              <span className="inline-flex items-center gap-1">
-                                <Spinner size="sm" className="h-3 w-3" hideWhenGlobal={false} />
-                                {product.is_available ? 'Actif' : 'Inactif'}
-                              </span>
-                            ) : product.is_available ? (
-                              <>
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Actif</span>
-                                <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
-                              </>
-                            ) : (
-                              <>
-                                <span className="absolute right-2 top-1/2 -translate-y-1/2 tracking-[0.01em]">Inactif</span>
-                                <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.28)]" />
-                              </>
-                            )}
-                          </Button>
+                            {product.name}
+                          </h3>
+                          <span className="whitespace-nowrap text-sm font-bold text-foreground">
+                            {product.price?.toLocaleString()} <span className="text-[10px] font-medium text-muted-foreground">CFA</span>
+                          </span>
                         </div>
-                        <div className="mt-2 flex justify-end gap-1">
-                          <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" className="h-8 px-2 text-[11px] border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]">
+
+                        <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+                          {product.description}
+                        </p>
+
+                        <div className="mt-2 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5">
+                          <div className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Code</div>
+                          <div
+                            className="truncate font-mono text-[13px] font-semibold text-foreground"
+                            title={product.code || `PROD-${product.id}`}
+                            style={{ userSelect: 'all' }}
+                          >
+                            {product.code || `PROD-${product.id}`}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 gap-1.5">
+                          <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
                             <MessageCircle className="h-3.5 w-3.5 mr-1" />
                             WhatsApp
                           </Button>
-                          <Button onClick={() => handleShareProduct(product)} variant="outline" className="h-8 px-2 text-[11px] border-gray-200 bg-white text-gray-900 hover:bg-gray-100 active:bg-gray-100 focus-visible:ring-1 focus-visible:ring-gray-300 [-webkit-tap-highlight-color:transparent]">
+                          <Button onClick={() => handleShareProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
                             <Share2 className="h-3.5 w-3.5 mr-1" />
                             Partager
                           </Button>
                         </div>
-                        <div className="mt-2 flex gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-xs h-9">
+
+                        <div className="mt-1.5 grid grid-cols-2 gap-2">
+                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="h-9 bg-primary text-primary-foreground hover:bg-primary/90 text-xs">
                             Modifier
                           </Button>
-                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="flex-1 text-xs h-9">
+                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="h-9 text-xs text-destructive hover:text-destructive">
                             Supprimer
                           </Button>
                         </div>
@@ -2878,8 +2846,8 @@ const VendorDashboard = () => {
                   </div>
                 )}
                 {!pageLoading && products.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Package className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                     <p className="text-sm">Commencez par ajouter un produit.</p>
                     <div className="mt-3">
                       <Button onClick={() => setAddModalOpen(true)} className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm px-3 py-1">
@@ -2896,7 +2864,7 @@ const VendorDashboard = () => {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1 whitespace-nowrap">
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
-                    <span className="text-xs text-gray-600 leading-none">({totalOrders})</span>
+                    <span className="text-xs text-muted-foreground leading-none">({totalOrders})</span>
                     <span className="ml-2 text-xs bg-yellow-50 text-yellow-800 font-semibold px-2 py-0.5 rounded-full leading-none">Non livrées ({nonDeliveredCount})</span>
                   </div>
                   <Button size="sm" onClick={showVendorBatches} className="bg-yellow-500 text-white text-[11px] px-2 py-1 rounded-md h-7 shadow hover:bg-yellow-600">
@@ -2913,11 +2881,11 @@ const VendorDashboard = () => {
                         <div key={dateKey}>
                           {/* Date header */}
                           <div className="flex items-center gap-3 mb-3">
-                            <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1.5 rounded-lg shadow-sm">
+                            <div className="flex-shrink-0 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg shadow-premium-sm">
                               <span className="text-sm font-semibold">{dateKey}</span>
                             </div>
-                            <div className="flex-grow h-px bg-gradient-to-r from-orange-200 to-transparent"></div>
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                            <div className="flex-grow h-px bg-border"></div>
+                            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
                               {groups[dateKey].length} commande{groups[dateKey].length > 1 ? 's' : ''}
                             </span>
                           </div>
@@ -2953,35 +2921,35 @@ const VendorDashboard = () => {
                                 <div className="px-4 pt-3.5 pb-2 pr-28">
                                   <div className="flex items-center gap-2">
                                     <span role="img" aria-label="box" className="text-base">📦</span>
-                                    <span className="font-bold text-[16px] text-gray-900 truncate flex-1">{order.products?.name}</span>
+                                    <span className="font-bold text-[16px] text-foreground truncate flex-1">{order.products?.name}</span>
                                   </div>
                                 </div>
 
-                                <div className="h-px bg-gray-100 mx-4" />
+                                <div className="h-px bg-muted mx-4" />
 
                                 {/* Infos client */}
                                 <div className="px-4 py-2 flex flex-col gap-1.5">
                                   {/* Code commande */}
                                   <div className="flex items-center gap-2 text-[13px]">
-                                    <span className="font-semibold text-gray-500">Code commande :</span>
+                                    <span className="font-semibold text-muted-foreground">Code commande :</span>
                                     <span className="font-mono font-extrabold text-orange-500 text-[16px]" style={{ letterSpacing: '1.5px' }}>{order.order_code || order.id}</span>
                                   </div>
                                   {/* Quantité + Montant sur même ligne */}
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2 text-[13px]">
-                                      <span className="font-semibold text-gray-500">Quantité :</span>
-                                      <span className="font-bold text-gray-900">{order.quantity ?? 1}</span>
+                                      <span className="font-semibold text-muted-foreground">Quantité :</span>
+                                      <span className="font-bold text-foreground">{order.quantity ?? 1}</span>
                                     </div>
-                                    <span className="font-bold text-[15px] text-gray-900">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
+                                    <span className="font-bold text-[15px] text-foreground">{order.total_amount ? order.total_amount.toLocaleString() + ' FCFA' : '—'}</span>
                                   </div>
                                   {getOrderBuyerName(order) && (
                                     <div className="flex items-center gap-2 text-[13px]">
-                                      <span className="font-semibold text-gray-500">Client :</span>
-                                      <span className="font-semibold text-gray-900">{getOrderBuyerName(order)}</span>
+                                      <span className="font-semibold text-muted-foreground">Client :</span>
+                                      <span className="font-semibold text-foreground">{getOrderBuyerName(order)}</span>
                                     </div>
                                   )}
                                   <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-gray-500 text-[13px]">Contact :</span>
+                                    <span className="font-semibold text-muted-foreground text-[13px]">Contact :</span>
                                     <button
                                       type="button"
                                       onClick={() => handleCallClient(order)}
@@ -2993,8 +2961,8 @@ const VendorDashboard = () => {
                                     </button>
                                   </div>
                                   <div className="flex items-start gap-2 text-[13px]">
-                                    <span className="font-semibold text-gray-500 whitespace-nowrap">Adresse :</span>
-                                    <span className="text-gray-700">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
+                                    <span className="font-semibold text-muted-foreground whitespace-nowrap">Adresse :</span>
+                                    <span className="text-muted-foreground">{order.delivery_address || (order as any).buyer?.address || (order as any).buyer_address || 'À définir'}</span>
                                   </div>
                                 </div>
 
@@ -3002,7 +2970,7 @@ const VendorDashboard = () => {
                                 <div className="px-4 pb-4 pt-1 flex gap-2">
                                   <button
                                     onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, `Facture commande ${order.order_code || order.id}`, false)}
-                                    className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[13px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
+                                    className="flex-1 h-[40px] rounded-2xl border border-border text-[13px] font-semibold text-muted-foreground bg-muted hover:bg-muted transition-all"
                                   >
                                     Voir facture
                                   </button>
@@ -3041,8 +3009,8 @@ const VendorDashboard = () => {
                   </div>
                 )}
                 {!pageLoading && orders.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <ShoppingCart className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                  <div className="text-center py-8 text-muted-foreground">
+                    <ShoppingCart className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                     <p className="text-sm">Vos commandes seront affichées ici.</p>
                   </div>
                 )}
@@ -3059,16 +3027,16 @@ const VendorDashboard = () => {
                     {!isEditingProfile ? (
                       <div className="space-y-3">
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Nom complet</label>
+                          <label className="text-sm font-medium text-muted-foreground">Nom complet</label>
                           <p className="text-lg">{userProfile?.full_name || 'Non défini'}</p>
                         </div>
 
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Téléphone</label>
+                          <label className="text-sm font-medium text-muted-foreground">Téléphone</label>
                           <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
                         </div>
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Compte de paiement</label>
+                          <label className="text-sm font-medium text-muted-foreground">Compte de paiement</label>
                           <p className="text-lg">
                             {userProfile?.wallet_type === 'wave-senegal' ? (
                               <span className="inline-flex items-center gap-2">
@@ -3129,7 +3097,7 @@ const VendorDashboard = () => {
                               className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                                 editProfile.wallet_type === 'wave-senegal'
                                   ? 'border-black bg-black/5'
-                                  : 'border-gray-200 hover:border-gray-300'
+                                  : 'border-border hover:border-border'
                               }`}
                               aria-pressed={editProfile.wallet_type === 'wave-senegal'}
                               title="Wave"
@@ -3150,7 +3118,7 @@ const VendorDashboard = () => {
                               className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center gap-1 ${
                                 editProfile.wallet_type === 'orange-senegal'
                                   ? 'border-orange-500 bg-orange-50'
-                                  : 'border-gray-200 hover:border-gray-300'
+                                  : 'border-border hover:border-border'
                               }`}
                               aria-pressed={editProfile.wallet_type === 'orange-senegal'}
                               title="Orange Money"
@@ -3199,7 +3167,7 @@ const VendorDashboard = () => {
             </TabsContent>
           </div>
           {/* Bottom Navigation Bar - Fixed */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 shadow-lg">
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-50 shadow-lg">
             <TabsList className="w-full h-16 bg-white rounded-none border-0">
               <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                 <TabsTrigger
@@ -3233,7 +3201,7 @@ const VendorDashboard = () => {
         <DialogContent aria-describedby={undefined} className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Videos de demonstration - Mes Produits</DialogTitle>
-            <p className="text-xs text-gray-600">
+            <p className="text-xs text-muted-foreground">
               {unwatchedSellDemoVideos.length} video(s) restante(s)
             </p>
           </DialogHeader>
@@ -3249,14 +3217,14 @@ const VendorDashboard = () => {
                   <button
                     type="button"
                     onClick={() => openSellDemoVideo(video)}
-                    className="w-full rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition-shadow hover:shadow-lg sm:p-4"
+                    className="w-full rounded-xl border border-border bg-white p-3 text-left shadow-sm transition-shadow hover:shadow-lg sm:p-4"
                   >
                     <div className="mb-2 flex items-start justify-between">
                       <div className="flex-1">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700">
                           Etape {index + 1}
                         </p>
-                        <h3 className="mt-1 text-sm font-semibold text-gray-900 sm:text-base">{video.title}</h3>
+                        <h3 className="mt-1 text-sm font-semibold text-foreground sm:text-base">{video.title}</h3>
                       </div>
                       {isWatched && (
                         <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
@@ -3264,7 +3232,7 @@ const VendorDashboard = () => {
                         </span>
                       )}
                     </div>
-                    <p className="mb-3 text-xs text-gray-600 sm:text-sm">{video.description}</p>
+                    <p className="mb-3 text-xs text-muted-foreground sm:text-sm">{video.description}</p>
 
                     <div className="inline-flex items-center gap-2 rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white">
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -3377,7 +3345,7 @@ const VendorDashboard = () => {
                 </div>
               )}
               {!invoiceViewerLoading && !invoiceViewerHtml && (
-                <div className="text-center py-8 text-gray-500">Aucune facture à afficher</div>
+                <div className="text-center py-8 text-muted-foreground">Aucune facture à afficher</div>
               )}
             </div>
           </div>
@@ -3393,7 +3361,7 @@ const VendorDashboard = () => {
           <div className="py-2">
             {batchesLoading && <div className="flex justify-center py-6"><Spinner size="sm" /></div>}
             {!batchesLoading && vendorBatches && vendorBatches.length === 0 && (
-              <div className="text-center py-6 text-gray-500">Aucune facture de batch disponible</div>
+              <div className="text-center py-6 text-muted-foreground">Aucune facture de batch disponible</div>
             )}
             {!batchesLoading && vendorBatches && vendorBatches.length > 0 && (
               <div className="space-y-3 max-h-[60vh] overflow-auto">
@@ -3401,11 +3369,11 @@ const VendorDashboard = () => {
                   <div key={b.id} className="flex items-center justify-between border p-2 rounded">
                     <div className="text-sm">
                       <div className="font-medium">Batch {String(b.id).slice(0,8)}</div>
-                      <div className="text-xs text-gray-500">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
-                      <div className="text-xs text-gray-700">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
+                      <div className="text-xs text-muted-foreground">{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</div>
+                      <div className="text-xs text-muted-foreground">Montant net: {b.total_net?.toLocaleString?.() || 0} FCFA</div>
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-gray-100 text-gray-800">Voir</Button>
+                      <Button size="sm" onClick={() => { setBatchesModalOpen(false); openInvoiceInModal(`/api/vendor/payout-batches/${b.id}/invoice`, `Facture batch ${String(b.id).slice(0,8)}`, true); }} className="bg-muted text-foreground">Voir</Button>
                       <Button size="sm" onClick={() => handleDownloadInvoice(`/api/vendor/payout-batches/${b.id}/invoice`)} className="bg-primary text-primary-foreground">Télécharger</Button>
                     </div>
                   </div>
@@ -3430,11 +3398,11 @@ const VendorDashboard = () => {
 
       {/* Add Product Modal */}
       <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Ajouter un nouveau produit</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 pb-4">
             <div>
               <label className="text-sm font-medium">Nom du produit</label>
               <Input
@@ -3485,7 +3453,7 @@ const VendorDashboard = () => {
                         onChange={(e) => setNewProduct({...newProduct, code: e.target.value})}
                         placeholder="Ex: PD-DEV-1"
                       />
-                      <p className="text-xs text-gray-500 mt-1">Entrer un code personnalisé pour les tests (visible seulement en session dev).</p>
+                      <p className="text-xs text-muted-foreground mt-1">Entrer un code personnalisé pour les tests (visible seulement en session dev).</p>
                     </div>
                   );
                 }
@@ -3511,12 +3479,12 @@ const VendorDashboard = () => {
       </Dialog>
       {/* Edit Product Modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Modifier le produit</DialogTitle>
           </DialogHeader>
           {editProduct && (
-            <div className="space-y-4">
+            <div className="space-y-4 pb-4">
               <div>
                 <label className="text-sm font-medium">Nom du produit</label>
                 <Input
@@ -3574,7 +3542,7 @@ const VendorDashboard = () => {
           <DialogHeader>
             <DialogTitle>Confirmer la suppression</DialogTitle>
           </DialogHeader>
-          <p className="text-gray-600">
+          <p className="text-muted-foreground">
             Êtes-vous sûr de vouloir supprimer ce produit ? Cette action est irréversible.
           </p>
           <DialogFooter>
@@ -3598,7 +3566,7 @@ const VendorDashboard = () => {
             <DialogTitle>Appeler ce client ?</DialogTitle>
           </DialogHeader>
           <div className="py-4">
-            <p className="text-sm text-gray-600">{callTarget ? `${callTarget.name || 'Client'} - ${callTarget.phone}` : 'Numéro inconnu'}</p>
+            <p className="text-sm text-muted-foreground">{callTarget ? `${callTarget.name || 'Client'} - ${callTarget.phone}` : 'Numéro inconnu'}</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCallModalOpen(false)}>
@@ -3624,7 +3592,7 @@ const VendorDashboard = () => {
             {selectedOrderForQR && (
               <>
                 <div className="text-center">
-                  <p className="text-sm text-gray-600 mb-4">
+                  <p className="text-sm text-muted-foreground mb-4">
                     Présentez ce QR code au livreur pour qu'il puisse récupérer la commande
                   </p>
                   <div className="bg-white p-3 sm:p-4 rounded-lg inline-block border-2 border-black/10">
@@ -3634,17 +3602,17 @@ const VendorDashboard = () => {
                 </div>
                 <div className="bg-black/5 p-3 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-gray-700">Code commande :</span>
+                    <span className="text-sm font-semibold text-muted-foreground">Code commande :</span>
                     <span className="text-lg font-mono font-bold text-black">
                       {selectedOrderForQR.order_code || selectedOrderForQR.id}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-gray-700">Produit :</span>
-                    <span className="text-sm text-gray-600">{selectedOrderForQR.products?.name}</span>
+                    <span className="text-sm font-semibold text-muted-foreground">Produit :</span>
+                    <span className="text-sm text-muted-foreground">{selectedOrderForQR.products?.name}</span>
                   </div>
                 </div>
-                <div className="text-xs text-gray-500 text-center">
+                <div className="text-xs text-muted-foreground text-center">
                   Le livreur peut scanner ce QR code ou saisir le code commande manuellement
                 </div>
               </>
