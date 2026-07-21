@@ -59,10 +59,10 @@ const GuestOrderTracking = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchOrder = useCallback(async () => {
+  const fetchOrder = useCallback(async (silent = false) => {
     if (!id) return;
-    setLoading(true);
-    setError('');
+    if (!silent) setLoading(true);
+    if (!silent) setError('');
     try {
       const resp = await fetch(apiUrl(`/api/guest/order/${encodeURIComponent(id)}`));
       const json: any = await resp.json().catch(() => null);
@@ -71,15 +71,31 @@ const GuestOrderTracking = () => {
       }
       setOrder(json.order);
     } catch (e: any) {
-      setError(e?.message || 'Impossible de charger la commande.');
+      // En rafraîchissement silencieux, ne pas remplacer l'affichage existant
+      // par une erreur transitoire (ex. coupure réseau passagère).
+      if (!silent) setError(e?.message || 'Impossible de charger la commande.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     void fetchOrder();
   }, [fetchOrder]);
+
+  // Actualisation automatique du statut (toutes les 6s) tant que la commande
+  // n'est pas dans un état terminal. Un visiteur anonyme (sans session) ne peut
+  // pas s'abonner au temps réel Supabase (RLS exige un auth.uid() correspondant
+  // au buyer_id) -> ce polling léger sur l'endpoint public existant offre la
+  // même expérience ("plus besoin de rafraîchir") sans ouvrir l'accès aux
+  // commandes à n'importe quel visiteur.
+  const currentStatus = order?.status;
+  useEffect(() => {
+    if (!id) return;
+    if (currentStatus === 'delivered' || currentStatus === 'cancelled') return;
+    const interval = setInterval(() => { void fetchOrder(true); }, 6000);
+    return () => clearInterval(interval);
+  }, [id, currentStatus, fetchOrder]);
 
   // --- Annuler / demander un remboursement --------------------------------
   // Réutilise l'endpoint existant /api/payment/pixpay/refund (déjà utilisable sans
