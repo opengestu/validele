@@ -401,6 +401,13 @@ app.get('/api/config/protection-fee', (req, res) => {
   res.json({ success: true, pct: getProtectionFeePct() });
 });
 
+// Numéro WhatsApp Business du bot, exposé au frontend en temps réel : source
+// unique = WHATSAPP_BOT_NUMBER (Render), plus besoin de graver VITE_… au build.
+// Utilisé par la page /acheter/{code} pour rediriger vers le bot.
+app.get('/api/config/whatsapp-bot', (req, res) => {
+  res.json({ success: true, botNumber: String(process.env.WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') });
+});
+
 // Suivi de commande public (page web de suivi pour l'acheteur invité, sans compte).
 // L'id est un UUID non devinable -> sert de jeton d'accès. Ne renvoie que des champs
 // non sensibles + les contacts (vendeur/livreur) pour appeler/WhatsApp.
