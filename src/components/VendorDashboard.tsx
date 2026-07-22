@@ -1937,12 +1937,12 @@ const VendorDashboard = () => {
   // Numéro WhatsApp Business du bot Validèl (chiffres uniquement, sans +).
   const getWhatsAppBotNumber = () => String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '');
 
-  // Message pré-rempli, explicite pour un client qui le découvre : il explique
-  // quoi/pourquoi, et contient le code produit que le bot sait reconnaître (PD…),
-  // au lieu d'un code seul incompréhensible.
+  // Message pré-rempli, clair pour un client qui le découvre : il s'adresse au
+  // lecteur et le guide vers l'action (appuyer sur Envoyer). Il contient le code
+  // produit, indispensable pour que le bot reconnaisse le produit (regex PD…).
   const getBotPrefillText = (product: Product) => {
     const code = getProductShareCode(product);
-    return `Bonjour 👋 Je souhaite acheter *${product.name}* en toute sécurité avec Validèl (mon argent est protégé jusqu'à la réception).\nCode du produit : ${code}`;
+    return `Bonjour 👋 Pour acheter ce produit *${product.name}* (code ${code}) en toute sécurité avec Validèl, appuyez sur *Envoyer* pour commencer.`;
   };
 
   // Lien de partage unique (même pour "Partager" et "WhatsApp") : à l'ouverture par
