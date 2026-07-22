@@ -19,7 +19,14 @@ const {
   sendWhatsApp,
   sendWhatsAppButtons,
   sendWhatsAppCtaUrl,
+  sendWhatsAppTemplate,
 } = require('./direct7');
+
+// Template Meta approuvé pour la notification "en cours de livraison". Si le nom
+// est défini, on l'utilise (livraison fiable hors fenêtre 24h) ; sinon repli sur
+// le message libre (ne part que si le client a écrit dans les 24h).
+const DELIVERY_TEMPLATE_NAME = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_NAME || '').trim();
+const DELIVERY_TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_LANG || 'fr').trim();
 
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || '';
 const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://www.validel.shop').replace(/\/+$/, '');
@@ -593,8 +600,24 @@ async function markDeliveryNotificationRead(requestId) {
 // suivi de lecture pour le fallback SMS. Appelée depuis server.js (mark-in-delivery).
 async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
-  const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
-  const result = await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+
+  let result;
+  if (DELIVERY_TEMPLATE_NAME) {
+    // Template approuvé Meta : corps {{1}} = nom du produit ; bouton URL dynamique
+    // dont le suffixe = orderId (l'URL de base https://www.validel.shop/order/ est
+    // définie dans le template). Livré même hors fenêtre 24h.
+    result = await sendWhatsAppTemplate(buyerPhone, {
+      templateId: DELIVERY_TEMPLATE_NAME,
+      language: DELIVERY_TEMPLATE_LANG,
+      bodyParams: [productName || 'votre commande'],
+      urlButtonSuffix: String(orderId),
+    });
+  } else {
+    // Repli : message libre (ne part que si le client a écrit dans les 24h).
+    const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
+    result = await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+  }
+
   const requestId = result && result.data && result.data.request_id;
   if (requestId) {
     await recordDeliveryNotificationSent(requestId, orderId, buyerPhone);

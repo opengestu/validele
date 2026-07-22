@@ -419,6 +419,40 @@ async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url) {
   });
 }
 
+// Envoi d'un message TEMPLATE approuvé par Meta (fiable hors fenêtre 24h, contrairement
+// aux messages libres/interactifs qui exigent que le client ait écrit dans les 24h).
+// - templateId : nom exact du template approuvé (D7 l'appelle "template_id")
+// - language : code langue exact du template (ex. 'fr')
+// - bodyParams : valeurs des variables {{1}}, {{2}}… du CORPS, dans l'ordre
+// - urlButtonSuffix : suffixe dynamique du bouton URL (partie après l'URL de base
+//   définie dans le template) ; omis s'il n'y a pas de bouton dynamique.
+async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = [], urlButtonSuffix = null }) {
+  if (!templateId) throw new Error('templateId requis pour l\'envoi de template');
+  const body_parameter_values = {};
+  (Array.isArray(bodyParams) ? bodyParams : []).forEach((v, i) => {
+    body_parameter_values[String(i)] = String(v == null ? '' : v);
+  });
+
+  const template = {
+    template_id: templateId,
+    language: language || 'fr',
+    body_parameter_values,
+  };
+  if (urlButtonSuffix != null) {
+    template.buttons = {
+      actions: [
+        { action_index: '0', action_type: 'URL', action_payload: String(urlButtonSuffix) },
+      ],
+    };
+  }
+
+  return postD7Whatsapp({
+    originator: WHATSAPP_BOT_ORIGINATOR,
+    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+    content: { message_type: 'TEMPLATE', template },
+  });
+}
+
 async function sendProviderOTP(phone) {
   requireOtpProviderConfig();
 
@@ -612,5 +646,6 @@ module.exports = {
   sendSMS,
   sendWhatsApp,
   sendWhatsAppButtons,
-  sendWhatsAppCtaUrl
+  sendWhatsAppCtaUrl,
+  sendWhatsAppTemplate
 };
