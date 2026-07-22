@@ -3151,7 +3151,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
         // éviter le message cassé "Le paiement de votre commande votre produit a échoué").
         const { data: orderInfo, error: orderInfoErr } = await supabase
           .from('orders')
-          .select('id, order_code, buyer_id, product:products(name)')
+          .select('id, order_code, buyer_id, status, product:products(name)')
           .eq('id', orderId)
           .maybeSingle();
 
@@ -3159,7 +3159,20 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           console.error('[PIXPAY] Erreur récupération commande pour notification:', orderInfoErr);
         }
 
-        if (orderInfo && orderInfo.buyer_id) {
+        // Un échec Wave côté PixPay ("provider non autorisé") est TOUJOURS suivi d'un
+        // fallback (PayDunya) : ce n'est pas le résultat final du paiement, donc pas
+        // d'alerte "paiement échoué" à l'acheteur. Idem si la commande est déjà payée.
+        const isWaveFallbackFailure = String(customData?.payment_method || '').toLowerCase() === 'wave';
+        const orderAlreadyPaid = ['paid', 'in_delivery', 'delivered'].includes(String(orderInfo?.status || ''));
+
+        if (isWaveFallbackFailure || orderAlreadyPaid) {
+          console.log('[PIXPAY] Notification "paiement échoué" ignorée:', {
+            orderId,
+            reason: isWaveFallbackFailure ? 'wave_fallback' : 'order_already_paid',
+            payment_method: customData?.payment_method,
+            status: orderInfo?.status
+          });
+        } else if (orderInfo && orderInfo.buyer_id) {
           try {
             await notificationService.notifyBuyerPaymentFailed(orderInfo.buyer_id, {
               orderId: orderInfo.id,
