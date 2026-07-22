@@ -266,8 +266,8 @@ function txtFaqFrais(produit) {
 const TXT_FAQ_PROBLEME = [
   '*En cas de problème*',
   'Tant que vous n\'avez pas confirmé la réception, votre argent reste protégé.',
-  'Si le produit n\'arrive pas, ou s\'il ne correspond pas : *ne confirmez pas la réception* et écrivez-nous ici.',
-  'Nous examinons les preuves des deux côtés et tranchons. Si le litige est en votre faveur, vous êtes remboursé sur le compte Wave ou Orange Money qui a payé.',
+  'Si le produit n\'arrive pas, ou s\'il ne correspond pas : *ne confirmez pas la réception*. Depuis votre *page de suivi de commande* (lien reçu juste après le paiement), vous pouvez demander l\'*annulation* ou le *remboursement* en un clic.',
+  'Notre équipe examine alors les preuves des deux côtés et tranche. Si le litige est en votre faveur, vous êtes remboursé sur le compte Wave ou Orange Money qui a payé.',
 ].join('\n');
 
 // Boutons réutilisés
