@@ -351,6 +351,9 @@ app.post('/api/guest/order', async (req, res) => {
         vendor_id: product.vendor_id,
         product_id: product.id,
         total_amount,
+        // Frais de protection encaissé, NON remboursable : stocké pour le déduire
+        // précisément au moment d'un remboursement (indépendant du % courant).
+        protection_fee: protectionFee,
         payment_method: 'wave',
         delivery_address: deliveryAddress,
         buyer_phone: formattedPhone,
@@ -5981,7 +5984,7 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
     const { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
       .select(`
-        id, status, total_amount, buyer_id, payment_method,
+        id, status, total_amount, protection_fee, buyer_id, payment_method,
         buyer:profiles!orders_buyer_id_fkey(phone, wallet_type, full_name)
       `)
       .eq('id', orderId)
@@ -6063,13 +6066,18 @@ app.post('/api/payment/pixpay/refund', async (req, res) => {
       }
     }
 
-    // 5) Créer la demande de remboursement
+    // 5) Créer la demande de remboursement.
+    // Le frais de protection n'est PAS remboursable : on rembourse le prix du
+    // produit (total payé - frais de protection encaissé). Pour les commandes
+    // sans frais (app, anciennes), protection_fee vaut 0 -> remboursement = total.
+    const protectionFeeCharged = Number(order.protection_fee) || 0;
+    const refundableAmount = Math.max(0, Number(order.total_amount || 0) - protectionFeeCharged);
     const { data: refundRequest, error: refundError } = await supabaseAdmin
       .from('refund_requests')
       .insert({
         order_id: orderId,
         buyer_id: order.buyer_id,
-        amount: order.total_amount,
+        amount: refundableAmount,
         reason: reason || 'Non satisfaction client',
         status: 'pending',
         requested_at: new Date().toISOString(),

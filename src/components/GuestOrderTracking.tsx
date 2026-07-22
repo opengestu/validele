@@ -333,7 +333,8 @@ const GuestOrderTracking = () => {
 
           <div className="space-y-4">
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Votre demande sera examinée par un administrateur. Une fois approuvée, le montant sera remboursé sur le compte Wave ou Orange Money utilisé pour payer.
+              Votre demande sera examinée par un administrateur. Une fois approuvée, le prix du produit sera remboursé sur le compte Wave ou Orange Money utilisé pour payer.
+              <span className="block mt-1 text-xs text-blue-700">Les frais de protection ne sont pas remboursables.</span>
             </div>
 
             <div className="space-y-1">
