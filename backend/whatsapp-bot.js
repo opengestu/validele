@@ -560,25 +560,38 @@ async function askProductQuestionAI(produit, question) {
 }
 
 // ---------------------------------------------------------------------------
-// Notification "en cours de livraison" avec fallback SMS anti-doublon
+// Notifications acheteur : WhatsApp d'abord, SMS de secours si non lu (10 min)
 // ---------------------------------------------------------------------------
-// Règle : WhatsApp d'abord, JAMAIS WhatsApp + SMS en même temps. On envoie le
-// WhatsApp, on trace le request_id renvoyé par D7. Si D7 confirme "read" via
-// webhook (parseD7StatusEvent), on marque lu -> pas de SMS. Sinon, le
-// reconciler périodique (runDeliveryReadFallbackCheck) envoie le SMS de
-// secours après 10 min, une seule fois (sms_sent).
+// Règle commune (livraison, remboursement…) : WhatsApp d'abord, JAMAIS WhatsApp
+// + SMS en même temps. On envoie le WhatsApp, on trace le request_id renvoyé par
+// D7 + le SMS de secours à envoyer. Si D7 confirme "read" (parseD7StatusEvent) ->
+// pas de SMS. Sinon, le reconciler périodique envoie le SMS après 10 min, une
+// seule fois (sms_sent). Le texte SMS est stocké par notif -> mécanisme réutilisable.
 const DELIVERY_READ_FALLBACK_DELAY_MS = 10 * 60 * 1000;
 
-async function recordDeliveryNotificationSent(requestId, orderId, buyerPhone) {
+async function recordDeliveryNotificationSent(requestId, orderId, buyerPhone, fallbackSmsText = null) {
   if (!supabase || !requestId) return;
   try {
     const { error } = await supabase
       .from('whatsapp_delivery_read_tracking')
-      .insert({ request_id: requestId, order_id: orderId, buyer_phone: buyerPhone });
+      .insert({ request_id: requestId, order_id: orderId, buyer_phone: buyerPhone, fallback_sms_text: fallbackSmsText });
     if (error) console.warn('[WABOT] recordDeliveryNotificationSent erreur:', error.message);
   } catch (e) {
     console.warn('[WABOT] recordDeliveryNotificationSent exception:', e && e.message);
   }
+}
+
+// Cœur générique : envoie une notif WhatsApp (via sendWhatsAppFn) et programme le
+// SMS de secours (fallbackSmsText) si elle n'est pas lue à temps.
+async function sendWhatsAppWithSmsFallback({ orderId, buyerPhone, sendWhatsAppFn, fallbackSmsText }) {
+  const result = await sendWhatsAppFn();
+  const requestId = result && result.data && result.data.request_id;
+  if (requestId) {
+    await recordDeliveryNotificationSent(requestId, orderId, buyerPhone, fallbackSmsText);
+  } else {
+    console.warn('[WABOT] Pas de request_id dans la réponse D7, fallback SMS impossible à tracer pour:', orderId);
+  }
+  return result;
 }
 
 async function markDeliveryNotificationRead(requestId) {
@@ -596,48 +609,61 @@ async function markDeliveryNotificationRead(requestId) {
   }
 }
 
-// Envoie la notification "en cours de livraison" par WhatsApp et enregistre le
-// suivi de lecture pour le fallback SMS. Appelée depuis server.js (mark-in-delivery).
+// Notification "en cours de livraison" : WhatsApp d'abord (template approuvé si
+// configuré, sinon message libre), SMS de secours si non lu après 10 min.
+// Appelée depuis server.js (mark-in-delivery).
 async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
 
-  // Message libre (ancien comportement) : ne part que dans la fenêtre 24h, mais
-  // sert de repli si le template n'est pas configuré OU s'il échoue à l'envoi.
+  // Message libre : ne part que dans la fenêtre 24h, mais sert de repli si le
+  // template n'est pas configuré OU s'il échoue à l'envoi.
   const sendFreeForm = () => {
     const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
     return sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
   };
 
-  let result;
-  if (DELIVERY_TEMPLATE_NAME) {
-    // Template approuvé Meta : corps {{1}} = nom du produit ; bouton URL dynamique
-    // dont le suffixe = orderId (l'URL de base https://www.validel.shop/order/ est
-    // définie dans le template). Livré même hors fenêtre 24h.
-    try {
-      result = await sendWhatsAppTemplate(buyerPhone, {
-        templateId: DELIVERY_TEMPLATE_NAME,
-        language: DELIVERY_TEMPLATE_LANG,
-        bodyParams: [productName || 'votre commande'],
-        urlButtonSuffix: String(orderId),
-      });
-    } catch (tplErr) {
-      // Le template a échoué (nom/langue/structure inattendus, souci Meta…) : on ne
-      // perd PAS la notification -> repli sur le message libre. Et si le client est
-      // hors fenêtre 24h, le fallback SMS après 10 min (non lu) prend le relais.
-      console.warn('[WABOT] Envoi template livraison échoué, repli sur message libre:', tplErr && tplErr.message);
-      result = await sendFreeForm();
-    }
-  } else {
-    result = await sendFreeForm();
-  }
+  const fallbackSmsText = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${orderId}`;
 
-  const requestId = result && result.data && result.data.request_id;
-  if (requestId) {
-    await recordDeliveryNotificationSent(requestId, orderId, buyerPhone);
-  } else {
-    console.warn('[WABOT] Pas de request_id dans la réponse D7, fallback SMS impossible à tracer pour cette commande:', orderId);
-  }
-  return result;
+  return sendWhatsAppWithSmsFallback({
+    orderId,
+    buyerPhone,
+    fallbackSmsText,
+    sendWhatsAppFn: async () => {
+      if (DELIVERY_TEMPLATE_NAME) {
+        // Template approuvé Meta : corps {{1}} = nom du produit ; bouton URL
+        // dynamique suffixe = orderId (URL de base définie dans le template).
+        try {
+          return await sendWhatsAppTemplate(buyerPhone, {
+            templateId: DELIVERY_TEMPLATE_NAME,
+            language: DELIVERY_TEMPLATE_LANG,
+            bodyParams: [productName || 'votre commande'],
+            urlButtonSuffix: String(orderId),
+          });
+        } catch (tplErr) {
+          console.warn('[WABOT] Envoi template livraison échoué, repli sur message libre:', tplErr && tplErr.message);
+          return sendFreeForm();
+        }
+      }
+      return sendFreeForm();
+    },
+  });
+}
+
+// Notification "remboursement effectué" : WhatsApp d'abord (message libre, pas de
+// template dédié), SMS de secours si non lu après 10 min. Appelée depuis server.js
+// (approbation admin d'un remboursement). walletLabel = 'Wave' / 'Orange Money'.
+async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, walletLabel }) {
+  if (!buyerPhone) return { success: false, reason: 'no_phone' };
+  const amountStr = Number(amount || 0).toLocaleString('fr-FR');
+  const label = walletLabel || 'votre compte mobile';
+  const waBody = `✅ *Remboursement effectué*\nVotre remboursement de *${amountStr} FCFA* a été envoyé vers ${label} (${buyerPhone}).\n\nMerci de votre confiance avec Validèl.`;
+  const fallbackSmsText = `Validèl : votre remboursement de ${amountStr} FCFA a été effectué vers ${label} (${buyerPhone}). Merci de votre confiance.`;
+  return sendWhatsAppWithSmsFallback({
+    orderId,
+    buyerPhone,
+    fallbackSmsText,
+    sendWhatsAppFn: () => sendWhatsApp(buyerPhone, waBody),
+  });
 }
 
 // Reconciler : envoie un SMS de secours pour tout WhatsApp "en cours de livraison"
@@ -650,7 +676,7 @@ async function runDeliveryReadFallbackCheck() {
     const cutoff = new Date(Date.now() - DELIVERY_READ_FALLBACK_DELAY_MS).toISOString();
     const { data: rows, error } = await supabase
       .from('whatsapp_delivery_read_tracking')
-      .select('request_id, order_id, buyer_phone')
+      .select('request_id, order_id, buyer_phone, fallback_sms_text')
       .is('read_at', null)
       .eq('sms_sent', false)
       .lt('created_at', cutoff)
@@ -661,7 +687,10 @@ async function runDeliveryReadFallbackCheck() {
     }
     for (const row of rows || []) {
       try {
-        const text = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
+        // Texte propre à la notif (livraison, remboursement…) ; repli sur le texte
+        // livraison pour d'éventuelles lignes anciennes sans fallback_sms_text.
+        const text = row.fallback_sms_text
+          || `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
         await sendSMS(row.buyer_phone, text);
         await supabase
           .from('whatsapp_delivery_read_tracking')
@@ -791,8 +820,9 @@ function registerWhatsAppBot(app, deps) {
 module.exports = {
   registerWhatsAppBot,
   createBot,
-  // Envoi "en cours de livraison" avec fallback SMS anti-doublon (utilisé par server.js).
+  // Notifs acheteur WhatsApp-d'abord + fallback SMS (utilisées par server.js).
   notifyDeliveryStartedWithFallback,
+  notifyRefundProcessedWithFallback,
   // exportés pour les tests
   parseD7Message,
   parseD7StatusEvent,

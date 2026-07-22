@@ -6321,20 +6321,24 @@ app.post('/api/admin/refund-requests/:id/approve', requireAdmin, async (req, res
       }
     }
 
-    // 6bis) Notifier l'acheteur que le remboursement est effectué.
-    // Canal SMS : l'acheteur est souvent un invité (pas d'app -> pas de push, et
-    // hors fenêtre 24h WhatsApp), le SMS est donc le seul canal fiable. Non bloquant.
+    // 6bis) Notifier l'acheteur que le remboursement est effectué : procédure
+    // habituelle (WhatsApp d'abord, SMS de secours si non lu après 10 min), comme
+    // pour la livraison. Non bloquant : un échec n'empêche pas le remboursement.
     if (result.success && buyerPhone) {
       try {
-        const { sendSMS } = require('./direct7');
+        const { notifyRefundProcessedWithFallback } = require('./whatsapp-bot');
         const walletLabel = walletType === 'wave-senegal' ? 'Wave'
           : walletType === 'orange-senegal' ? 'Orange Money'
           : 'votre compte mobile';
-        const amountStr = Number(refundRequest.amount || 0).toLocaleString('fr-FR');
-        await sendSMS(buyerPhone, `Validèl : votre remboursement de ${amountStr} FCFA a été effectué vers ${walletLabel} (${buyerPhone}). Merci de votre confiance.`);
-        console.log('[REFUND] SMS de confirmation remboursement envoyé à', buyerPhone);
-      } catch (smsErr) {
-        console.warn('[REFUND] Echec SMS confirmation remboursement (non bloquant):', smsErr && smsErr.message);
+        await notifyRefundProcessedWithFallback({
+          orderId: refundRequest.order_id,
+          buyerPhone,
+          amount: refundRequest.amount,
+          walletLabel,
+        });
+        console.log('[REFUND] Notification remboursement (WhatsApp + fallback SMS) programmée pour', buyerPhone);
+      } catch (notifErr) {
+        console.warn('[REFUND] Echec notification remboursement (non bloquant):', notifErr && notifErr.message);
       }
     }
 
