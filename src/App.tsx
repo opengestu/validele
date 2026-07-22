@@ -28,7 +28,8 @@ import AuthPage from "@/components/AuthPage";
 import UpdateModal from "@/components/updates/UpdateModal";
 import UpdateInstallSnackbar from "@/components/updates/UpdateInstallSnackbar";
 import useAppUpdateChecker from "@/hooks/useAppUpdateChecker";
-import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+// Pop-up d'installation PWA désactivé temporairement (à réactiver plus tard) :
+// import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 
 const AuthRoute: React.FC = () => {
   const { user, userProfile, loading } = useAuth();
@@ -472,7 +473,8 @@ const App = () => {
                 onDismiss={dismissInstallSnackbar}
               />
 
-              <PWAInstallPrompt />
+              {/* Pop-up d'installation PWA désactivé temporairement (à réactiver plus tard) */}
+              {/* <PWAInstallPrompt /> */}
 
             </BrowserRouter>
           </AuthProvider>
