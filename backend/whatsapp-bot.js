@@ -175,13 +175,28 @@ async function trouverProduit(code) {
 // ---------------------------------------------------------------------------
 // Contenu des messages
 // ---------------------------------------------------------------------------
+// Tronque une description à une longueur lisible pour WhatsApp, sans couper un mot.
+function shortDescription(text, maxLen = 180) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  const cut = clean.slice(0, maxLen);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
 function ficheProduitText(produit) {
   const { prix, frais, total } = computeFees(produit.prix);
   const ligneVendeur = produit.vendeurQuartier
     ? `Vendeur : *${produit.vendeurNom}* — ${produit.vendeurQuartier}`
     : `Vendeur : *${produit.vendeurNom}*`;
-  return [
+  // Description du produit (si renseignée) : rend la fiche compréhensible pour le
+  // client, au lieu d'un simple code + nom sans explication.
+  const desc = shortDescription(produit.description);
+  const lignes = [
     `📦 *${produit.nom}*`,
+  ];
+  if (desc) lignes.push(desc);
+  lignes.push(
     `Prix : *${formatFcfa(prix)} FCFA*`,
     ligneVendeur,
     `Code : ${produit.code}`,
@@ -192,7 +207,8 @@ function ficheProduitText(produit) {
     `*Total à payer : ${formatFcfa(total)} FCFA*`,
     '',
     'Votre argent est protégé : le vendeur n\'est payé qu\'après votre confirmation de réception.',
-  ].join('\n').slice(0, 1024);
+  );
+  return lignes.join('\n').slice(0, 1024);
 }
 
 function paiementCtaText(produit) {

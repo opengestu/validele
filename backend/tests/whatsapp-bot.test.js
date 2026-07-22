@@ -25,6 +25,7 @@ function test(name, fn) {
 const FAKE = {
   code: 'PD3431', nom: 'Caisse de Yaourt', prix: 15000,
   vendeurNom: 'Awa Ndiaye', vendeurQuartier: 'Colobane',
+  description: 'Caisse de 12 pots de yaourt nature, fabrication locale.',
 };
 const findProduct = async (code) => (code === 'PD3431' ? FAKE : null);
 
@@ -137,6 +138,14 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
       rec.sends[0].buttons.forEach((btn) => assert.ok(btn.title.length <= 20, 'titre bouton <= 20'));
     });
   }
+
+  // La fiche produit inclut la description (compréhensible, pas juste le code)
+  await test('fiche produit -> inclut la description du produit', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'buttons');
+    assert.ok(rec.sends[0].body.includes('12 pots de yaourt'), 'la description doit apparaître dans la fiche');
+  });
 
   // Crit. 8 : code inexistant -> avertissement, pas de crash
   await test('crit.8 PD9999 -> avertissement', async () => {
