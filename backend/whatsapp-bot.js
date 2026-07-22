@@ -601,21 +601,34 @@ async function markDeliveryNotificationRead(requestId) {
 async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
 
+  // Message libre (ancien comportement) : ne part que dans la fenêtre 24h, mais
+  // sert de repli si le template n'est pas configuré OU s'il échoue à l'envoi.
+  const sendFreeForm = () => {
+    const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
+    return sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+  };
+
   let result;
   if (DELIVERY_TEMPLATE_NAME) {
     // Template approuvé Meta : corps {{1}} = nom du produit ; bouton URL dynamique
     // dont le suffixe = orderId (l'URL de base https://www.validel.shop/order/ est
     // définie dans le template). Livré même hors fenêtre 24h.
-    result = await sendWhatsAppTemplate(buyerPhone, {
-      templateId: DELIVERY_TEMPLATE_NAME,
-      language: DELIVERY_TEMPLATE_LANG,
-      bodyParams: [productName || 'votre commande'],
-      urlButtonSuffix: String(orderId),
-    });
+    try {
+      result = await sendWhatsAppTemplate(buyerPhone, {
+        templateId: DELIVERY_TEMPLATE_NAME,
+        language: DELIVERY_TEMPLATE_LANG,
+        bodyParams: [productName || 'votre commande'],
+        urlButtonSuffix: String(orderId),
+      });
+    } catch (tplErr) {
+      // Le template a échoué (nom/langue/structure inattendus, souci Meta…) : on ne
+      // perd PAS la notification -> repli sur le message libre. Et si le client est
+      // hors fenêtre 24h, le fallback SMS après 10 min (non lu) prend le relais.
+      console.warn('[WABOT] Envoi template livraison échoué, repli sur message libre:', tplErr && tplErr.message);
+      result = await sendFreeForm();
+    }
   } else {
-    // Repli : message libre (ne part que si le client a écrit dans les 24h).
-    const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
-    result = await sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+    result = await sendFreeForm();
   }
 
   const requestId = result && result.data && result.data.request_id;
