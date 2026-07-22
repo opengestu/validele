@@ -1934,9 +1934,30 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
+  // Numéro WhatsApp Business du bot Validèl (chiffres uniquement, sans +).
+  const getWhatsAppBotNumber = () => String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '');
+
+  // Message pré-rempli, explicite pour un client qui le découvre : il explique
+  // quoi/pourquoi, et contient le code produit que le bot sait reconnaître (PD…),
+  // au lieu d'un code seul incompréhensible.
+  const getBotPrefillText = (product: Product) => {
+    const code = getProductShareCode(product);
+    return `Bonjour 👋 Je souhaite acheter *${product.name}* en toute sécurité avec Validèl (mon argent est protégé jusqu'à la réception).\nCode du produit : ${code}`;
+  };
+
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : à l'ouverture par
+  // l'acheteur, WhatsApp démarre une conversation avec le bot Validèl, message
+  // ci-dessus déjà pré-rempli et prêt à envoyer. Repli sur le lien web produit si
+  // le numéro du bot n'est pas configuré (VITE_WHATSAPP_BOT_NUMBER absent).
+  const getProductShareLink = (product: Product) => {
+    const num = getWhatsAppBotNumber();
+    if (!num) return getProductPublicUrl(product);
+    return `https://wa.me/${num}?text=${encodeURIComponent(getBotPrefillText(product))}`;
+  };
+
   const handleShareProduct = async (product: Product) => {
-    const webLink = getProductPublicUrl(product);
-    if (!webLink) {
+    const shareLink = getProductShareLink(product);
+    if (!shareLink) {
       toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
       return;
     }
@@ -1944,7 +1965,7 @@ const VendorDashboard = () => {
     try {
       const payload = {
         title: product.name,
-        url: webLink,
+        url: shareLink,
         dialogTitle: 'Partager le produit'
       };
 
@@ -1960,7 +1981,7 @@ const VendorDashboard = () => {
       } else {
         // Fallback: copier le lien
         if (navigator.clipboard) {
-          await navigator.clipboard.writeText(webLink);
+          await navigator.clipboard.writeText(shareLink);
           toast({ title: 'Lien copié', description: 'Lien produit copié en presse-papiers.' });
         } else {
           throw new Error('Share API et clipboard non disponibles');
@@ -1978,17 +1999,17 @@ const VendorDashboard = () => {
   };
 
   const handleWhatsAppProduct = (product: Product) => {
-    const webLink = getProductPublicUrl(product);
-    if (!webLink) {
+    const shareLink = getProductShareLink(product);
+    if (!shareLink) {
       toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
       return;
     }
 
     try {
-      // Même lien que le bouton "Partager" : la fiche produit s'affiche directement
-      // au clic (zéro friction), au lieu du deep-link bot qui exige un tap "Envoyer"
-      // supplémentaire dans WhatsApp (contrainte incontournable de la plateforme).
-      const text = `${product.name}\n${product.description || ''}\n${webLink}`.trim();
+      // Même lien que le bouton "Partager" : le vendeur choisit un contact WhatsApp
+      // et lui envoie ce lien. Quand l'acheteur le touche, WhatsApp s'ouvre sur le
+      // bot Validèl avec le message explicite (nom + code) déjà pré-rempli.
+      const text = `${product.name}\nAchetez en toute sécurité avec Validèl 👇\n${shareLink}`;
       const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
       const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       if (!popup) {
