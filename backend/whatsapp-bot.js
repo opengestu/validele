@@ -253,7 +253,6 @@ function txtFaqFrais(produit) {
     return [
       '*Frais de protection*',
       `Un frais de protection de ${COMMISSION_PCT} % s'applique sur la transaction, affiché avant toute confirmation. Aucun frais caché.`,
-      'Le vendeur ne paie rien.',
     ].join('\n');
   }
   const { frais, total } = computeFees(produit.prix);
@@ -261,7 +260,6 @@ function txtFaqFrais(produit) {
     '*Frais de protection*',
     `Frais de protection de ${COMMISSION_PCT} %, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
     `Total à payer : *${formatFcfa(total)} FCFA*, affiché avant toute confirmation. Aucun frais caché.`,
-    'Le vendeur ne paie rien.',
   ].join('\n');
 }
 

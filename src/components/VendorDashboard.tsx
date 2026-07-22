@@ -1934,25 +1934,13 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Numéro WhatsApp Business du bot Validèl (chiffres uniquement, sans +).
-  const getWhatsAppBotNumber = () => String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '');
-
-  // Message pré-rempli, clair pour un client qui le découvre : il s'adresse au
-  // lecteur et le guide vers l'action (appuyer sur Envoyer). Il contient le code
-  // produit, indispensable pour que le bot reconnaisse le produit (regex PD…).
-  const getBotPrefillText = (product: Product) => {
-    const code = getProductShareCode(product);
-    return `Bonjour 👋 Pour acheter ce produit *${product.name}* (code ${code}) en toute sécurité avec Validèl, appuyez sur *Envoyer* pour commencer.`;
-  };
-
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : à l'ouverture par
-  // l'acheteur, WhatsApp démarre une conversation avec le bot Validèl, message
-  // ci-dessus déjà pré-rempli et prêt à envoyer. Repli sur le lien web produit si
-  // le numéro du bot n'est pas configuré (VITE_WHATSAPP_BOT_NUMBER absent).
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : un lien PROPRE
+  // et rassurant sur le domaine Validèl, au lieu d'un long lien wa.me encodé qui
+  // fait "louche" pour un tiers de confiance. À l'ouverture par l'acheteur, la
+  // page /acheter/{code} redirige aussitôt vers le bot WhatsApp, code pré-rempli.
   const getProductShareLink = (product: Product) => {
-    const num = getWhatsAppBotNumber();
-    if (!num) return getProductPublicUrl(product);
-    return `https://wa.me/${num}?text=${encodeURIComponent(getBotPrefillText(product))}`;
+    const shareCode = getProductShareCode(product);
+    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
   };
 
   const handleShareProduct = async (product: Product) => {

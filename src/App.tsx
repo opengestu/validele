@@ -87,6 +87,7 @@ import BuyerDashboard from "@/components/BuyerDashboard";
 import DeliveryDashboard from "@/components/DeliveryDashboard";
 import ProductSearch from "@/components/ProductSearch";
 import GuestOrderTracking from "@/components/GuestOrderTracking";
+import ProductGoRedirect from "@/components/ProductGoRedirect";
 import OrderDetails from "@/components/OrderDetails";
 import QRScanner from "@/components/QRScanner";
 import AdminDashboard from "@/components/AdminDashboard";
@@ -371,6 +372,7 @@ const App = () => {
                 {!adminOnlyMode && <Route path="/product" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/product/:code" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/order/:id" element={<GuestOrderTracking />} />}
+                {!adminOnlyMode && <Route path="/acheter/:code" element={<ProductGoRedirect />} />}
                 {!adminOnlyMode && <Route path="/install" element={<AppInstall />} />}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}
