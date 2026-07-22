@@ -2604,6 +2604,29 @@ app.post('/api/payment/pixpay/initiate', async (req, res) => {
   }
 });
 
+// Délai maximal GLOBAL du fallback de paiement. Sans borne, le fallback Wave fait
+// 2 appels PayDunya de 30s chacun (jusqu'à ~60s) : la requête traîne et la
+// connexion finit par se fermer côté navigateur ("Failed to fetch"). Avec cette
+// borne, on abandonne à temps et on renvoie une réponse d'erreur propre et rapide.
+// Réglable via env PAYMENT_FALLBACK_TIMEOUT_MS (défaut 18s).
+const PAYMENT_FALLBACK_TIMEOUT_MS = (() => {
+  const n = Number(process.env.PAYMENT_FALLBACK_TIMEOUT_MS);
+  return Number.isFinite(n) && n >= 1000 ? n : 18000;
+})();
+function withPaymentTimeout(promise, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error(`${label || 'payment'}_timeout_${PAYMENT_FALLBACK_TIMEOUT_MS}ms`)),
+      PAYMENT_FALLBACK_TIMEOUT_MS,
+    )),
+  ]);
+}
+
+// Message clair montré à l'acheteur quand Wave ne peut pas aboutir (le détail
+// technique reste dans les logs / le champ `detail` pour le debug).
+const WAVE_UNAVAILABLE_MSG = 'Le paiement Wave est momentanément indisponible. Merci de choisir Orange Money.';
+
 // Endpoint PixPay Wave
 app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
   try {
@@ -2691,13 +2714,13 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
     if (!result?.success || !result?.sms_link) {
       fallbackReason = 'pixpay_missing_sms_link';
       try {
-        finalResult = await createPayDunyaFallbackLink({
+        finalResult = await withPaymentTimeout(createPayDunyaFallbackLink({
           amount,
           orderId,
           phone,
           customData,
           paymentMethod: 'wave'
-        });
+        }), 'paydunya_wave_fallback');
         provider = 'paydunya_wave';
         fallbackUsed = true;
       } catch (fallbackError) {
@@ -2722,7 +2745,8 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       } else {
         return res.status(502).json({
           success: false,
-          error: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
+          error: WAVE_UNAVAILABLE_MSG,
+          detail: 'Aucun lien de paiement disponible (PixPay sans lien et fallback indisponible).',
           fallback_reason: fallbackReason || 'pixpay_missing_sms_link'
         });
       }
@@ -2735,7 +2759,8 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
       } else {
         return res.status(502).json({
           success: false,
-          error: pixpayErrorMessage,
+          error: WAVE_UNAVAILABLE_MSG,
+          detail: pixpayErrorMessage,
           fallback_reason: fallbackReason || 'pixpay_failed',
           pixpay_response: process.env.DEBUG_PIXPAY === 'true' ? result : undefined
         });
@@ -2784,7 +2809,8 @@ app.post('/api/payment/pixpay-wave/initiate', async (req, res) => {
 
     const responseBody = {
       success: false,
-      error: pixpayMessage
+      error: WAVE_UNAVAILABLE_MSG,
+      detail: pixpayMessage
     };
     if (process.env.DEBUG_PIXPAY === 'true') {
       responseBody.pixpay = error?.raw || error;
