@@ -325,41 +325,6 @@ const ProductSearch = () => {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Search className="h-5 w-5 mr-2" />
-              Rechercher un produit par code
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex space-x-4">
-              <Input
-                placeholder="Entrez le code produit"
-                value={searchCode}
-                onChange={(e) => {
-                  const nextCode = e.target.value;
-                  setSearchCode(nextCode);
-                  if (!nextCode.trim()) {
-                    setSearchResult(null);
-                    setHasSearched(false);
-                  }
-                }}
-                className="flex-1"
-                onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
-              />
-              <Button
-                onClick={handleSearch}
-                disabled={loading}
-                className="btn-buyer"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                {loading ? 'Recherche...' : 'Rechercher'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
         {searchResult ? (
           <Card className="border-blue-200">
             <CardContent className="p-8">
@@ -441,37 +406,6 @@ const ProductSearch = () => {
             </CardContent>
           </Card>
         )}
-
-        <Card className="mt-8">
-          <CardHeader>
-            <CardTitle>Comment ça marche ?</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-3 gap-6 text-center">
-              <div>
-                <div className="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-green-600 font-bold">1</span>
-                </div>
-                <h4 className="font-medium mb-2">Obtenez le code</h4>
-                <p className="text-sm text-gray-600">Le vendeur vous communique le code unique du produit</p>
-              </div>
-              <div>
-                <div className="bg-green-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-green-600 font-bold">2</span>
-                </div>
-                <h4 className="font-medium mb-2">Recherchez</h4>
-                <p className="text-sm text-gray-600">Entrez le code pour consulter les détails du produit</p>
-              </div>
-              <div>
-                <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-green-600 font-bold">3</span>
-                </div>
-                <h4 className="font-medium mb-2">Achetez</h4>
-                <p className="text-sm text-gray-600">Effectuez votre achat en toute sécurité</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <Dialog
