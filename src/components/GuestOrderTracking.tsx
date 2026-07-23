@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, Phone, MessageCircle, Package, ShieldCheck, AlertTriangle, QrCode } from 'lucide-react';
+import { Loader2, Package, ShieldCheck, AlertTriangle, QrCode } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 import { apiUrl } from '@/lib/api';
+
+const phoneLogo = '/assets/phone-icon.png';
+const whatsappLogo = '/assets/whatsapp-icon.png';
 
 const CANCEL_REASONS = [
   'Produit non conforme',
@@ -257,12 +260,12 @@ const GuestOrderTracking = () => {
                       <div className="flex gap-2">
                         <a href={telLink(order.vendor.phone)} className="flex-1">
                           <Button variant="outline" className="w-full">
-                            <Phone className="h-4 w-4 mr-2 text-green-600" /> Appeler
+                            <img src={phoneLogo} alt="" className="h-5 w-5 mr-2 object-contain" /> Appeler
                           </Button>
                         </a>
                         <a href={waLink(order.vendor.phone)} target="_blank" rel="noopener noreferrer" className="flex-1">
                           <Button variant="outline" className="w-full">
-                            <MessageCircle className="h-4 w-4 mr-2 text-green-600" /> WhatsApp
+                            <img src={whatsappLogo} alt="" className="h-5 w-5 mr-2 object-contain" /> WhatsApp
                           </Button>
                         </a>
                       </div>
@@ -279,7 +282,7 @@ const GuestOrderTracking = () => {
                     </p>
                     <a href={telLink(order.delivery.phone)} className="block">
                       <Button variant="outline" className="w-full">
-                        <Phone className="h-4 w-4 mr-2 text-green-600" /> Appeler le livreur
+                        <img src={phoneLogo} alt="" className="h-5 w-5 mr-2 object-contain" /> Appeler le livreur
                       </Button>
                     </a>
                   </div>
