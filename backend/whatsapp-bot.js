@@ -158,15 +158,17 @@ async function trouverProduit(code) {
 
   let vendeurNom = 'Vendeur';
   let vendeurQuartier = '';
+  let vendeurPhone = '';
   if (product.vendor_id) {
     const { data: prof } = await supabase
       .from('profiles')
-      .select('company_name, full_name, address')
+      .select('company_name, full_name, address, phone')
       .eq('id', product.vendor_id)
       .maybeSingle();
     if (prof) {
       vendeurNom = prof.company_name || prof.full_name || vendeurNom;
       vendeurQuartier = prof.address || '';
+      vendeurPhone = String(prof.phone || '').replace(/\D/g, '');
     }
   }
   return {
@@ -175,6 +177,7 @@ async function trouverProduit(code) {
     prix: Number(product.price) || 0,
     vendeurNom,
     vendeurQuartier,
+    vendeurPhone,
     description: product.description || '',
   };
 }
@@ -235,7 +238,7 @@ const TXT_AUCUN_CODE =
   'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.';
 
 const TXT_AI_QUOTA_DEPASSE =
-  'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, contactez directement le vendeur ou utilisez le menu "Autres questions".';
+  'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, contactez directement le vendeur ou utilisez le menu "Autres questions".\n\n⚠️ *Important* : payez toujours via Validèl. En dehors de Validèl, votre argent n\'est plus protégé et, en cas de problème, Validèl ne pourra rien faire.';
 
 const TXT_FAQ_MARCHE = [
   '*Comment Validèl protège votre achat*',
@@ -269,6 +272,28 @@ const TXT_FAQ_PROBLEME = [
   'Si le produit n\'arrive pas, ou s\'il ne correspond pas : *ne confirmez pas la réception*. Depuis votre *page de suivi de commande* (lien reçu juste après le paiement), vous pouvez demander l\'*annulation* ou le *remboursement* en un clic.',
   'Notre équipe examine alors les preuves des deux côtés et tranche. Si le litige est en votre faveur, vous êtes remboursé sur le compte Wave ou Orange Money qui a payé.',
 ].join('\n');
+
+// Lien WhatsApp direct vers le vendeur (null si numéro absent).
+function vendorWaLink(produit) {
+  const digits = String((produit && produit.vendeurPhone) || '').replace(/\D/g, '');
+  return digits ? `https://wa.me/${digits}` : null;
+}
+
+// Contacter le vendeur avant d'acheter est permis, mais payer HORS Validèl fait
+// perdre toute protection : on l'écrit noir sur blanc. Renvoie une liste
+// d'actions (bouton CTA vers le WhatsApp du vendeur si son numéro est connu).
+function repliesContacterVendeur(produit, intro) {
+  const body = [
+    intro,
+    '',
+    '⚠️ *Important* : payez toujours via Validèl. Si vous réglez le vendeur en dehors de Validèl, votre argent n\'est plus protégé et, en cas de problème, Validèl ne pourra rien faire.',
+  ].filter(Boolean).join('\n');
+  const link = vendorWaLink(produit);
+  if (link) {
+    return [{ kind: 'cta', body, displayText: 'Contacter le vendeur', url: link }];
+  }
+  return [{ kind: 'text', body }];
+}
 
 // Boutons réutilisés
 const btnPayer = (code) => ({ id: `pay:${code}`, title: 'Payer en sécurité' });
@@ -370,7 +395,11 @@ async function decideReplies(parsed, deps) {
         }];
       }
       if (isAiQuotaExceeded(state)) {
-        return [{ kind: 'text', body: TXT_AI_QUOTA_DEPASSE }];
+        const produitQuota = await findProduct(state.productCode);
+        const intro = 'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, vous pouvez contacter directement le vendeur.';
+        return produitQuota
+          ? repliesContacterVendeur(produitQuota, intro)
+          : [{ kind: 'text', body: TXT_AI_QUOTA_DEPASSE }];
       }
       const produit = await findProduct(state.productCode);
       if (produit) {
@@ -532,6 +561,9 @@ async function askProductQuestionAI(produit, question) {
     'caractéristique, une couleur, un délai de livraison ou une garantie qui n\'est pas indiquée.',
     'Si tu ne sais pas, dis-le clairement et invite le client à utiliser le menu "Autres questions"',
     'ou à contacter le vendeur directement.',
+    'IMPORTANT : chaque fois que tu invites à contacter le vendeur, rappelle en une phrase',
+    'qu\'il faut TOUJOURS payer via Validèl — payer le vendeur en dehors de Validèl fait perdre',
+    'toute protection et Validèl ne pourra rien faire en cas de problème.',
     'Ne demande et ne discute JAMAIS de code secret, mot de passe ou code PIN Wave/Orange Money.',
     'Réponds en français, 2 à 3 phrases maximum, ton chaleureux et direct, texte simple (pas de #).',
     'Termine TOUJOURS par une affirmation complète et autonome. Ne pose JAMAIS de question de',
