@@ -252,10 +252,12 @@ function normalizeGuestPhone(phone) {
 
 app.post('/api/guest/order', async (req, res) => {
   try {
-    const { productCode, buyerName, buyerPhone, deliveryAddress } = req.body || {};
+    const { productCode, buyerName, buyerPhone, deliveryAddress, quantity } = req.body || {};
     if (!productCode || !buyerName || !buyerPhone || !deliveryAddress) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants (produit, nom, téléphone, adresse).' });
     }
+    // Quantité : entier >= 1 (plafonné pour éviter un total aberrant). Défaut 1.
+    const qty = Math.min(999, Math.max(1, Math.floor(Number(quantity) || 1)));
 
     const formattedPhone = normalizeGuestPhone(buyerPhone);
     if (!formattedPhone) {
@@ -333,13 +335,14 @@ app.post('/api/guest/order', async (req, res) => {
 
     // 3) Créer la commande. payment_method='wave' pour satisfaire la contrainte CHECK ;
     // la vraie méthode (Wave/OM) est choisie à l'étape paiement, comme dans l'app.
-    // total_amount = prix + frais de protection (quantité 1). Frais de protection
+    // total_amount = (prix × quantité) + frais de protection. Frais de protection
     // = VALIDEL_COMMISSION_PCT (même variable que le bot WhatsApp, seule source de
     // vérité) ; SANS RAPPORT avec la commission vendeur (payout admin, séparée).
     const price = Number(product.price) || 0;
+    const lineTotal = price * qty;
     const protectionFeePct = getProtectionFeePct();
-    const protectionFee = Math.round((price * protectionFeePct) / 100);
-    const total_amount = price + protectionFee;
+    const protectionFee = Math.round((lineTotal * protectionFeePct) / 100);
+    const total_amount = lineTotal + protectionFee;
     const qr_code = generateSecureQrCode('C-');
     const qr_code_vendor = generateSecureQrCode('V-');
     const order_code = await generateUniqueReadableOrderCode(supabaseAdmin);
@@ -350,6 +353,7 @@ app.post('/api/guest/order', async (req, res) => {
         buyer_id: buyerId,
         vendor_id: product.vendor_id,
         product_id: product.id,
+        quantity: qty,
         total_amount,
         // Frais de protection encaissé, NON remboursable : stocké pour le déduire
         // précisément au moment d'un remboursement (indépendant du % courant).
@@ -375,6 +379,7 @@ app.post('/api/guest/order', async (req, res) => {
       orderId: order.id,
       orderCode: order.order_code,
       price,
+      quantity: qty,
       protectionFee,
       protectionFeePct,
       totalAmount: total_amount,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Loader2, Search, ShoppingCart, Shield, Image as ImageIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Search, ShoppingCart, Shield, Image as ImageIcon, Minus, Plus } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -11,6 +11,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiUrl } from '@/lib/api';
 
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
+
+const waveLogo = '/images/wave.png';
+const orangeMoneyLogo = '/images/orange_money.png';
 
 const ProductImage3D = ({ imageUrl, name }: { imageUrl?: string | null; name?: string }) => (
   imageUrl ? (
@@ -121,6 +124,7 @@ const ProductSearch = () => {
   const [buyerPhone, setBuyerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [payMethod, setPayMethod] = useState<'wave' | 'orange_money'>('wave');
+  const [quantity, setQuantity] = useState(1);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [checkoutNotice, setCheckoutNotice] = useState('');
@@ -131,6 +135,7 @@ const ProductSearch = () => {
   const [protectionFeePct, setProtectionFeePct] = useState(0);
   useEffect(() => {
     if (!checkoutOpen) return;
+    setQuantity(1); // repartir d'une quantité 1 à chaque ouverture du dialog
     let cancelled = false;
     (async () => {
       try {
@@ -145,8 +150,9 @@ const ProductSearch = () => {
   }, [checkoutOpen]);
 
   const productPrice = searchResult ? Number(searchResult.price) || 0 : 0;
-  const protectionFeeAmount = Math.round((productPrice * protectionFeePct) / 100);
-  const totalToPay = productPrice + protectionFeeAmount;
+  const lineTotal = productPrice * quantity;
+  const protectionFeeAmount = Math.round((lineTotal * protectionFeePct) / 100);
+  const totalToPay = lineTotal + protectionFeeAmount;
 
   const handleGuestCheckout = useCallback(async () => {
     setCheckoutError('');
@@ -169,6 +175,7 @@ const ProductSearch = () => {
           buyerName: buyerName.trim(),
           buyerPhone: buyerPhone.trim(),
           deliveryAddress: deliveryAddress.trim(),
+          quantity,
         }),
       });
       const orderJson: any = await orderResp.json().catch(() => null);
@@ -212,7 +219,7 @@ const ProductSearch = () => {
     } finally {
       setCheckoutLoading(false);
     }
-  }, [buyerName, buyerPhone, deliveryAddress, payMethod, searchResult, searchCode]);
+  }, [buyerName, buyerPhone, deliveryAddress, payMethod, quantity, searchResult, searchCode]);
 
   useEffect(() => {
     if (!codeFromUrl) return;
@@ -483,8 +490,32 @@ const ProductSearch = () => {
             {searchResult && (
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">{searchResult.name}</span>
-                  <span className="text-gray-900">{productPrice.toLocaleString()} FCFA</span>
+                  <span className="text-gray-600">{searchResult.name}{quantity > 1 ? ` (${productPrice.toLocaleString()} × ${quantity})` : ''}</span>
+                  <span className="text-gray-900">{lineTotal.toLocaleString()} FCFA</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Quantité</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                      disabled={checkoutLoading || quantity <= 1}
+                      aria-label="Diminuer la quantité"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition hover:bg-gray-100 disabled:opacity-40"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="w-8 text-center text-base font-bold text-gray-900">{quantity}</span>
+                    <button
+                      type="button"
+                      onClick={() => setQuantity((q) => q + 1)}
+                      disabled={checkoutLoading}
+                      aria-label="Augmenter la quantité"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition hover:bg-gray-100 disabled:opacity-40"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-600">Frais de protection{protectionFeePct ? ` (${protectionFeePct}%)` : ''}</span>
@@ -535,24 +566,26 @@ const ProductSearch = () => {
                   type="button"
                   onClick={() => setPayMethod('wave')}
                   disabled={checkoutLoading}
-                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                  className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
                     payMethod === 'wave'
                       ? 'border-green-600 bg-green-50 text-green-700'
                       : 'border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}
                 >
+                  <img src={waveLogo} alt="" className="h-6 w-6 rounded object-contain" />
                   Wave
                 </button>
                 <button
                   type="button"
                   onClick={() => setPayMethod('orange_money')}
                   disabled={checkoutLoading}
-                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                  className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
                     payMethod === 'orange_money'
                       ? 'border-orange-500 bg-orange-50 text-orange-700'
                       : 'border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}
                 >
+                  <img src={orangeMoneyLogo} alt="" className="h-6 w-6 rounded object-contain" />
                   Orange Money
                 </button>
               </div>
