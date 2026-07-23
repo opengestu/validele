@@ -1993,11 +1993,10 @@ const VendorDashboard = () => {
     }
 
     try {
-      // Même lien que le bouton "Partager" : le vendeur choisit un contact WhatsApp
-      // et lui envoie ce lien. Quand l'acheteur le touche, WhatsApp s'ouvre sur le
-      // bot Validèl avec le message explicite (nom + code) déjà pré-rempli.
-      const text = `${product.name}\nAchetez en toute sécurité avec Validèl 👇\n${shareLink}`;
-      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      // On envoie UNIQUEMENT le lien (pas de texte autour) : WhatsApp affiche alors
+      // juste la carte d'aperçu propre et cliquable, sans URL brute ni texte en trop.
+      // La carte mène à /acheter/{code}, qui redirige vers le bot Validèl.
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareLink)}`;
       const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       if (!popup) {
         window.location.href = whatsappUrl;
