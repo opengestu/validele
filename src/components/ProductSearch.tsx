@@ -20,11 +20,11 @@ const ProductImage3D = ({ imageUrl, name }: { imageUrl?: string | null; name?: s
     <img
       src={imageUrl}
       alt={name ? `Image de ${name}` : 'Image du produit'}
-      className="h-64 w-full rounded-xl border border-gray-200 object-cover"
+      className="h-44 sm:h-56 w-full rounded-xl border border-gray-200 object-cover"
       loading="lazy"
     />
   ) : (
-    <div className="flex h-64 w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500">
+    <div className="flex h-44 sm:h-56 w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500">
       <ImageIcon className="mb-2 h-9 w-9" />
       <span className="text-sm font-medium">Aucune image</span>
     </div>
@@ -313,12 +313,12 @@ const ProductSearch = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-4">
         {searchResult ? (
           <Card className="border-blue-200">
-            <CardContent className="p-8">
-              <div className="grid md:grid-cols-2 gap-8">
-                <div className="space-y-4">
+            <CardContent className="p-4 sm:p-6">
+              <div className="grid md:grid-cols-2 gap-4 sm:gap-8">
+                <div className="space-y-2">
                   <ProductImage3D imageUrl={searchResult.image_url} name={searchResult.name} />
                   <div className="flex items-center space-x-2">
                     <Shield className="h-5 w-5 text-green-600" />
@@ -328,12 +328,12 @@ const ProductSearch = () => {
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  <h2 className="text-3xl font-bold text-gray-900">{searchResult.name}</h2>
+                <div className="space-y-3 sm:space-y-5">
+                  <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">{searchResult.name}</h2>
 
-                  <p className="text-gray-600 leading-relaxed">{searchResult.description}</p>
+                  <p className="text-gray-600 leading-snug line-clamp-2">{searchResult.description}</p>
 
-                  <div className="space-y-3">
+                  <div className="space-y-1.5">
                     <div className="flex justify-between">
                       <span className="font-medium text-gray-700">Catégorie:</span>
                       <span className="text-gray-900">{searchResult.category || 'Non spécifiée'}</span>
@@ -346,8 +346,8 @@ const ProductSearch = () => {
                     </div>
                   </div>
 
-                  <div className="border-t pt-6">
-                    <p className="text-4xl font-bold text-green-600 mb-6">
+                  <div className="border-t pt-3 sm:pt-4">
+                    <p className="text-3xl sm:text-4xl font-bold text-green-600 mb-3 sm:mb-4">
                       {searchResult.price.toLocaleString()} FCFA
                     </p>
 
