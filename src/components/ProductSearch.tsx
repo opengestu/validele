@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Loader2, Search, ShoppingCart, Shield, Image as ImageIcon, Minus, Plus } from 'lucide-react';
+import { AlertTriangle, Loader2, Search, ShoppingCart, Shield, Image as ImageIcon, Minus, Plus } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -313,17 +313,6 @@ const ProductSearch = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center space-x-4">
-            <Link to="/">
-              <ArrowLeft className="h-6 w-6 text-gray-600 hover:text-green-600" />
-            </Link>
-            <h1 className="text-2xl font-bold text-gray-900">Recherche de produit</h1>
-          </div>
-        </div>
-      </header>
-
       <div className="max-w-4xl mx-auto px-4 py-8">
         {searchResult ? (
           <Card className="border-blue-200">
