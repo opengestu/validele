@@ -20,11 +20,11 @@ const ProductImage3D = ({ imageUrl, name }: { imageUrl?: string | null; name?: s
     <img
       src={imageUrl}
       alt={name ? `Image de ${name}` : 'Image du produit'}
-      className="h-36 sm:h-48 w-full rounded-xl border border-gray-200 object-cover"
+      className="h-44 sm:h-56 w-full rounded-xl border border-gray-200 object-cover"
       loading="lazy"
     />
   ) : (
-    <div className="flex h-36 sm:h-48 w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500">
+    <div className="flex h-44 sm:h-56 w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500">
       <ImageIcon className="mb-2 h-9 w-9" />
       <span className="text-sm font-medium">Aucune image</span>
     </div>
@@ -335,6 +335,10 @@ const ProductSearch = () => {
 
                   <div className="space-y-1.5">
                     <div className="flex justify-between">
+                      <span className="font-medium text-gray-700">Catégorie:</span>
+                      <span className="text-gray-900">{searchResult.category || 'Non spécifiée'}</span>
+                    </div>
+                    <div className="flex justify-between">
                       <span className="font-medium text-gray-700">Disponibilité:</span>
                       <span className={`font-medium ${searchResult.is_available ? 'text-green-600' : 'text-red-600'}`}>
                         {searchResult.is_available ? 'En stock' : 'Inactif'}
@@ -397,7 +401,7 @@ const ProductSearch = () => {
         open={checkoutOpen}
         onOpenChange={(open) => { if (!checkoutLoading) setCheckoutOpen(open); }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Payer en toute sécurité</DialogTitle>
             <DialogDescription>
