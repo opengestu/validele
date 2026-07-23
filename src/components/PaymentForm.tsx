@@ -5,8 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { CreditCard, Smartphone } from 'lucide-react';
+import { CreditCard } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
+
+const waveLogo = '/images/wave.png';
+const orangeMoneyLogo = '/images/orange_money.png';
 
 interface PaymentFormProps {
   amount: number;
@@ -128,14 +131,14 @@ export const PaymentForm = ({
           <div className="flex items-center space-x-2 border rounded-lg p-3 cursor-pointer hover:bg-gray-50">
             <RadioGroupItem value="orange_money" id="orange_money" />
             <Label htmlFor="orange_money" className="flex items-center gap-2 cursor-pointer flex-1">
-              <Smartphone className="h-5 w-5 text-orange-600" />
+              <img src={orangeMoneyLogo} alt="Orange Money" className="h-8 w-8 rounded-lg object-contain" />
               <span>Orange Money</span>
             </Label>
           </div>
           <div className="flex items-center space-x-2 border rounded-lg p-3 cursor-pointer hover:bg-gray-50">
             <RadioGroupItem value="wave" id="wave" />
             <Label htmlFor="wave" className="flex items-center gap-2 cursor-pointer flex-1">
-              <Smartphone className="h-5 w-5 text-blue-600" />
+              <img src={waveLogo} alt="Wave" className="h-8 w-8 rounded-lg object-contain" />
               <span>Wave</span>
             </Label>
           </div>
