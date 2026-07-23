@@ -46,7 +46,6 @@ import {
   User,
   QrCode,
   Share2,
-  MessageCircle,
   Image as ImageIcon,
   Upload,
   PlayCircle,
@@ -73,7 +72,7 @@ const orangeMoneyLogo = '/images/orange_money.png';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import { PhoneIcon } from './CustomIcons';
+import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -2282,7 +2281,7 @@ const VendorDashboard = () => {
                       className="w-full"
                       onClick={() => handleWhatsAppProduct(product)}
                     >
-                      <MessageCircle className="h-3.5 w-3.5 mr-1" />
+                      <WhatsAppIcon className="mr-1" size={16} />
                       WhatsApp
                     </Button>
                     <Button
@@ -2819,7 +2818,7 @@ const VendorDashboard = () => {
 
                         <div className="mt-2 grid grid-cols-2 gap-1.5">
                           <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
-                            <MessageCircle className="h-3.5 w-3.5 mr-1" />
+                            <WhatsAppIcon className="mr-1" size={14} />
                             WhatsApp
                           </Button>
                           <Button onClick={() => handleShareProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
