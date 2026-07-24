@@ -73,6 +73,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
+import { buildBotShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1939,11 +1940,9 @@ const VendorDashboard = () => {
   // aucun passage par le web -> insensible aux caches navigateur, service
   // workers, DNS/redirections du domaine. Ça marche à tous les coups.
   // (La page /acheter/{code} reste en place pour les anciens liens déjà partagés.)
+  // Numéro + message pré-rempli : source unique dans src/lib/whatsappBot.ts.
   const getProductShareLink = (product: Product) => {
-    const shareCode = getProductShareCode(product);
-    const botNumber = String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') || '221768171175';
-    const text = `Bonjour ! Pour acheter ce produit (code ${shareCode}) en toute securite avec Validel, appuyez sur Envoyer pour commencer.`;
-    return `https://wa.me/${botNumber}?text=${encodeURIComponent(text)}`;
+    return buildBotShareLink(getProductShareCode(product));
   };
 
   const handleShareProduct = async (product: Product) => {

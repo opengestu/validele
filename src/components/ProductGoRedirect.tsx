@@ -1,33 +1,20 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { buildBotShareLink } from '@/lib/whatsappBot';
 
-// = WHATSAPP_BOT_NUMBER / VITE_WHATSAPP_BOT_NUMBER. Valeur en dur comme ultime
-// filet : garantit qu'on part TOUJOURS vers le bot, jamais vers un repli web
-// (/ ou /product) qui, non connecté, renverrait ensuite vers /auth.
-const FALLBACK_BOT_NUMBER = '221768171175';
-
-// Lien de partage propre et rassurant : le vendeur partage
-// https://www.validel.shop/acheter/{code} (branché Validèl, pas un long lien
-// wa.me encodé qui fait "louche"). Ce composant redirige aussitôt vers le bot
-// WhatsApp Validèl, code produit pré-rempli, prêt à envoyer.
-//
-// NB : en pratique, le script inline en tête de index.html redirige déjà AVANT
-// que React ne se charge. Ce composant n'est qu'un filet de sécurité.
+// Filet de sécurité pour les anciens liens /acheter/{code} déjà partagés.
+// En pratique, la redirection se fait AVANT React : d'abord la Pages Function
+// (302 serveur), sinon le script inline d'index.html. Ce composant ne sert que
+// si ces deux couches ont été contournées. Numéro + message : src/lib/whatsappBot.ts.
 const ProductGoRedirect = () => {
   const { code } = useParams<{ code?: string }>();
 
   useEffect(() => {
     const safeCode = String(code || '').trim();
-    // Numéro connu au build, sinon valeur en dur : toujours disponible, aucun
-    // appel réseau -> redirection instantanée et fiable vers le bot.
-    const botNumber = String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') || FALLBACK_BOT_NUMBER;
-
-    if (safeCode && botNumber) {
-      // Le bot reconnaît le code et répond avec la fiche complète (nom, prix…).
-      const text = `Bonjour 👋 Pour acheter ce produit (code ${safeCode}) en toute sécurité avec Validèl, appuyez sur Envoyer pour commencer.`;
-      window.location.replace(`https://wa.me/${botNumber}?text=${encodeURIComponent(text)}`);
-    } else if (safeCode) {
-      window.location.replace(`/product/${encodeURIComponent(safeCode)}`);
+    if (safeCode) {
+      // Toujours vers le bot (numéro en dur en repli) : jamais de détour par
+      // une page web qui, non connecté, renverrait vers /auth.
+      window.location.replace(buildBotShareLink(safeCode));
     } else {
       window.location.replace('/');
     }

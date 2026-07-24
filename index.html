@@ -19,7 +19,9 @@
           var code = decodeURIComponent(m[1]).trim();
           var bot = '221768171175'; // = WHATSAPP_BOT_NUMBER / VITE_WHATSAPP_BOT_NUMBER
           if (code && bot) {
-            var text = 'Bonjour 👋 Pour acheter ce produit (code ' + code +
+            // Même texte que src/lib/whatsappBot.ts (buildBotPrefillText) — sans
+            // emoji ni accent pour éviter le mojibake selon les webviews.
+            var text = 'Bonjour ! Pour acheter ce produit (code ' + code +
               ') en toute securite avec Validel, appuyez sur Envoyer pour commencer.';
             location.replace('https://wa.me/' + bot + '?text=' + encodeURIComponent(text));
           }
