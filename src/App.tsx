@@ -373,6 +373,9 @@ const App = () => {
                 {!adminOnlyMode && <Route path="/product/:code" element={<ProductSearch />} />}
                 {!adminOnlyMode && <Route path="/order/:id" element={<GuestOrderTracking />} />}
                 {!adminOnlyMode && <Route path="/acheter/:code" element={<ProductGoRedirect />} />}
+                {/* Tolérance aux URL mutilées (autocomplétion navigateur qui préfixe
+                    /product/, copier-coller partiel...) : même destination que /acheter. */}
+                {!adminOnlyMode && <Route path="/product/acheter/:code" element={<ProductGoRedirect />} />}
                 {!adminOnlyMode && <Route path="/install" element={<AppInstall />} />}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 {/* Protected Routes for Vendors */}

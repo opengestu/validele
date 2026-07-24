@@ -11,7 +11,10 @@
       // plus bas -> la carte d'aperçu reste intacte.
       (function () {
         try {
-          var m = String(location.pathname || '').match(/^\/acheter\/([^\/?#]+)/);
+          // Matche /acheter/{code} n'importe où dans le chemin (pas seulement au
+          // début) : tolère les URL mutilées type /product/acheter/{code}
+          // (autocomplétion navigateur, copier-coller partiel...).
+          var m = String(location.pathname || '').match(/\/acheter\/([^\/?#]+)/);
           if (!m) return; // toute autre page : ne rien faire, React se charge normalement
           var code = decodeURIComponent(m[1]).trim();
           var bot = '221768171175'; // = WHATSAPP_BOT_NUMBER / VITE_WHATSAPP_BOT_NUMBER
