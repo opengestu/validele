@@ -1933,13 +1933,17 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : un lien PROPRE
-  // et rassurant sur le domaine Validèl, au lieu d'un long lien wa.me encodé qui
-  // fait "louche" pour un tiers de confiance. À l'ouverture par l'acheteur, la
-  // page /acheter/{code} redirige aussitôt vers le bot WhatsApp, code pré-rempli.
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien wa.me
+  // DIRECT vers le bot, code produit pré-rempli. Choix délibéré après incidents :
+  // wa.me est intercepté nativement par WhatsApp (la discussion s'ouvre direct),
+  // aucun passage par le web -> insensible aux caches navigateur, service
+  // workers, DNS/redirections du domaine. Ça marche à tous les coups.
+  // (La page /acheter/{code} reste en place pour les anciens liens déjà partagés.)
   const getProductShareLink = (product: Product) => {
     const shareCode = getProductShareCode(product);
-    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
+    const botNumber = String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') || '221768171175';
+    const text = `Bonjour ! Pour acheter ce produit (code ${shareCode}) en toute securite avec Validel, appuyez sur Envoyer pour commencer.`;
+    return `https://wa.me/${botNumber}?text=${encodeURIComponent(text)}`;
   };
 
   const handleShareProduct = async (product: Product) => {
