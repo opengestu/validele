@@ -73,7 +73,6 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
-import { buildBotShortShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1934,16 +1933,16 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : wa.me DIRECT
-  // vers le bot, pré-rempli minimal « Demarrer {code} » -> lien court à
-  // l'affichage. DÉCISION FINALE après les échecs répétés des liens web
-  // (service workers, WebView WhatsApp isolée, apex Hostinger qui perd le
-  // chemin) : wa.me ne touche JAMAIS le web -> aucun cache/DNS ne peut
-  // l'intercepter, et WhatsApp affiche sa carte avec le bouton natif
-  // « Commencer à discuter ». (/acheter + Function 302 restent pour les
-  // anciens liens déjà partagés.)
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien COURT
+  // et rassurant https://www.validel.shop/acheter/{code}. Réactivé après la
+  // migration DNS du 24/07/2026 (domaine entièrement sur Cloudflare, apex et www
+  // servent le site ; l'ancienne redirection Hostinger qui perdait le chemin est
+  // morte). Le clic passe par la redirection 302 CÔTÉ SERVEUR
+  // (functions/acheter/[code].js) qui ouvre le bot WhatsApp avec le texte
+  // d'explication complet pré-rempli — insensible aux caches/service workers.
   const getProductShareLink = (product: Product) => {
-    return buildBotShortShareLink(getProductShareCode(product));
+    const shareCode = getProductShareCode(product);
+    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
   };
 
   const handleShareProduct = async (product: Product) => {
