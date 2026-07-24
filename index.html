@@ -2,6 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Lien de partage /acheter/{code} : redirection IMMÉDIATE vers le bot WhatsApp,
+      // AVANT le chargement de React. C'est ce qui tue le "flash" : le navigateur ne
+      // charge pas toute l'app (gros bundle) avant de rediriger, donc l'onglet
+      // réutilisé n'a pas le temps d'afficher une ancienne page (ex. échec PixPay).
+      // Le robot d'aperçu WhatsApp n'exécute PAS ce script : il lit les balises OG
+      // plus bas -> la carte d'aperçu reste intacte.
+      (function () {
+        try {
+          var m = String(location.pathname || '').match(/^\/acheter\/([^\/?#]+)/);
+          if (!m) return; // toute autre page : ne rien faire, React se charge normalement
+          var code = decodeURIComponent(m[1]).trim();
+          var bot = '221768171175'; // = WHATSAPP_BOT_NUMBER / VITE_WHATSAPP_BOT_NUMBER
+          if (code && bot) {
+            var text = 'Bonjour 👋 Pour acheter ce produit (code ' + code +
+              ') en toute securite avec Validel, appuyez sur Envoyer pour commencer.';
+            location.replace('https://wa.me/' + bot + '?text=' + encodeURIComponent(text));
+          }
+        } catch (e) { /* en cas de souci, on laisse ProductGoRedirect (React) gérer */ }
+      })();
+    </script>
     <style>
       /* Splash screen affiché avant l'initialisation React */
       #app-splash {
@@ -12,7 +33,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: #ffffff;
+        background: transparent;
         transition: opacity 0.4s ease-out;
       }
       #app-splash.fade-out {

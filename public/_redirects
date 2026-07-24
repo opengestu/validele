@@ -1,5 +1,5 @@
 /member-login   /member-login.html   200
-/acheter/*      /acheter.html        200
+/acheter/*      /index.html          200
 /product/*      /index.html          200
 /buyer/*        /index.html          200
 /vendor/*       /index.html          200
