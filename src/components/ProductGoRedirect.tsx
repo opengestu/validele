@@ -11,31 +11,32 @@ const ProductGoRedirect = () => {
 
   useEffect(() => {
     const safeCode = String(code || '').trim();
+    // Le bot reconnaît le code et répond avec la fiche complète (nom, prix…) :
+    // inutile de mettre le nom ici, on garde le message court.
+    const text = `Bonjour 👋 Pour acheter ce produit (code ${safeCode}) en toute sécurité avec Validèl, appuyez sur Envoyer pour commencer.`;
+    const goToBot = (botNumber: string) => {
+      window.location.replace(`https://wa.me/${botNumber}?text=${encodeURIComponent(text)}`);
+    };
 
+    // 1) Numéro connu au build (VITE_WHATSAPP_BOT_NUMBER) -> redirection INSTANTANÉE,
+    // sans appel réseau. C'est ce qui évite que l'onglet réutilisé affiche encore
+    // l'ancienne page (ex. une page PixPay) le temps d'un aller-retour serveur.
+    const buildNumber = String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '');
+    if (buildNumber && safeCode) { goToBot(buildNumber); return; }
+
+    // 2) Sinon seulement, on demande le numéro au backend (WHATSAPP_BOT_NUMBER sur
+    // Render), puis on redirige. Repli ultime : page produit web.
     (async () => {
-      // Source unique : le numéro du bot vient du backend (WHATSAPP_BOT_NUMBER sur
-      // Render), lu en temps réel. Repli sur la variable de build si l'appel échoue.
       let botNumber = '';
       try {
         const resp = await fetch(apiUrl('/api/config/whatsapp-bot'));
         const json: any = await resp.json().catch(() => null);
         botNumber = String(json?.botNumber || '').replace(/\D/g, '');
       } catch { /* réseau indisponible -> repli ci-dessous */ }
-      if (!botNumber) {
-        botNumber = String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '');
-      }
 
-      if (botNumber && safeCode) {
-        // Le bot reconnaît le code et répond avec la fiche complète (nom, prix,
-        // description…) : inutile de mettre le nom ici, on garde le message court.
-        const text = `Bonjour 👋 Pour acheter ce produit (code ${safeCode}) en toute sécurité avec Validèl, appuyez sur Envoyer pour commencer.`;
-        window.location.replace(`https://wa.me/${botNumber}?text=${encodeURIComponent(text)}`);
-      } else if (safeCode) {
-        // Repli si le numéro du bot n'est pas configuré : page produit web.
-        window.location.replace(`/product/${encodeURIComponent(safeCode)}`);
-      } else {
-        window.location.replace('/');
-      }
+      if (botNumber && safeCode) { goToBot(botNumber); return; }
+      if (safeCode) { window.location.replace(`/product/${encodeURIComponent(safeCode)}`); return; }
+      window.location.replace('/');
     })();
   }, [code]);
 
