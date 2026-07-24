@@ -16,7 +16,15 @@ export const WHATSAPP_BOT_NUMBER =
 export const buildBotPrefillText = (productCode: string) =>
   `Bonjour ! Pour acheter ce produit (code ${productCode}) en toute securite avec Validel, appuyez sur Envoyer pour commencer.`;
 
-// Lien wa.me direct vers le bot, code pré-rempli : intercepté nativement par
-// WhatsApp, aucun passage par le web -> fonctionne à tous les coups.
+// Lien wa.me direct vers le bot, phrase complète pré-remplie : intercepté
+// nativement par WhatsApp, aucun passage par le web. Long à l'affichage ->
+// réservé aux REDIRECTIONS (l'URL n'y est jamais visible).
 export const buildBotShareLink = (productCode: string) =>
   `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(buildBotPrefillText(productCode))}`;
+
+// Variante COURTE pour le PARTAGE (l'URL est visible dans le message WhatsApp) :
+// pré-rempli réduit au code produit -> lien compact (~40 caractères), ouverture
+// directe du bot sans navigateur. Le client appuie sur Envoyer, le bot reconnaît
+// le code et répond avec la fiche complète.
+export const buildBotShortShareLink = (productCode: string) =>
+  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(productCode)}`;
