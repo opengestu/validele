@@ -73,7 +73,6 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
-import { buildBotShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1934,15 +1933,15 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien wa.me
-  // DIRECT vers le bot, code produit pré-rempli. Choix délibéré après incidents :
-  // wa.me est intercepté nativement par WhatsApp (la discussion s'ouvre direct),
-  // aucun passage par le web -> insensible aux caches navigateur, service
-  // workers, DNS/redirections du domaine. Ça marche à tous les coups.
-  // (La page /acheter/{code} reste en place pour les anciens liens déjà partagés.)
-  // Numéro + message pré-rempli : source unique dans src/lib/whatsappBot.ts.
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien COURT
+  // et rassurant https://www.validel.shop/acheter/{code}. Dans WhatsApp il
+  // s'affiche proprement (petit lien + carte d'aperçu), contrairement au wa.me
+  // brut qui étale une URL encodée illisible. Sa fiabilité est garantie par la
+  // redirection 302 CÔTÉ SERVEUR (functions/acheter/[code].js) : clic -> 302 ->
+  // bot WhatsApp, texte pré-rempli — insensible aux caches/service workers.
   const getProductShareLink = (product: Product) => {
-    return buildBotShareLink(getProductShareCode(product));
+    const shareCode = getProductShareCode(product);
+    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
   };
 
   const handleShareProduct = async (product: Product) => {
