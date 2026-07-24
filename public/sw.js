@@ -1,70 +1,31 @@
-const STATIC_CACHE = 'validel-pwa-static-v1';
-const RUNTIME_CACHE = 'validel-pwa-runtime-v1';
-
-const APP_SHELL_FILES = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/favicon.ico',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-];
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(STATIC_CACHE)
-      .then((cache) => cache.addAll(APP_SHELL_FILES))
-      .then(() => self.skipWaiting())
-  );
+// Service worker "kill-switch".
+//
+// L'ancien SW mettait /index.html en cache dans un cache jamais versionné
+// ('validel-pwa-static-v1') : comme sw.js ne changeait jamais, le navigateur ne
+// réinstallait jamais le SW et chaque appareil gardait un index.html + bundle
+// figés à sa première visite. Sur les nouvelles routes (ex. /acheter/{code}),
+// ces vieilles versions ne connaissaient pas la route -> retombaient sur / puis
+// /auth, de façon intermittente (selon que le réseau répondait ou non).
+//
+// Ce fichier ayant un contenu différent, le navigateur le réinstalle chez TOUS
+// les utilisateurs à leur prochaine visite : il purge alors tous les caches,
+// se désenregistre et recharge les pages contrôlées. Plus aucun cache SW.
+self.addEventListener('install', () => {
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== STATIC_CACHE && key !== RUNTIME_CACHE)
-          .map((key) => caches.delete(key))
-      )
-    ).then(() => self.clients.claim())
-  );
-});
-
-const isCacheableAsset = (request) => {
-  if (request.method !== 'GET') return false;
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return false;
-  return /\.(?:js|css|png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(url.pathname);
-};
-
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html'))
-    );
-    return;
-  }
-
-  if (!isCacheableAsset(request)) {
-    return;
-  }
-
-  event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const networkFetch = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, responseClone));
-          }
-          return networkResponse;
-        })
-        .catch(() => cachedResponse);
-
-      return cachedResponse || networkFetch;
-    })
-  );
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    } catch (e) { /* ignore */ }
+    try {
+      await self.registration.unregister();
+    } catch (e) { /* ignore */ }
+    try {
+      const clients = await self.clients.matchAll({ type: 'window' });
+      clients.forEach((client) => client.navigate(client.url));
+    } catch (e) { /* ignore */ }
+  })());
 });

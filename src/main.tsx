@@ -19,22 +19,19 @@ const hideSplash = () => {
 
 window.addEventListener('app:auth-ready', hideSplash, { once: true });
 
+// Service worker PWA définitivement retiré : son cache jamais versionné servait
+// d'anciens index.html/bundles qui ne connaissaient pas les nouvelles routes
+// (ex. /acheter/{code}) et retombaient sur /auth de façon intermittente. Le
+// unregister ci-dessous (toutes routes, plus seulement /product/) + le sw.js
+// kill-switch nettoient les appareils des utilisateurs existants.
 if (import.meta.env.PROD && !Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
-  const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
-  const isProductLinkRoute = pathname.startsWith('/product/');
-
-  if (isProductLinkRoute) {
-    navigator.serviceWorker.getRegistrations()
-      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
-      .catch(() => {
-        // ignore unregister errors on deep-link landing pages
-      });
-  } else {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch((error) => {
-        console.warn('[PWA] Service worker registration failed:', error);
-      });
-    });
+  navigator.serviceWorker.getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+    .catch(() => { /* ignore */ });
+  if (typeof caches !== 'undefined' && caches?.keys) {
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+      .catch(() => { /* ignore */ });
   }
 }
 
