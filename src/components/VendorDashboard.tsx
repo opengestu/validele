@@ -73,7 +73,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
-import { buildBotShareLink } from '@/lib/whatsappBot';
+import { buildBotShortShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1935,14 +1935,15 @@ const VendorDashboard = () => {
   };
 
   // Lien de partage unique (même pour "Partager" et "WhatsApp") : wa.me DIRECT
-  // vers le bot, texte d'explication complet pré-rempli. DÉCISION FINALE après
-  // les échecs répétés des liens web (service workers, WebView WhatsApp isolée,
-  // apex Hostinger qui perd le chemin) : wa.me ne touche JAMAIS le web -> aucun
-  // cache/DNS ne peut l'intercepter, et WhatsApp affiche sa carte avec le bouton
-  // natif « Commencer à discuter ». Prix assumé : l'URL longue visible dans le
-  // message. (/acheter/{code} + Function 302 restent pour les anciens liens.)
+  // vers le bot, pré-rempli minimal « Demarrer {code} » -> lien court à
+  // l'affichage. DÉCISION FINALE après les échecs répétés des liens web
+  // (service workers, WebView WhatsApp isolée, apex Hostinger qui perd le
+  // chemin) : wa.me ne touche JAMAIS le web -> aucun cache/DNS ne peut
+  // l'intercepter, et WhatsApp affiche sa carte avec le bouton natif
+  // « Commencer à discuter ». (/acheter + Function 302 restent pour les
+  // anciens liens déjà partagés.)
   const getProductShareLink = (product: Product) => {
-    return buildBotShareLink(getProductShareCode(product));
+    return buildBotShortShareLink(getProductShareCode(product));
   };
 
   const handleShareProduct = async (product: Product) => {

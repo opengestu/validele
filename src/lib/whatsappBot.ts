@@ -23,8 +23,8 @@ export const buildBotShareLink = (productCode: string) =>
   `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(buildBotPrefillText(productCode))}`;
 
 // Variante COURTE pour le PARTAGE (l'URL est visible dans le message WhatsApp) :
-// pré-rempli réduit au code produit -> lien compact (~40 caractères), ouverture
-// directe du bot sans navigateur. Le client appuie sur Envoyer, le bot reconnaît
-// le code et répond avec la fiche complète.
+// pré-rempli minimal « Demarrer {code} » -> lien compact (~50 caractères),
+// ouverture directe du bot sans navigateur. Le client appuie sur Envoyer, le
+// bot reconnaît le code et répond avec la fiche complète.
 export const buildBotShortShareLink = (productCode: string) =>
-  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(productCode)}`;
+  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(`Demarrer ${productCode}`)}`;
