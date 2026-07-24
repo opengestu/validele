@@ -73,6 +73,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
+import { buildBotShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1933,15 +1934,15 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien COURT
-  // et rassurant https://www.validel.shop/acheter/{code}. Choix VALIDÉ après
-  // comparaison avec le wa.me brut (URL encodée illisible) : ici le message reste
-  // propre, et le clic passe par la redirection 302 CÔTÉ SERVEUR
-  // (functions/acheter/[code].js) qui ouvre le bot avec le texte d'explication
-  // COMPLET pré-rempli — fiable, insensible aux caches/service workers.
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : wa.me DIRECT
+  // vers le bot, texte d'explication complet pré-rempli. DÉCISION FINALE après
+  // les échecs répétés des liens web (service workers, WebView WhatsApp isolée,
+  // apex Hostinger qui perd le chemin) : wa.me ne touche JAMAIS le web -> aucun
+  // cache/DNS ne peut l'intercepter, et WhatsApp affiche sa carte avec le bouton
+  // natif « Commencer à discuter ». Prix assumé : l'URL longue visible dans le
+  // message. (/acheter/{code} + Function 302 restent pour les anciens liens.)
   const getProductShareLink = (product: Product) => {
-    const shareCode = getProductShareCode(product);
-    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
+    return buildBotShareLink(getProductShareCode(product));
   };
 
   const handleShareProduct = async (product: Product) => {
