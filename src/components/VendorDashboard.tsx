@@ -73,7 +73,6 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
-import { buildBotShortShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1934,20 +1933,15 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/product/${encodedCode}`;
   };
 
-  // Lien de partage unique (même pour "Partager" et "WhatsApp") : wa.me COURT
-  // (pré-rempli = code produit seul, ~40 caractères affichés). Ouverture directe
-  // du bot dans WhatsApp, sans navigateur -> insensible aux caches/service
-  // workers/DNS. L'explication vit dans le message d'accompagnement, pas dans
-  // l'URL. (La page /acheter/{code} + sa Function 302 restent en place pour les
-  // anciens liens déjà partagés.)
+  // Lien de partage unique (même pour "Partager" et "WhatsApp") : le lien COURT
+  // et rassurant https://www.validel.shop/acheter/{code}. Choix VALIDÉ après
+  // comparaison avec le wa.me brut (URL encodée illisible) : ici le message reste
+  // propre, et le clic passe par la redirection 302 CÔTÉ SERVEUR
+  // (functions/acheter/[code].js) qui ouvre le bot avec le texte d'explication
+  // COMPLET pré-rempli — fiable, insensible aux caches/service workers.
   const getProductShareLink = (product: Product) => {
-    return buildBotShortShareLink(getProductShareCode(product));
-  };
-
-  // Message d'accompagnement du lien : porte le nom du produit et la consigne
-  // (le pré-rempli du lien court n'étant que le code).
-  const getProductShareMessage = (product: Product) => {
-    return `${product.name}\nAchetez en toute sécurité avec Validèl : cliquez le lien puis appuyez sur Envoyer 👇\n${getProductShareLink(product)}`;
+    const shareCode = getProductShareCode(product);
+    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
   };
 
   const handleShareProduct = async (product: Product) => {
@@ -1960,9 +1954,6 @@ const VendorDashboard = () => {
     try {
       const payload = {
         title: product.name,
-        // Consigne SANS le lien (l'url est passée à part : les plateformes les
-        // concatènent, un lien dans les deux ferait doublon).
-        text: `${product.name}\nAchetez en toute sécurité avec Validèl : cliquez le lien puis appuyez sur Envoyer 👇`,
         url: shareLink,
         dialogTitle: 'Partager le produit'
       };
@@ -2004,10 +1995,10 @@ const VendorDashboard = () => {
     }
 
     try {
-      // Message = nom du produit + consigne + lien wa.me court (le pré-rempli du
-      // lien n'étant que le code, la consigne vit ici). Le vendeur peut encore
-      // l'ajuster avant d'envoyer.
-      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(getProductShareMessage(product))}`;
+      // On envoie UNIQUEMENT le lien : WhatsApp affiche la carte d'aperçu propre,
+      // sans URL encodée ni texte en trop. Le clic ouvre le bot avec le texte
+      // d'explication complet pré-rempli (via la redirection 302 serveur).
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareLink)}`;
       const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       if (!popup) {
         window.location.href = whatsappUrl;
