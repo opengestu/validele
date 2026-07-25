@@ -401,24 +401,25 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
   }, [step, onStepChange]);
 
 
-  // Format du numéro de téléphone sénégalais
+  // Normalise vers +221XXXXXXXXX en tolérant tous les formats usuels :
+  // espaces/points/tirets/parenthèses, préfixe international 00221 ou +221
+  // (même dupliqué "221221..." — résidu classique de copier-coller depuis un
+  // contact), 0 initial local. La VALIDITÉ (préfixe opérateur) est vérifiée
+  // séparément par isValidSenegalMobile.
   const formatPhoneNumber = (phone: string): string => {
-    let cleaned = phone.replace(/\s/g, '').replace(/-/g, '');
-   
-    if (cleaned.startsWith('0')) {
-      cleaned = '+221' + cleaned.substring(1);
-    }
-   
-    if (!cleaned.startsWith('+')) {
-      if (cleaned.startsWith('221')) {
-        cleaned = '+' + cleaned;
-      } else {
-        cleaned = '+221' + cleaned;
-      }
-    }
-   
-    return cleaned;
+    let d = String(phone || '').replace(/\D/g, '');
+    if (d.startsWith('00')) d = d.slice(2);
+    while (d.startsWith('221') && d.length > 9) d = d.slice(3);
+    if (d.startsWith('0')) d = d.slice(1);
+    return `+221${d}`;
   };
+
+  // Mobile sénégalais réel : 9 chiffres commençant par 70/75/76/77/78
+  // (opérateurs actuels — ajuster ICI si l'ARTP attribue un nouveau préfixe).
+  // Bloque les numéros impossibles (ex. 480517269) AVANT tout envoi de SMS
+  // facturé qui finirait "un_delivered".
+  const isValidSenegalMobile = (formatted: string): boolean =>
+    /^\+2217[05678]\d{7}$/.test(formatted);
 
   // Dev-only test numbers (accept multiple test numbers; match on last 9 digits)
   const DEV_TEST_LAST9S = ['777693020', '777603020'];
@@ -473,9 +474,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  // Fonction pour formater le numéro local au format "7X XXX XX XX"
+  // Fonction pour formater le numéro local au format "7X XXX XX XX".
+  // Retire d'abord un éventuel indicatif collé avec le numéro (+221 / 00221 /
+  // 221, même dupliqué) et le 0 initial : sinon, coller "+221 78 051 72 69"
+  // gardait "221780517" — un résidu d'indicatif qui mangeait le vrai numéro.
   const formatLocalPhone = (value: string): string => {
-    const digits = value.replace(/\D/g, '').slice(0, 9);
+    let d = value.replace(/\D/g, '');
+    if (d.startsWith('00')) d = d.slice(2);
+    while (d.startsWith('221') && d.length > 9) d = d.slice(3);
+    if (d.startsWith('0')) d = d.slice(1);
+    const digits = d.slice(0, 9);
     if (digits.length === 0) return '';
     if (digits.length <= 2) return digits;
     if (digits.length <= 5) return `${digits.slice(0, 2)} ${digits.slice(2)}`;
@@ -613,11 +621,11 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       return;
     }
     const formattedPhone = formatPhoneNumber(phoneToUse);
-   
-    if (!formattedPhone.match(/^\+221[0-9]{9}$/)) {
+
+    if (!isValidSenegalMobile(formattedPhone)) {
       toast({
         title: "Numéro invalide",
-        description: "Veuillez entrer un numéro sénégalais valide (9 chiffres)",
+        description: "Un numéro mobile sénégalais commence par 70, 75, 76, 77 ou 78 (9 chiffres). Vérifiez votre saisie.",
         variant: "destructive",
       });
       return;
@@ -1118,22 +1126,45 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           walletTypeToSend = 'wave-senegal';
         }
       }
-      const response = await fetch(apiUrl('/api/sms/register'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          full_name: fullNameTrimmed,
-          phone: formData.phone,
-          role: selectedRole,
-          company_name: formData.companyName,
-          vehicle_info: formData.vehicleInfo,
-          wallet_type: selectedRole === 'vendor' ? walletTypeToSend : null,
-          address: selectedAddress,
-          pin: formData.pin,
-        }),
+      // L'endpoint /api/sms/register est idempotent côté backend: si le profil existe
+      // déjà avec le même PIN, il renvoie un succès + token. On peut donc réessayer sans
+      // risque en cas d'erreur réseau (réponse perdue sur un cold-start Render), ce qui
+      // évite le scénario "1er clic = pas de connexion, 2e clic = compte existe déjà".
+      const registerBody = JSON.stringify({
+        full_name: fullNameTrimmed,
+        phone: formData.phone,
+        role: selectedRole,
+        company_name: formData.companyName,
+        vehicle_info: formData.vehicleInfo,
+        wallet_type: selectedRole === 'vendor' ? walletTypeToSend : null,
+        address: selectedAddress,
+        pin: formData.pin,
       });
+      let response: Response | null = null;
+      let lastNetworkError: unknown = null;
+      const REGISTER_MAX_ATTEMPTS = 3;
+      for (let attempt = 1; attempt <= REGISTER_MAX_ATTEMPTS; attempt++) {
+        try {
+          response = await fetch(apiUrl('/api/sms/register'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: registerBody,
+          });
+          break; // réponse HTTP reçue (même en erreur) -> on sort de la boucle de retry
+        } catch (netErr) {
+          // Uniquement les vraies erreurs réseau (fetch qui rejette) arrivent ici
+          lastNetworkError = netErr;
+          console.warn(`[REGISTER] Tentative ${attempt}/${REGISTER_MAX_ATTEMPTS} échouée (réseau):`, netErr);
+          if (attempt < REGISTER_MAX_ATTEMPTS) {
+            await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+          }
+        }
+      }
+      if (!response) {
+        throw lastNetworkError instanceof Error
+          ? lastNetworkError
+          : new Error('Network request failed');
+      }
       if (response.status === 404) {
         throw new Error(
           "Backend non à jour : l'endpoint /api/sms/register est introuvable. Mettez à jour / redéployez le backend (Render) puis réessayez."
@@ -1381,7 +1412,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             }
           }}
           aria-label={`Chiffre ${index + 1}`}
-          className="h-16 w-16 rounded-[22px] border border-white/80 bg-white text-center text-3xl font-bold text-slate-900 shadow-none outline-none transition-all focus:border-sky-500 focus:ring-4 focus:ring-sky-100 md:h-20 md:w-20 md:text-4xl"
+          className="h-16 w-16 rounded-2xl border border-border bg-card text-center text-3xl font-semibold text-foreground shadow-premium-sm outline-none transition-all focus:border-primary focus:ring-4 focus:ring-primary/10 md:h-20 md:w-20 md:text-4xl"
         />
       ))}
     </div>
@@ -1397,16 +1428,16 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           border: `1.5px solid ${
             state === 'error' ? '#E24B4A' :
             state === 'success' ? '#1D9E75' :
-            i < digits.filter(Boolean).length ? '#111827' : 'var(--color-border-tertiary)'
+            i < digits.filter(Boolean).length ? 'hsl(var(--foreground))' : 'hsl(var(--border))'
           }`,
-          background: state === 'error' ? '#FCEBEB' : state === 'success' ? '#E1F5EE' : 'var(--color-background-primary)',
+          background: state === 'error' ? '#FCEBEB' : state === 'success' ? '#E1F5EE' : 'hsl(var(--card))',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'all 0.15s',
+          transition: 'all 0.15s cubic-bezier(0.22, 1, 0.36, 1)',
           animation: state === 'error' ? 'shake 0.35s ease' : undefined,
         }}>
           {i < digits.filter(Boolean).length && (
             <div style={{ width: 10, height: 10, borderRadius: '50%',
-              background: state === 'error' ? '#E24B4A' : state === 'success' ? '#1D9E75' : '#111827'
+              background: state === 'error' ? '#E24B4A' : state === 'success' ? '#1D9E75' : 'hsl(var(--foreground))'
             }} />
           )}
         </div>
@@ -1532,9 +1563,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   onPointerDown={provideHaptic}
                   onClick={handleKeypadBackspace}
                   onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className={`${btnSize} rounded-[14px] bg-slate-200 text-slate-700 shadow-none transition-all duration-170 ease-out hover:bg-slate-300 active:scale-[1.12] focus:outline-none flex items-center justify-center touch-manipulation`}
+                  className={`${btnSize} rounded-2xl bg-transparent text-muted-foreground transition-all duration-150 ease-out hover:bg-muted active:scale-[0.94] active:bg-muted focus:outline-none flex items-center justify-center touch-manipulation`}
                 >
-                  <Delete className="h-6 w-6" strokeWidth={2.25} />
+                  <Delete className="h-6 w-6" strokeWidth={2} />
                 </button>
               ) : (
                 <button
@@ -1544,10 +1575,10 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                   onPointerDown={provideHaptic}
                   onClick={() => handleKeypadDigit(key.num)}
                   onFocus={(e) => (e.currentTarget as HTMLButtonElement).blur()}
-                  className={`${btnSize} rounded-[14px] bg-white shadow-none transition-all duration-170 ease-out hover:bg-slate-50 active:scale-[1.12] focus:outline-none flex flex-col items-center justify-center touch-manipulation`}
+                  className={`${btnSize} rounded-2xl bg-transparent transition-all duration-150 ease-out hover:bg-muted active:scale-[0.94] active:bg-muted focus:outline-none flex flex-col items-center justify-center touch-manipulation`}
                 >
-                  <span className="text-[29px] font-bold text-slate-950 leading-none">{key.num}</span>
-                  {key.letters && <span className="mt-0.5 text-[9px] font-semibold leading-none text-slate-500">{key.letters}</span>}
+                  <span className="text-[28px] font-semibold text-foreground leading-none tracking-tight">{key.num}</span>
+                  {key.letters && <span className="mt-0.5 text-[9px] font-medium leading-none text-muted-foreground tracking-wider">{key.letters}</span>}
                 </button>
               )
             ))}
@@ -1560,7 +1591,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
               onPointerDown={provideHaptic}
               onClick={() => { if (step === 'phone') handleSendOTP(); }}
               disabled={!canContinue || loading}
-              className={`mt-4 w-full h-[48px] rounded-[14px] flex items-center justify-center font-semibold text-[16px] transition-all duration-200 group ${canContinue ? 'bg-slate-950 text-white border border-slate-950 active:scale-[0.99]' : 'bg-slate-200 text-slate-400 border border-slate-200'} shadow-none disabled:opacity-80`}
+              className={`mt-4 w-full h-[52px] rounded-2xl flex items-center justify-center font-medium text-[16px] transition-all duration-200 group ${canContinue ? 'bg-primary text-primary-foreground shadow-premium active:scale-[0.98]' : 'bg-muted text-muted-foreground'} disabled:opacity-80`}
             >
               Continuer <ArrowRight className={`ml-2 h-4 w-4 transition-transform duration-200 ${canContinue ? 'group-hover:translate-x-0.5' : ''}`} />
             </button>
@@ -1610,8 +1641,8 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
             {/* App icon with verification badge */}
             <div className="flex justify-center">
               <div className="relative">
-                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[24px] bg-white shadow-none ring-1 ring-slate-200">
-                  <img src={validelLogo} alt="Validel" className="h-full w-full object-cover" />
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden">
+                  <img src={validelLogo} alt="Validel" className="h-20 w-20 object-contain" />
                 </div>
                 <div className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-emerald-500 shadow-none">
                   <Check className="h-4 w-4 text-white" strokeWidth={3} />
@@ -1654,9 +1685,9 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
                 </div>
                 
                 {/* Progress bar under phone input */}
-                <div className="h-1 overflow-hidden rounded-full bg-slate-200">
-                  <div 
-                    className="h-full rounded-full bg-sky-500 transition-all duration-300 ease-out"
+                <div className="h-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
                     style={{ width: `${phoneProgress}%` }}
                   />
                 </div>

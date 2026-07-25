@@ -238,16 +238,23 @@ app.post('/api/orders', async (req, res) => {
 // bien enregistré dans Supabase), (2) crée la commande. Le frontend enchaîne ensuite
 // sur /api/payment/pixpay(-wave)/initiate (déjà publics) pour obtenir le lien de paiement.
 // L'invité pourra plus tard "revendiquer" son compte en définissant un PIN (même numéro).
+// Normalise un numéro MOBILE sénégalais vers +2217XXXXXXXX, ou '' si invalide.
+// Tolère tous les formats usuels : espaces/points/tirets/parenthèses, préfixe
+// international 00221 ou +221 (même DUPLIQUÉ : "221221..." — résidu classique
+// de copier-coller), 0 initial local. Rejette tout ce qui n'est pas un mobile
+// réel : 9 chiffres commençant par 70/75/76/77/78 (opérateurs actuels ; à
+// ajuster ICI si l'ARTP attribue un nouveau préfixe). Évite d'envoyer des SMS
+// facturés vers des numéros impossibles (ex. +221480517269, un_delivered).
+function normalizeSenegalMobile(phone) {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (d.startsWith('00')) d = d.slice(2);
+  while (d.startsWith('221') && d.length > 9) d = d.slice(3);
+  if (d.startsWith('0')) d = d.slice(1);
+  return /^7[05678]\d{7}$/.test(d) ? `+221${d}` : '';
+}
+
 function normalizeGuestPhone(phone) {
-  let p = String(phone || '').replace(/[\s\-()]/g, '');
-  if (!p) return '';
-  if (!p.startsWith('+')) {
-    if (p.startsWith('221')) p = '+' + p;
-    else if (p.startsWith('0')) p = '+221' + p.substring(1);
-    else p = '+221' + p;
-  }
-  // +221 suivi de 9 chiffres (numéros sénégalais)
-  return /^\+221\d{9}$/.test(p) ? p : '';
+  return normalizeSenegalMobile(phone);
 }
 
 app.post('/api/guest/order', async (req, res) => {
@@ -1891,21 +1898,14 @@ app.post('/api/otp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Numéro de téléphone requis' });
     }
 
-    // Formater le numéro
-    let formattedPhone = phone.replace(/[\s\-\(\)]/g, '');
-    if (!formattedPhone.startsWith('+')) {
-      if (formattedPhone.startsWith('221')) {
-        formattedPhone = '+' + formattedPhone;
-      } else if (formattedPhone.startsWith('0')) {
-        formattedPhone = '+221' + formattedPhone.substring(1);
-      } else {
-        formattedPhone = '+221' + formattedPhone;
-      }
-    }
-
-    // Valider le format sénégalais
-    if (!formattedPhone.match(/^\+221[0-9]{9}$/)) {
-      return res.status(400).json({ success: false, error: 'Numéro sénégalais invalide' });
+    // Normaliser + valider (mobile sénégalais réel : 7X XXX XX XX). Rejette les
+    // numéros impossibles AVANT l'appel D7 -> plus de SMS facturés dans le vide.
+    const formattedPhone = normalizeSenegalMobile(phone);
+    if (!formattedPhone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Numéro sénégalais invalide. Un numéro mobile commence par 70, 75, 76, 77 ou 78 (9 chiffres).',
+      });
     }
 
     console.log(`[OTP] Demande d'envoi pour: ${formattedPhone} (allowExisting: ${!!allowExisting})`);
