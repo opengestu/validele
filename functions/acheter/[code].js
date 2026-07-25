@@ -13,7 +13,12 @@
 
 const BOT_NUMBER = '221768171175'; // = WHATSAPP_BOT_NUMBER / VITE_WHATSAPP_BOT_NUMBER
 
-const CRAWLER_UA = /whatsapp|facebookexternalhit|facebot|twitterbot|telegrambot|linkedinbot|slackbot|discordbot|pinterest|googlebot|bingbot/i;
+// ⚠️ Le robot d'aperçu WhatsApp s'identifie « WhatsApp/2.x.y » (en DÉBUT de
+// chaîne). Le navigateur INTÉGRÉ de WhatsApp (celui d'un vrai visiteur) peut
+// aussi contenir « WhatsApp » mais commence par « Mozilla/ » : matcher
+// « whatsapp » n'importe où le traitait comme un robot -> page web au lieu du
+// 302 -> clic depuis WhatsApp cassé. D'où l'ancre ^ ci-dessous.
+const CRAWLER_UA = /^whatsapp\/|facebookexternalhit|facebot|twitterbot|telegrambot|linkedinbot|slackbot|discordbot|pinterest|googlebot|bingbot/i;
 
 export async function onRequestGet(context) {
   const { request, params, next } = context;
