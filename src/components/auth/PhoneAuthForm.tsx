@@ -414,12 +414,12 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     return `+221${d}`;
   };
 
-  // Mobile sénégalais réel : 9 chiffres commençant par 70/75/76/77/78
-  // (opérateurs actuels — ajuster ICI si l'ARTP attribue un nouveau préfixe).
-  // Bloque les numéros impossibles (ex. 480517269) AVANT tout envoi de SMS
-  // facturé qui finirait "un_delivered".
+  // Mobile sénégalais plausible : 9 chiffres commençant par 7 (70/71/75/76/
+  // 77/78... — critère volontairement large pour ne jamais bloquer un préfixe
+  // ARTP récent). Bloque les numéros impossibles (ex. 480517269) AVANT tout
+  // envoi de SMS facturé qui finirait "un_delivered".
   const isValidSenegalMobile = (formatted: string): boolean =>
-    /^\+2217[05678]\d{7}$/.test(formatted);
+    /^\+2217\d{8}$/.test(formatted);
 
   // Dev-only test numbers (accept multiple test numbers; match on last 9 digits)
   const DEV_TEST_LAST9S = ['777693020', '777603020'];
@@ -625,7 +625,7 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
     if (!isValidSenegalMobile(formattedPhone)) {
       toast({
         title: "Numéro invalide",
-        description: "Un numéro mobile sénégalais commence par 70, 75, 76, 77 ou 78 (9 chiffres). Vérifiez votre saisie.",
+        description: "Un numéro mobile sénégalais commence par 7 et compte 9 chiffres (ex : 77 123 45 67). Vérifiez votre saisie.",
         variant: "destructive",
       });
       return;

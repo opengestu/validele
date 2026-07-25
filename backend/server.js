@@ -242,15 +242,16 @@ app.post('/api/orders', async (req, res) => {
 // Tolère tous les formats usuels : espaces/points/tirets/parenthèses, préfixe
 // international 00221 ou +221 (même DUPLIQUÉ : "221221..." — résidu classique
 // de copier-coller), 0 initial local. Rejette tout ce qui n'est pas un mobile
-// réel : 9 chiffres commençant par 70/75/76/77/78 (opérateurs actuels ; à
-// ajuster ICI si l'ARTP attribue un nouveau préfixe). Évite d'envoyer des SMS
-// facturés vers des numéros impossibles (ex. +221480517269, un_delivered).
+// plausible : 9 chiffres commençant par 7 (tous les mobiles SN — 70/71/75/76/
+// 77/78... ; critère volontairement large pour ne jamais bloquer un préfixe
+// ARTP récent). Évite d'envoyer des SMS facturés vers des numéros impossibles
+// (ex. +221480517269, un_delivered).
 function normalizeSenegalMobile(phone) {
   let d = String(phone || '').replace(/\D/g, '');
   if (d.startsWith('00')) d = d.slice(2);
   while (d.startsWith('221') && d.length > 9) d = d.slice(3);
   if (d.startsWith('0')) d = d.slice(1);
-  return /^7[05678]\d{7}$/.test(d) ? `+221${d}` : '';
+  return /^7\d{8}$/.test(d) ? `+221${d}` : '';
 }
 
 function normalizeGuestPhone(phone) {
@@ -1904,7 +1905,7 @@ app.post('/api/otp/send', async (req, res) => {
     if (!formattedPhone) {
       return res.status(400).json({
         success: false,
-        error: 'Numéro sénégalais invalide. Un numéro mobile commence par 70, 75, 76, 77 ou 78 (9 chiffres).',
+        error: 'Numéro sénégalais invalide. Un numéro mobile commence par 7 et compte 9 chiffres (ex : 77 123 45 67).',
       });
     }
 
