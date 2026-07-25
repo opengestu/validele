@@ -6,15 +6,15 @@
 //   - index.html (script inline exécuté avant React)
 //   - functions/acheter/[code].js (Cloudflare Pages Function isolée)
 //
-// Texte volontairement SANS emoji ni accent : évite tout risque d'encodage
-// (mojibake « � ») selon les navigateurs/webviews. Le bot reconnaît le code
-// produit quoi qu'il arrive.
+// Texte volontairement SANS emoji : c'était lui la source du mojibake « � ».
+// Les accents latins (è...) sont sûrs : encodeURIComponent les convertit en
+// %XX ASCII avant l'URL. Le bot reconnaît le code produit quoi qu'il arrive.
 
 export const WHATSAPP_BOT_NUMBER =
   String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') || '221768171175';
 
 export const buildBotPrefillText = (productCode: string) =>
-  `Bonjour ! Pour acheter ce produit (code ${productCode}) en toute securite avec Validel, appuyez sur Envoyer pour commencer.`;
+  `Bonjour ! Pour acheter ce produit (code ${productCode}) en toute securite avec Validèl, appuyez sur Envoyer pour commencer.`;
 
 // Lien wa.me direct vers le bot, phrase complète pré-remplie : intercepté
 // nativement par WhatsApp, aucun passage par le web. Long à l'affichage ->
