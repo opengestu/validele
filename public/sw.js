@@ -8,8 +8,14 @@
 // /auth, de façon intermittente (selon que le réseau répondait ou non).
 //
 // Ce fichier ayant un contenu différent, le navigateur le réinstalle chez TOUS
-// les utilisateurs à leur prochaine visite : il purge alors tous les caches,
-// se désenregistre et recharge les pages contrôlées. Plus aucun cache SW.
+// les utilisateurs à leur prochaine visite : il purge alors tous les caches et
+// se désenregistre EN SILENCE. Plus aucun cache SW.
+//
+// IMPORTANT : on NE force PAS de rechargement des pages (client.navigate).
+// Un rechargement déclenché par le SW n'est pas un "geste utilisateur" -> Android
+// bloque alors le lancement de l'app WhatsApp depuis le 302 vers wa.me, et le
+// clic semble "n'ouvrir rien". En nettoyant sans recharger, le prochain clic RÉEL
+// de l'utilisateur part direct au serveur (SW déjà retiré) -> 302 -> bot.
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -22,10 +28,6 @@ self.addEventListener('activate', (event) => {
     } catch (e) { /* ignore */ }
     try {
       await self.registration.unregister();
-    } catch (e) { /* ignore */ }
-    try {
-      const clients = await self.clients.matchAll({ type: 'window' });
-      clients.forEach((client) => client.navigate(client.url));
     } catch (e) { /* ignore */ }
   })());
 });
