@@ -73,6 +73,7 @@ import { toFrenchErrorMessage } from '@/lib/errors';
 import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
+import { buildBotShortShareLink } from '@/lib/whatsappBot';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
 type ProfileRow = {
   full_name: string | null;
@@ -1941,8 +1942,7 @@ const VendorDashboard = () => {
   // (functions/acheter/[code].js) qui ouvre le bot WhatsApp avec le texte
   // d'explication complet pré-rempli — insensible aux caches/service workers.
   const getProductShareLink = (product: Product) => {
-    const shareCode = getProductShareCode(product);
-    return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
+    return buildBotShortShareLink(getProductShareCode(product));
   };
 
   const handleShareProduct = async (product: Product) => {
