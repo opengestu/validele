@@ -439,9 +439,13 @@ async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = 
     body_parameter_values,
   };
   if (urlButtonSuffix != null) {
+    // action_type est une énumération D7 en MINUSCULES ('url', 'quick_reply',
+    // 'phone_number'…). 'URL' fait échouer l'envoi en 422 et le code retombe sur
+    // le message libre, qui n'est distribué que dans la fenêtre 24h -> l'acheteur
+    // ne reçoit rien du tout hors fenêtre.
     template.buttons = {
       actions: [
-        { action_index: '0', action_type: 'URL', action_payload: String(urlButtonSuffix) },
+        { action_index: '0', action_type: 'url', action_payload: String(urlButtonSuffix) },
       ],
     };
   }
