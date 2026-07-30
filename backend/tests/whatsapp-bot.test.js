@@ -58,9 +58,10 @@ function makeBot(extra = {}) {
   // Stub no-op par défaut : évite de toucher la vraie table Supabase si un test
   // envoie par erreur un événement de statut sans l'injecter explicitement.
   const markDeliveryNotificationRead = async () => {};
+  const sendFallbackSmsNow = async () => {};
   const b = bot.createBot({
     findProduct, isDuplicate, getConversationState, setConversationState, askProductQuestion,
-    markDeliveryNotificationRead, ...rec, ...extra,
+    markDeliveryNotificationRead, sendFallbackSmsNow, ...rec, ...extra,
   });
   return { b, rec };
 }
@@ -70,12 +71,12 @@ const nextMid = () => `m${++_mid}`;
 function inboundText(text, msgId, from = '221771112233') {
   return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'TEXT', text: { body: text } } } };
 }
-function inboundStatusEvent(requestId, status) {
+function inboundStatusEvent(requestId, status, reason) {
+  const message_status = { request_id: requestId, msg_id: 'wamid.abc', status, recipient: '+221771112233' };
+  if (reason) message_status.reason = reason;
   return {
     event: { event_type: 'DELIVERY_EVENTS' },
-    event_content: {
-      message_status: { request_id: requestId, msg_id: 'wamid.abc', status, recipient: '+221771112233' },
-    },
+    event_content: { message_status },
   };
 }
 function inboundButton(id, msgId, from = '221771112233') {
@@ -280,7 +281,12 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   // Fallback SMS anti-doublon : parsing de l'accusé de statut D7
   await test('parseD7StatusEvent reconnaît un accusé "read" et extrait request_id', () => {
     const parsed = bot.parseD7StatusEvent(inboundStatusEvent('req-123', 'read'));
-    assert.deepStrictEqual(parsed, { requestId: 'req-123', msgId: 'wamid.abc', status: 'read', recipient: '+221771112233' });
+    assert.deepStrictEqual(parsed, { requestId: 'req-123', msgId: 'wamid.abc', status: 'read', recipient: '+221771112233', reason: null });
+  });
+  await test('parseD7StatusEvent extrait le motif de rejet opérateur', () => {
+    const parsed = bot.parseD7StatusEvent(inboundStatusEvent('req-rej', 'rejected', '(#132018) template button issue'));
+    assert.strictEqual(parsed.status, 'rejected');
+    assert.strictEqual(parsed.reason, '(#132018) template button issue');
   });
   await test('parseD7StatusEvent renvoie null pour un message entrant normal', () => {
     assert.strictEqual(bot.parseD7StatusEvent(inboundText('PD3431')), null);
@@ -305,6 +311,37 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundStatusEvent('req-789', 'delivered'));
     assert.strictEqual(called, false);
     assert.strictEqual(rec.sends.length, 0);
+  });
+
+  // Rejet opérateur (cas réel : template Meta refusé #132018) -> le WhatsApp ne
+  // sera jamais remis, on n'attend pas les 10 min du reconciler : SMS immédiat.
+  await test('webhook accusé "rejected" -> SMS de secours immédiat avec le motif', async () => {
+    const calls = [];
+    const sendFallbackSmsNow = async (requestId, status, reason) => { calls.push({ requestId, status, reason }); };
+    const { b, rec } = makeBot({ sendFallbackSmsNow });
+    await b.processWebhook(inboundStatusEvent('req-rejected', 'rejected', '(#132018) does not require parameters'));
+    assert.deepStrictEqual(calls, [{ requestId: 'req-rejected', status: 'rejected', reason: '(#132018) does not require parameters' }]);
+    assert.strictEqual(rec.sends.length, 0);
+  });
+
+  await test('webhook accusé "failed" -> SMS de secours immédiat', async () => {
+    const calls = [];
+    const sendFallbackSmsNow = async (requestId, status) => { calls.push({ requestId, status }); };
+    const { b } = makeBot({ sendFallbackSmsNow });
+    await b.processWebhook(inboundStatusEvent('req-failed', 'failed'));
+    assert.deepStrictEqual(calls, [{ requestId: 'req-failed', status: 'failed' }]);
+  });
+
+  // Un statut intermédiaire ne doit surtout pas déclencher de SMS : le WhatsApp
+  // peut encore être lu, et on n'envoie JAMAIS les deux canaux à la fois.
+  await test('webhook accusés "sent"/"delivered"/"read" -> aucun SMS immédiat', async () => {
+    let called = 0;
+    const sendFallbackSmsNow = async () => { called += 1; };
+    const { b } = makeBot({ sendFallbackSmsNow });
+    await b.processWebhook(inboundStatusEvent('req-s', 'sent'));
+    await b.processWebhook(inboundStatusEvent('req-d', 'delivered'));
+    await b.processWebhook(inboundStatusEvent('req-r', 'read'));
+    assert.strictEqual(called, 0);
   });
 
   console.log(`\n${passed} réussis, ${failed} échoués`);

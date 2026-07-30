@@ -20,6 +20,7 @@
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
     "jsonwebtoken": "^9.0.0",
+    "node-cron": "^3.0.2",
     "pdfkit": "^0.18.0",
     "vite_react_shadcn_ts": "file:..",
     "xlsx": "^0.18.5"

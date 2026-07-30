@@ -27,6 +27,12 @@ const {
 // le message libre (ne part que si le client a écrit dans les 24h).
 const DELIVERY_TEMPLATE_NAME = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_NAME || '').trim();
 const DELIVERY_TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_LANG || 'fr').trim();
+// Le bouton URL du template est-il dynamique (URL de base + suffixe {{1}}) ?
+// Défaut false : le template approuvé a un bouton URL STATIQUE, et lui envoyer un
+// paramètre le fait rejeter par Meta (#132018 "does not require parameters").
+// Passer à true UNIQUEMENT après avoir rendu l'URL dynamique côté Meta.
+const DELIVERY_TEMPLATE_URL_DYNAMIC =
+  String(process.env.WHATSAPP_TEMPLATE_DELIVERY_URL_DYNAMIC || 'false').toLowerCase() === 'true';
 
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || '';
 const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://www.validel.shop').replace(/\/+$/, '');
@@ -123,8 +129,17 @@ function parseD7StatusEvent(body) {
     msgId: status.msg_id || null,
     status: String(status.status || '').toLowerCase(),
     recipient: status.recipient || null,
+    // Motif d'échec fourni par l'opérateur (ex. Meta #132018 sur un template mal
+    // paramétré). Seule trace exploitable côté serveur d'un rejet : sans elle, un
+    // message facturé et jamais remis reste totalement invisible dans les logs.
+    reason: status.reason || status.error || status.description || null,
   };
 }
+
+// Statuts D7 signifiant "ce WhatsApp n'arrivera jamais" (rejet opérateur/Meta,
+// échec de remise). Différent d'un simple "non lu" : il n'y a rien à attendre,
+// donc on n'observe pas les 10 min de délai avant le SMS de secours.
+const D7_FAILED_STATUSES = new Set(['rejected', 'failed', 'undelivered']);
 
 // ⚠️ À CONFIRMER sur un vrai payload D7 : la structure exacte d'une réponse de bouton
 // interactif n'est pas entièrement documentée. On teste plusieurs chemins connus.
@@ -624,6 +639,56 @@ async function sendWhatsAppWithSmsFallback({ orderId, buyerPhone, sendWhatsAppFn
   return result;
 }
 
+// Envoie le SMS de secours d'une ligne de tracking, puis la marque `sms_sent`.
+// Partagé par le rejet immédiat et le reconciler des 10 min, pour que les deux
+// chemins envoient exactement le même texte et respectent le même anti-doublon.
+async function sendFallbackSmsForRow(row, motif) {
+  const { sendSMS } = require('./direct7');
+  // Repli sur le texte livraison pour d'éventuelles lignes anciennes sans
+  // fallback_sms_text (colonne ajoutée par la migration 006).
+  const text = row.fallback_sms_text
+    || `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
+  await sendSMS(row.buyer_phone, text);
+  await supabase
+    .from('whatsapp_delivery_read_tracking')
+    .update({ sms_sent: true })
+    .eq('request_id', row.request_id);
+  console.log(`[WABOT] SMS de secours envoyé (${motif}):`, row.buyer_phone);
+}
+
+// Rejet/échec confirmé par D7 : le WhatsApp ne sera jamais remis, on bascule sur
+// le SMS tout de suite. Le filtre sms_sent=false garantit qu'un accusé rejoué ne
+// déclenche pas un second SMS.
+async function sendFallbackSmsNow(requestId, status, motifDetail) {
+  if (!supabase || !requestId) return;
+  try {
+    const { data: row, error } = await supabase
+      .from('whatsapp_delivery_read_tracking')
+      .select('request_id, order_id, buyer_phone, fallback_sms_text')
+      .eq('request_id', requestId)
+      .is('read_at', null)
+      .eq('sms_sent', false)
+      .maybeSingle();
+    if (error) {
+      console.error('[WABOT] sendFallbackSmsNow erreur lecture:', error.message);
+      return;
+    }
+    // Visible même sans ligne exploitable : un rejet opérateur doit TOUJOURS
+    // laisser une trace en clair dans les logs.
+    console.error(
+      `[WABOT] ⚠️ WhatsApp ${status} par l'opérateur (request_id ${requestId})`,
+      motifDetail ? `- motif: ${motifDetail}` : '',
+    );
+    if (!row) {
+      console.warn('[WABOT] Pas de SMS de secours possible: notif non tracée ou SMS déjà envoyé pour', requestId);
+      return;
+    }
+    await sendFallbackSmsForRow(row, `WhatsApp ${status}`);
+  } catch (e) {
+    console.error('[WABOT] sendFallbackSmsNow exception:', e && e.message);
+  }
+}
+
 async function markDeliveryNotificationRead(requestId) {
   if (!supabase || !requestId) return;
   try {
@@ -667,7 +732,7 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
             templateId: DELIVERY_TEMPLATE_NAME,
             language: DELIVERY_TEMPLATE_LANG,
             bodyParams: [productName || 'votre commande'],
-            urlButtonSuffix: String(orderId),
+            urlButtonSuffix: DELIVERY_TEMPLATE_URL_DYNAMIC ? String(orderId) : null,
           });
         } catch (tplErr) {
           console.warn('[WABOT] Envoi template livraison échoué, repli sur message libre:', tplErr && tplErr.message);
@@ -702,7 +767,6 @@ async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, 
 async function runDeliveryReadFallbackCheck() {
   if (!supabase) return;
   try {
-    const { sendSMS } = require('./direct7');
     const cutoff = new Date(Date.now() - DELIVERY_READ_FALLBACK_DELAY_MS).toISOString();
     const { data: rows, error } = await supabase
       .from('whatsapp_delivery_read_tracking')
@@ -717,16 +781,7 @@ async function runDeliveryReadFallbackCheck() {
     }
     for (const row of rows || []) {
       try {
-        // Texte propre à la notif (livraison, remboursement…) ; repli sur le texte
-        // livraison pour d'éventuelles lignes anciennes sans fallback_sms_text.
-        const text = row.fallback_sms_text
-          || `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
-        await sendSMS(row.buyer_phone, text);
-        await supabase
-          .from('whatsapp_delivery_read_tracking')
-          .update({ sms_sent: true })
-          .eq('request_id', row.request_id);
-        console.log('[WABOT] SMS de secours envoyé (WhatsApp non lu après 10 min):', row.buyer_phone);
+        await sendFallbackSmsForRow(row, 'WhatsApp non lu après 10 min');
       } catch (e) {
         console.error('[WABOT] Echec SMS de secours pour', row.buyer_phone, ':', e && e.message);
       }
@@ -785,6 +840,7 @@ function createBot(deps = {}) {
   const setConversationState = deps.setConversationState || defaultSetConversationState;
   const askProductQuestion = deps.askProductQuestion || askProductQuestionAI;
   const markRead = deps.markDeliveryNotificationRead || markDeliveryNotificationRead;
+  const smsNow = deps.sendFallbackSmsNow || sendFallbackSmsNow;
   const senders = {
     sendText: deps.sendText,
     sendButtons: deps.sendButtons,
@@ -797,6 +853,10 @@ function createBot(deps = {}) {
     if (statusEvent) {
       if (statusEvent.status === 'read') {
         await markRead(statusEvent.requestId);
+      } else if (D7_FAILED_STATUSES.has(statusEvent.status)) {
+        // Rejet/échec : inutile d'attendre les 10 min du reconciler, le WhatsApp
+        // ne sera jamais lu. SMS immédiat + trace du motif dans les logs.
+        await smsNow(statusEvent.requestId, statusEvent.status, statusEvent.reason);
       }
       return;
     }
@@ -867,5 +927,6 @@ module.exports = {
   trouverProduit,
   paymentLink,
   markDeliveryNotificationRead,
+  sendFallbackSmsNow,
   runDeliveryReadFallbackCheck,
 };
