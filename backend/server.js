@@ -619,7 +619,7 @@ app.post('/api/vendor/add-product', async (req, res) => {
     }
     console.log('[DEBUG] /api/vendor/add-product headers.authorization:', req.headers.authorization?.slice(0, 200));
 
-    const { vendor_id, name, price, description, warranty, image_url, code, is_available, stock_quantity } = req.body || {};
+    const { vendor_id, name, price, description, warranty, image_url, code, is_available, stock_quantity, category } = req.body || {};
     if (!vendor_id || !name || !price || !description || !code) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants' });
     }
@@ -680,6 +680,10 @@ app.post('/api/vendor/add-product', async (req, res) => {
         warranty,
         image_url: image_url || null,
         code,
+        // Marqueur "démo" (category='DEMO') pour distinguer un produit de
+        // démonstration d'un vrai produit ; null par défaut, aucun impact sur
+        // l'existant. La découverte reste par code, donc invisible des acheteurs.
+        category: category || null,
         is_available: is_available !== undefined ? is_available : true,
         stock_quantity: stock_quantity !== undefined ? stock_quantity : 0
       });

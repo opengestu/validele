@@ -1643,7 +1643,7 @@ const VendorDashboard = () => {
       }
 
       // Supabase session
-      const { error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty ?? null, image_url: newProduct.image_url || null, code: productCode, is_available: true, stock_quantity: 0 } as any);
+      const { error } = await supabase.from('products').insert({ vendor_id: vendorId, name: newProduct.name, price: Number(newProduct.price), description: newProduct.description, warranty: newProduct.warranty ?? null, image_url: newProduct.image_url || null, code: productCode, category: newProduct.category || null, is_available: true, stock_quantity: 0 } as any);
       if (error) throw error;
 
       toast({ title: 'Succès', description: 'Produit ajouté' });
@@ -3448,6 +3448,24 @@ const VendorDashboard = () => {
               />
             </div>
             {renderProductImagePicker(newProduct.image_url, (imageUrl) => setNewProduct({ ...newProduct, image_url: imageUrl }))}
+
+            {/* Marqueur "produit démo" : pose category='DEMO'. Le produit reste
+                trouvable par le bot via son code, mais est identifié comme démo
+                (invisible des acheteurs qui ne parcourent pas de catalogue). */}
+            <label className="flex items-start gap-2 rounded-md border border-dashed border-muted-foreground/40 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={newProduct.category === 'DEMO'}
+                onChange={(e) => setNewProduct({ ...newProduct, category: e.target.checked ? 'DEMO' : '' })}
+              />
+              <span className="text-sm">
+                <span className="font-medium">Produit démo</span>
+                <span className="block text-xs text-muted-foreground">
+                  À cocher pour un produit de démonstration (numéro démo). Non destiné à de vraies ventes.
+                </span>
+              </span>
+            </label>
 
             {/* Dev-only: allow specifying a product code when adding in a dev session */}
             {(() => {
