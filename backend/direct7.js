@@ -15,6 +15,16 @@ const D7_WHATSAPP_URL = process.env.D7_WHATSAPP_URL || 'https://api.d7networks.c
 // distinct du sender ID SMS alphanumérique (D7_OTP_ORIGINATOR = 'VALIDEL').
 const WHATSAPP_BOT_ORIGINATOR = process.env.WHATSAPP_BOT_NUMBER || process.env.D7_WHATSAPP_ORIGINATOR || '';
 
+// Routage multi-numéro : le bot répond DEPUIS le numéro qui a reçu le message
+// (champ `recipient` du webhook D7 entrant), ce qui permet à UN SEUL backend +
+// UN SEUL webhook de servir plusieurs numéros (ex. prod + démo) sans se marcher
+// dessus. `from` explicite (chiffres seuls) prioritaire ; sinon repli sur le
+// numéro par défaut WHATSAPP_BOT_NUMBER -> comportement historique inchangé.
+function resolveWhatsAppOriginator(from) {
+  const explicit = String(from || '').replace(/\D/g, '');
+  return explicit || WHATSAPP_BOT_ORIGINATOR;
+}
+
 const D7_OTP_PROVIDER_ENABLED = String(process.env.D7_OTP_PROVIDER_ENABLED || 'true').toLowerCase() === 'true';
 const D7_OTP_PROVIDER_STRICT = String(process.env.D7_OTP_PROVIDER_STRICT || 'false').toLowerCase() === 'true';
 const D7_OTP_SEND_URL = process.env.D7_OTP_SEND_URL || 'https://api.d7networks.com/verify/v1/otp/send-otp';
@@ -290,11 +300,12 @@ async function sendSMS(phone, message) {
 // « acceptait » la requête (status: accepted) mais WhatsApp ne livrait jamais le message
 // (VALIDEL n'est pas un numéro WhatsApp). C'est ce qui rendait muettes les réponses
 // texte du bot (code inconnu, « bonjour »…), alors que les boutons (déjà en v2) passaient.
-async function sendWhatsApp(phone, message) {
+async function sendWhatsApp(phone, message, from) {
   if (!DIRECT7_API_KEY) {
     throw new Error('DIRECT7_API_KEY non configurée');
   }
-  if (!WHATSAPP_BOT_ORIGINATOR) {
+  const originator = resolveWhatsAppOriginator(from);
+  if (!originator) {
     throw new Error('WHATSAPP_BOT_NUMBER non configuré (numéro WhatsApp Business requis pour l\'envoi WhatsApp)');
   }
 
@@ -304,7 +315,7 @@ async function sendWhatsApp(phone, message) {
       {
         messages: [
           {
-            originator: WHATSAPP_BOT_ORIGINATOR,
+            originator,
             recipients: [
               { recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' },
             ],
@@ -353,7 +364,9 @@ async function postD7Whatsapp(messagePayload) {
   if (!DIRECT7_API_KEY) {
     throw new Error('DIRECT7_API_KEY non configurée');
   }
-  if (!WHATSAPP_BOT_ORIGINATOR) {
+  // L'émetteur est désormais résolu par l'appelant (routage multi-numéro) et posé
+  // dans le payload : on valide le payload, pas la constante globale.
+  if (!messagePayload || !messagePayload.originator) {
     throw new Error('WHATSAPP_BOT_NUMBER non configuré (numéro WhatsApp Business Validèl requis pour l\'envoi interactif)');
   }
   try {
@@ -374,7 +387,7 @@ async function postD7Whatsapp(messagePayload) {
 // Envoi d'un message avec 1 à 3 boutons de réponse rapide.
 // buttons = [{ id, title }] ; title tronqué à 20 caractères (contrainte WhatsApp),
 // id limité à 256 caractères. Max 3 boutons.
-async function sendWhatsAppButtons(phone, bodyText, buttons) {
+async function sendWhatsAppButtons(phone, bodyText, buttons, from) {
   const safeButtons = (Array.isArray(buttons) ? buttons : []).slice(0, 3).map((b) => ({
     type: 'reply',
     reply: {
@@ -383,7 +396,7 @@ async function sendWhatsAppButtons(phone, bodyText, buttons) {
     },
   }));
   return postD7Whatsapp({
-    originator: WHATSAPP_BOT_ORIGINATOR,
+    originator: resolveWhatsAppOriginator(from),
     recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
     content: {
       message_type: 'INTERACTIVE',
@@ -398,9 +411,9 @@ async function sendWhatsAppButtons(phone, bodyText, buttons) {
 
 // Envoi d'un message avec un unique bouton CTA url (ouvre un lien). Ne se combine pas
 // avec des boutons de réponse -> message séparé (contrainte WhatsApp).
-async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url) {
+async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url, from) {
   return postD7Whatsapp({
-    originator: WHATSAPP_BOT_ORIGINATOR,
+    originator: resolveWhatsAppOriginator(from),
     recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
     content: {
       message_type: 'INTERACTIVE',
@@ -426,7 +439,7 @@ async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url) {
 // - bodyParams : valeurs des variables {{1}}, {{2}}… du CORPS, dans l'ordre
 // - urlButtonSuffix : suffixe dynamique du bouton URL (partie après l'URL de base
 //   définie dans le template) ; omis s'il n'y a pas de bouton dynamique.
-async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = [], urlButtonSuffix = null }) {
+async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = [], urlButtonSuffix = null, from = null }) {
   if (!templateId) throw new Error('templateId requis pour l\'envoi de template');
   const body_parameter_values = {};
   (Array.isArray(bodyParams) ? bodyParams : []).forEach((v, i) => {
@@ -451,7 +464,7 @@ async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = 
   }
 
   return postD7Whatsapp({
-    originator: WHATSAPP_BOT_ORIGINATOR,
+    originator: resolveWhatsAppOriginator(from),
     recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
     content: { message_type: 'TEMPLATE', template },
   });

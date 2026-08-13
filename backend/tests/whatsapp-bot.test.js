@@ -33,9 +33,9 @@ function makeRecorder() {
   const sends = [];
   return {
     sends,
-    sendText: async (to, body) => sends.push({ kind: 'text', to, body }),
-    sendButtons: async (to, body, buttons) => sends.push({ kind: 'buttons', to, body, buttons }),
-    sendCtaUrl: async (to, body, displayText, url) => sends.push({ kind: 'cta', to, body, displayText, url }),
+    sendText: async (to, body, from) => sends.push({ kind: 'text', to, body, from }),
+    sendButtons: async (to, body, buttons, from) => sends.push({ kind: 'buttons', to, body, buttons, from }),
+    sendCtaUrl: async (to, body, displayText, url, from) => sends.push({ kind: 'cta', to, body, displayText, url, from }),
   };
 }
 
@@ -68,8 +68,10 @@ function makeBot(extra = {}) {
 
 let _mid = 0;
 const nextMid = () => `m${++_mid}`;
-function inboundText(text, msgId, from = '221771112233') {
-  return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'TEXT', text: { body: text } } } };
+function inboundText(text, msgId, from = '221771112233', recipient = undefined) {
+  const message = { msg_id: msgId || nextMid(), originator: from, message_type: 'TEXT', text: { body: text } };
+  if (recipient !== undefined) message.recipient = recipient;
+  return { event_content: { message } };
 }
 function inboundStatusEvent(requestId, status, reason) {
   const message_status = { request_id: requestId, msg_id: 'wamid.abc', status, recipient: '+221771112233' };
@@ -342,6 +344,44 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundStatusEvent('req-d', 'delivered'));
     await b.processWebhook(inboundStatusEvent('req-r', 'read'));
     assert.strictEqual(called, 0);
+  });
+
+  // --- Routage multi-numéro (prod + démo sur un seul backend/webhook) --------
+  // parseD7Message expose le numéro business qui a REÇU le message (champ D7
+  // `recipient`) via `to`, pour répondre depuis ce même numéro.
+  await test('parseD7Message extrait le destinataire (recipient) dans `to`', () => {
+    const parsed = bot.parseD7Message(inboundText('PD3431', 'm-to', '221771112233', '15554677146'));
+    assert.strictEqual(parsed.to, '15554677146');
+    assert.strictEqual(parsed.from, '221771112233');
+  });
+
+  await test('recipient absent -> `to` null (repli numéro par défaut)', () => {
+    const parsed = bot.parseD7Message(inboundText('PD3431', 'm-nulto'));
+    assert.strictEqual(parsed.to, null);
+  });
+
+  // Message reçu sur le NUMÉRO DÉMO -> le bot répond DEPUIS le numéro démo
+  // (le `from` transmis aux fonctions d'envoi = le recipient entrant).
+  await test('message vers le numéro démo -> réponse émise DEPUIS le numéro démo', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('PD3431', 'm-demo', '221771112233', '15554677146'));
+    assert.strictEqual(rec.sends.length, 1);
+    assert.strictEqual(rec.sends[0].from, '15554677146', 'le bot doit répondre depuis le numéro démo');
+  });
+
+  // Message reçu sur le NUMÉRO PROD -> réponse depuis le numéro prod (isolation).
+  await test('message vers le numéro prod -> réponse émise DEPUIS le numéro prod', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('PD3431', 'm-prod', '221771112233', '221768171175'));
+    assert.strictEqual(rec.sends[0].from, '221768171175');
+  });
+
+  // Rétrocompatibilité : sans recipient, `from` reste indéfini -> les fonctions
+  // d'envoi retombent sur WHATSAPP_BOT_NUMBER (comportement historique).
+  await test('sans recipient -> from indéfini (repli sur le numéro par défaut)', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundText('PD3431', 'm-legacy'));
+    assert.strictEqual(rec.sends[0].from, null);
   });
 
   console.log(`\n${passed} réussis, ${failed} échoués`);

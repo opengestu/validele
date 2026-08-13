@@ -109,6 +109,11 @@ function parseD7Message(body) {
   return {
     msgId: message.msg_id,
     from: message.originator,
+    // Numéro business qui a REÇU le message (champ D7 `recipient`). Permet le
+    // routage multi-numéro : le bot répond DEPUIS ce numéro (prod OU démo), donc
+    // un seul backend + un seul webhook servent plusieurs numéros. Absent -> le
+    // bot retombe sur WHATSAPP_BOT_NUMBER (comportement historique).
+    to: message.recipient || null,
     type,
     text: (message.text && message.text.body) || '',
     buttonId: extractButtonId(message),
@@ -808,25 +813,28 @@ if (String(process.env.ENABLE_WHATSAPP_READ_FALLBACK || 'true').toLowerCase() !=
 // Exécution des actions -> envoi via D7
 // ---------------------------------------------------------------------------
 // Loggers utilisés en DRY_RUN (aucun appel réseau).
-async function dryText(to, body) {
-  console.log(`\n[WABOT][DRY] -> ${to} (texte):\n${body}\n`);
+async function dryText(to, body, from) {
+  console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (texte):\n${body}\n`);
 }
-async function dryButtons(to, body, buttons) {
+async function dryButtons(to, body, buttons, from) {
   const b = (buttons || []).map((x) => `[${x.title} | ${x.id}]`).join('  ');
-  console.log(`\n[WABOT][DRY] -> ${to} (boutons):\n${body}\n  boutons: ${b}\n`);
+  console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (boutons):\n${body}\n  boutons: ${b}\n`);
 }
-async function dryCta(to, body, displayText, url) {
-  console.log(`\n[WABOT][DRY] -> ${to} (cta):\n${body}\n  bouton: [${displayText}] -> ${url}\n`);
+async function dryCta(to, body, displayText, url, from) {
+  console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (cta):\n${body}\n  bouton: [${displayText}] -> ${url}\n`);
 }
 
-async function executeAction(action, to, senders) {
+// `from` = numéro business qui a reçu le message entrant (parsed.to). On répond
+// DEPUIS ce numéro pour tenir le routage multi-numéro (prod/démo). Optionnel :
+// les fonctions d'envoi retombent sur WHATSAPP_BOT_NUMBER si `from` est absent.
+async function executeAction(action, to, senders, from) {
   const s = senders || {};
   const sendText = s.sendText || (DRY_RUN ? dryText : sendWhatsApp);
   const sendButtons = s.sendButtons || (DRY_RUN ? dryButtons : sendWhatsAppButtons);
   const sendCta = s.sendCtaUrl || (DRY_RUN ? dryCta : sendWhatsAppCtaUrl);
-  if (action.kind === 'text') return sendText(to, action.body);
-  if (action.kind === 'buttons') return sendButtons(to, action.body, action.buttons);
-  if (action.kind === 'cta') return sendCta(to, action.body, action.displayText, action.url);
+  if (action.kind === 'text') return sendText(to, action.body, from);
+  if (action.kind === 'buttons') return sendButtons(to, action.body, action.buttons, from);
+  if (action.kind === 'cta') return sendCta(to, action.body, action.displayText, action.url, from);
   return null;
 }
 
@@ -878,7 +886,9 @@ function createBot(deps = {}) {
       askProductQuestion,
     });
     for (const action of actions) {
-      await executeAction(action, parsed.from, senders);
+      // Répondre DEPUIS le numéro qui a reçu le message (parsed.to) -> routage
+      // multi-numéro prod/démo sur un seul backend/webhook.
+      await executeAction(action, parsed.from, senders, parsed.to);
     }
   }
 
