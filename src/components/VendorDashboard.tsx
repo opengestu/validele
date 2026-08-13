@@ -3449,40 +3449,44 @@ const VendorDashboard = () => {
             </div>
             {renderProductImagePicker(newProduct.image_url, (imageUrl) => setNewProduct({ ...newProduct, image_url: imageUrl }))}
 
-            {/* Marqueur "produit démo" : pose category='DEMO'. Le produit reste
-                trouvable par le bot via son code, mais est identifié comme démo
-                (invisible des acheteurs qui ne parcourent pas de catalogue). */}
-            <label className="flex items-start gap-2 rounded-md border border-dashed border-muted-foreground/40 p-3 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4"
-                checked={newProduct.category === 'DEMO'}
-                onChange={(e) => setNewProduct({ ...newProduct, category: e.target.checked ? 'DEMO' : '' })}
-              />
-              <span className="text-sm">
-                <span className="font-medium">Produit démo</span>
-                <span className="block text-xs text-muted-foreground">
-                  À cocher pour un produit de démonstration (numéro démo). Non destiné à de vraies ventes.
-                </span>
-              </span>
-            </label>
-
-            {/* Dev-only: allow specifying a product code when adding in a dev session */}
+            {/* Contrôles dev/démo UNIQUEMENT (session dev) : jamais affichés à un
+                vrai vendeur. Regroupe le code produit personnalisé ET le marqueur
+                "produit démo" (category='DEMO'). */}
             {(() => {
               try {
                 const smsRaw = typeof window !== 'undefined' ? localStorage.getItem('sms_auth_session') : null;
                 const isDev = smsRaw ? (() => { try { return JSON.parse(smsRaw).profileId?.startsWith('dev-'); } catch { return false; } })() : false;
                 if (isDev) {
                   return (
-                    <div>
-                      <label className="text-sm font-medium">Code produit (dev uniquement)</label>
-                      <Input
-                        value={newProduct.code}
-                        onChange={(e) => setNewProduct({...newProduct, code: e.target.value})}
-                        placeholder="Ex: PD-DEV-1"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">Entrer un code personnalisé pour les tests (visible seulement en session dev).</p>
-                    </div>
+                    <>
+                      <div>
+                        <label className="text-sm font-medium">Code produit (dev uniquement)</label>
+                        <Input
+                          value={newProduct.code}
+                          onChange={(e) => setNewProduct({...newProduct, code: e.target.value})}
+                          placeholder="Ex: PD-DEV-1"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Entrer un code personnalisé pour les tests (visible seulement en session dev).</p>
+                      </div>
+                      {/* Marqueur "produit démo" : pose category='DEMO'. Le produit
+                          reste trouvable par le bot via son code, mais est identifié
+                          comme démo. Découverte par code uniquement -> invisible des
+                          acheteurs. */}
+                      <label className="flex items-start gap-2 rounded-md border border-dashed border-muted-foreground/40 p-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4"
+                          checked={newProduct.category === 'DEMO'}
+                          onChange={(e) => setNewProduct({ ...newProduct, category: e.target.checked ? 'DEMO' : '' })}
+                        />
+                        <span className="text-sm">
+                          <span className="font-medium">Produit démo</span>
+                          <span className="block text-xs text-muted-foreground">
+                            À cocher pour un produit de démonstration (numéro démo). Non destiné à de vraies ventes.
+                          </span>
+                        </span>
+                      </label>
+                    </>
                   );
                 }
                 return null;
