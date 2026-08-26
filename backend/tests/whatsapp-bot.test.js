@@ -115,6 +115,13 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
 (async () => {
   console.log('Bot WhatsApp Validèl — tests\n');
 
+  // La bannière de paiement n'est active qu'après vérification de son URL (le
+  // contrôle lui-même est testé en fin de fichier). On la valide ici avec une
+  // fausse réponse image/png, sinon aucun message de paiement ne porterait d'en-tête.
+  await bot.verifyWalletBanner(async () => ({
+    ok: true, status: 200, headers: { get: () => 'image/png' },
+  }));
+
   // Unit : calcul des frais
   await test('computeFees(15000) @3% -> frais 450, total 15450', () => {
     assert.deepStrictEqual(bot.computeFees(15000), { prix: 15000, frais: 450, total: 15450 });
@@ -429,7 +436,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.deepStrictEqual(wallets.buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
     // Les boutons ne peuvent pas porter d'image : l'emoji dans le titre est le seul repère.
     assert.ok(wallets.buttons.every((x) => x.title.length <= 20), 'titre de bouton limité à 20 caractères');
-    assert.ok(/🌊/.test(wallets.buttons[0].title) && /Wave/.test(wallets.buttons[0].title));
+    assert.ok(/🐧/.test(wallets.buttons[0].title) && /Wave/.test(wallets.buttons[0].title));
     assert.ok(/🟠/.test(wallets.buttons[1].title) && /Orange Money/.test(wallets.buttons[1].title));
     // Seul visuel possible : la bannière des deux logos en en-tête du message.
     assert.strictEqual(wallets.headerImageUrl, 'https://www.validel.shop/images/wallets-wave-orange.png');
@@ -553,6 +560,62 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends[0].kind, 'cta');
     assert.strictEqual(rec.sends[0].url, 'https://www.validel.shop/product/PD3431');
   });
+
+
+  // --- Vérification de la bannière de paiement au démarrage ---------------
+  // Une URL qui ne sert pas une vraie image fait échouer l'envoi WhatsApp avec
+  // « Media upload error », et D7 ne le signale qu'en accusé de livraison : aucun
+  // try/catch à l'envoi ne peut le rattraper. D'où le contrôle en amont.
+  const fakeRes = (status, contentType) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k) => (k.toLowerCase() === 'content-type' ? contentType : null) },
+  });
+
+  await test('bannière : image/png -> activée', async () => {
+    const url = await bot.verifyWalletBanner(async () => fakeRes(200, 'image/png'));
+    assert.strictEqual(url, 'https://www.validel.shop/images/wallets-wave-orange.png');
+  });
+
+  await test('bannière : image/jpeg -> activée', async () => {
+    const url = await bot.verifyWalletBanner(async () => fakeRes(200, 'image/jpeg'));
+    assert.ok(url, 'le JPEG est accepté par WhatsApp');
+  });
+
+  // Le cas réellement rencontré : le catch-all SPA renvoie index.html en 200.
+  await test('bannière : 200 mais text/html (catch-all SPA) -> désactivée', async () => {
+    const url = await bot.verifyWalletBanner(async () => fakeRes(200, 'text/html; charset=utf-8'));
+    assert.strictEqual(url, null);
+  });
+
+  await test('bannière : 404 -> désactivée', async () => {
+    const url = await bot.verifyWalletBanner(async () => fakeRes(404, 'text/plain'));
+    assert.strictEqual(url, null);
+  });
+
+  await test('bannière : content-type absent -> désactivée', async () => {
+    const url = await bot.verifyWalletBanner(async () => fakeRes(200, null));
+    assert.strictEqual(url, null);
+  });
+
+  await test('bannière : URL injoignable -> désactivée, pas de crash', async () => {
+    const url = await bot.verifyWalletBanner(async () => { throw new Error('ENOTFOUND'); });
+    assert.strictEqual(url, null);
+  });
+
+  // Certains hébergeurs refusent HEAD : on doit retenter en GET avant de conclure.
+  await test('bannière : HEAD refusé (405) -> retente en GET', async () => {
+    const methods = [];
+    const url = await bot.verifyWalletBanner(async (_u, opts) => {
+      methods.push(opts.method);
+      return opts.method === 'HEAD' ? fakeRes(405, 'text/plain') : fakeRes(200, 'image/png');
+    });
+    assert.deepStrictEqual(methods, ['HEAD', 'GET']);
+    assert.ok(url, 'la bannière doit être activée après le repli GET');
+  });
+
+  // La vérification doit être rejouée pour que les tests suivants gardent la bannière.
+  await bot.verifyWalletBanner(async () => fakeRes(200, 'image/png'));
 
   console.log(`\n${passed} réussis, ${failed} échoués`);
   process.exit(failed === 0 ? 0 : 1);

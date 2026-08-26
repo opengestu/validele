@@ -91,13 +91,59 @@ const ZONE_AUTRE = 'autre';
 // scripts/generate-wallet-banner.mjs à partir des logos de public/images/.
 const WALLET_BANNER_URL = String(process.env.WHATSAPP_WALLET_BANNER_URL || '').trim();
 
+// Bannière ACTIVE : reste nulle tant que l'URL n'a pas été vérifiée au démarrage.
+// Sens volontaire : on part désactivé et on n'active qu'après preuve. Une URL qui
+// ne sert pas une vraie image (ex. le catch-all SPA qui renvoie index.html en 200)
+// fait échouer l'envoi WhatsApp avec « Media upload error » — et comme D7 accepte
+// la requête puis signale l'échec en accusé de livraison, aucun try/catch à l'envoi
+// ne peut le rattraper. Le seul garde-fou utile est donc en amont.
+let walletBannerUrl = null;
+
+// WhatsApp n'accepte que JPEG et PNG en en-tête image.
+const IMAGE_CONTENT_TYPE_RE = /^image\/(png|jpe?g)\b/i;
+
+async function verifyWalletBanner(fetcher) {
+  walletBannerUrl = null;
+  if (!WALLET_BANNER_URL) return null;
+  const doFetch = fetcher || fetch;
+
+  try {
+    let res = await doFetch(WALLET_BANNER_URL, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
+    // Certains hébergeurs refusent HEAD : on retente en GET avant de conclure.
+    if (res.status === 405 || res.status === 501) {
+      res = await doFetch(WALLET_BANNER_URL, { method: 'GET', signal: AbortSignal.timeout(8000) });
+    }
+    const type = (res.headers && res.headers.get('content-type')) || '';
+
+    if (!res.ok || !IMAGE_CONTENT_TYPE_RE.test(type)) {
+      console.error(
+        '[WABOT] ⚠️ Bannière paiement DÉSACTIVÉE :', WALLET_BANNER_URL,
+        `répond ${res.status} ${type || '(sans content-type)'} au lieu d'une image PNG/JPEG.`,
+        'La question du paiement partira sans en-tête. Déployez le fichier puis redémarrez.',
+      );
+      return null;
+    }
+
+    walletBannerUrl = WALLET_BANNER_URL;
+    console.log('[WABOT] Bannière paiement active:', WALLET_BANNER_URL, `(${type})`);
+    return walletBannerUrl;
+  } catch (e) {
+    console.error(
+      '[WABOT] ⚠️ Bannière paiement DÉSACTIVÉE, URL injoignable:', WALLET_BANNER_URL,
+      '-', (e && e.message) || e,
+    );
+    return null;
+  }
+}
+
 // Wallets acceptés. Les identifiants sont ceux qu'attend le backend Pixpay
 // (voir pixpay.js sendMoney) : toute autre valeur y lève une exception.
 const WALLETS = {
   // `icon` : les boutons WhatsApp n'acceptent aucune image, seulement un titre de
   // 20 caractères — l'emoji dans le libellé est le seul repère visuel possible.
   // Mêmes symboles que l'admin (walletLogos / AdminDashboard) pour rester cohérent.
-  w: { id: 'wave-senegal', label: 'Wave', icon: '🌊', route: '/api/payment/pixpay-wave/initiate' },
+  // 🐧 : le logo Wave est un pingouin — plus proche de leur identité que la vague.
+  w: { id: 'wave-senegal', label: 'Wave', icon: '🐧', route: '/api/payment/pixpay-wave/initiate' },
   o: { id: 'orange-senegal', label: 'Orange Money', icon: '🟠', route: '/api/payment/pixpay/initiate' },
 };
 
@@ -421,7 +467,9 @@ const replyDemandeWallet = (code, body = TXT_DEMANDE_WALLET) => ({
   kind: 'buttons',
   body,
   buttons: btnWallets(code),
-  ...(WALLET_BANNER_URL ? { headerImageUrl: WALLET_BANNER_URL } : {}),
+  // `walletBannerUrl` (vérifiée) et non `WALLET_BANNER_URL` (brute) : tant que
+  // l'URL n'a pas prouvé qu'elle sert une image, on n'ajoute aucun en-tête.
+  ...(walletBannerUrl ? { headerImageUrl: walletBannerUrl } : {}),
 });
 
 // Lignes de la liste des quartiers. WhatsApp plafonne à 10 lignes au total :
@@ -1268,6 +1316,11 @@ function createBot(deps = {}) {
 function registerWhatsAppBot(app, deps) {
   const bot = createBot(deps);
   app.post('/api/whatsapp/webhook/:secret', bot.handler);
+  // Vérification en tâche de fond : ne retarde pas le démarrage. La bannière reste
+  // désactivée tant que la vérification n'a pas abouti, donc aucune fenêtre de risque.
+  if (!(deps && deps.skipBannerCheck)) {
+    verifyWalletBanner().catch((e) => console.error('[WABOT] vérification bannière échouée:', e && e.message));
+  }
   console.log('[WABOT] Bot WhatsApp monté sur POST /api/whatsapp/webhook/:secret',
     WEBHOOK_SECRET ? '(secret configuré)' : '(⚠️ WHATSAPP_WEBHOOK_SECRET manquant -> 401 sur toutes les requêtes)',
     DRY_RUN ? '[DRY_RUN: aucun envoi D7, logs seulement]' : '');
@@ -1286,6 +1339,7 @@ module.exports = {
   extractProductCode,
   extractButtonId,
   decideReplies,
+  verifyWalletBanner,
   defaultIsDuplicate,
   computeFees,
   ficheProduitText,
