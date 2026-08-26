@@ -432,6 +432,38 @@ async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url, from) {
   });
 }
 
+// Envoi d'un message LISTE (menu déroulant natif WhatsApp). Sert au choix du
+// quartier de livraison : plus fiable qu'une adresse tapée en texte libre.
+// Contraintes WhatsApp : 10 lignes MAXIMUM toutes sections confondues, titre de
+// ligne 24 caractères, description 72, libellé du bouton 20.
+// NB : le type 'list' est documenté par D7 (docs/whatsapp/send-message/interactive-message)
+// mais n'était pas encore utilisé ici — l'appelant doit prévoir un repli texte.
+async function sendWhatsAppList(phone, bodyText, buttonLabel, rows, from) {
+  const safeRows = (Array.isArray(rows) ? rows : []).slice(0, 10).map((r) => {
+    const row = {
+      id: String(r.id || '').slice(0, 200),
+      title: String(r.title || '').slice(0, 24),
+    };
+    if (r.description) row.description = String(r.description).slice(0, 72);
+    return row;
+  });
+  return postD7Whatsapp({
+    originator: resolveWhatsAppOriginator(from),
+    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+    content: {
+      message_type: 'INTERACTIVE',
+      interactive: {
+        type: 'list',
+        body: { text: String(bodyText || '').slice(0, 1024) },
+        action: {
+          button: String(buttonLabel || 'Choisir').slice(0, 20),
+          sections: [{ title: String(buttonLabel || 'Choisir').slice(0, 24), rows: safeRows }],
+        },
+      },
+    },
+  });
+}
+
 // Envoi d'un message TEMPLATE approuvé par Meta (fiable hors fenêtre 24h, contrairement
 // aux messages libres/interactifs qui exigent que le client ait écrit dans les 24h).
 // - templateId : nom exact du template approuvé (D7 l'appelle "template_id")
@@ -664,5 +696,6 @@ module.exports = {
   sendWhatsApp,
   sendWhatsAppButtons,
   sendWhatsAppCtaUrl,
+  sendWhatsAppList,
   sendWhatsAppTemplate
 };

@@ -19,6 +19,7 @@ const {
   sendWhatsApp,
   sendWhatsAppButtons,
   sendWhatsAppCtaUrl,
+  sendWhatsAppList,
   sendWhatsAppTemplate,
 } = require('./direct7');
 
@@ -64,6 +65,33 @@ const PRODUCT_CONTEXT_TTL_MS = 45 * 60 * 1000;
 // sur une fenêtre glissante de 24h (coût maîtrisé même en cas de spam).
 const AI_QA_MAX_PER_WINDOW = parsePositiveIntLocal(process.env.WHATSAPP_AI_QA_MAX_PER_DAY, 8);
 const AI_QA_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Checkout conversationnel : le bot collecte nom + adresse + wallet DANS le chat,
+// crée la commande et renvoie le lien de paiement — sans passer par le formulaire web.
+// WHATSAPP_CHAT_CHECKOUT=false rétablit l'ancien comportement (lien /product/{code}).
+const CHAT_CHECKOUT = !/^false$/i.test(process.env.WHATSAPP_CHAT_CHECKOUT || '');
+// Base HTTP pour appeler nos propres routes (le bot tourne dans le même process Express).
+const INTERNAL_BASE_URL = String(
+  process.env.WHATSAPP_INTERNAL_BASE_URL || `http://127.0.0.1:${process.env.PORT || 5000}`
+).replace(/\/+$/, '');
+// Un parcours abandonné ne doit pas piéger le client : au-delà, on repart de zéro.
+const CHECKOUT_TTL_MS = 30 * 60 * 1000;
+
+// Quartiers proposés pour la livraison. WhatsApp plafonne une liste à 10 lignes au
+// total : on garde 9 quartiers + « Autre quartier ». Modifiable sans redéploiement
+// via WHATSAPP_DELIVERY_ZONES (séparés par des virgules).
+const DELIVERY_ZONES = String(
+  process.env.WHATSAPP_DELIVERY_ZONES
+  || 'Plateau,Médina,Sacré-Cœur,Ouakam,Yoff,Parcelles Assainies,Guédiawaye,Pikine,Rufisque'
+).split(',').map((z) => z.trim()).filter(Boolean).slice(0, 9);
+const ZONE_AUTRE = 'autre';
+
+// Wallets acceptés. Les identifiants sont ceux qu'attend le backend Pixpay
+// (voir pixpay.js sendMoney) : toute autre valeur y lève une exception.
+const WALLETS = {
+  w: { id: 'wave-senegal', label: 'Wave', route: '/api/payment/pixpay-wave/initiate' },
+  o: { id: 'orange-senegal', label: 'Orange Money', route: '/api/payment/pixpay/initiate' },
+};
 
 // ---------------------------------------------------------------------------
 // Utilitaires
@@ -320,6 +348,236 @@ const btnPayer = (code) => ({ id: `pay:${code}`, title: 'Payer en sécurité' })
 const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Autres questions' });
 
 // ---------------------------------------------------------------------------
+// Checkout conversationnel : nom -> adresse -> wallet -> commande + lien de paiement
+// ---------------------------------------------------------------------------
+// Le téléphone n'est jamais demandé : c'est celui du compte WhatsApp qui écrit.
+const txtDemandeNom = (produit) => [
+  `📦 *${produit.nom}* — ${formatFcfa(computeFees(produit.prix).total)} FCFA`,
+  '',
+  'Pour préparer votre commande, j\'ai besoin de 2 informations.',
+  '',
+  '1️⃣ *Votre prénom et nom ?*',
+  '',
+  '_Tapez « annuler » à tout moment pour arrêter._',
+].join('\n');
+
+const TXT_DEMANDE_ADRESSE = [
+  '2️⃣ *Votre adresse de livraison ?*',
+  '',
+  'Quartier, rue et un point de repère.',
+  '_Ex : Sacré-Cœur 3, villa 45, face pharmacie._',
+].join('\n');
+
+const TXT_DEMANDE_ZONE = [
+  '2️⃣ *Où faut-il livrer ?*',
+  '',
+  'Choisissez votre quartier dans la liste.',
+].join('\n');
+const TXT_ZONE_BOUTON = 'Choisir le quartier';
+const txtDemandeAdresseDetail = (zone) => (zone
+  ? [`📍 *${zone}* — précisez la rue et un point de repère.`, '', '_Ex : rue 12, face pharmacie._'].join('\n')
+  : TXT_DEMANDE_ADRESSE);
+
+const TXT_DEMANDE_WALLET = '3️⃣ *Comment souhaitez-vous payer ?*';
+const TXT_NOM_INVALIDE = 'Merci d\'indiquer votre prénom et nom (entre 2 et 60 caractères).';
+const TXT_ADRESSE_INVALIDE = 'Merci de préciser un peu plus votre adresse (quartier + point de repère).';
+const TXT_WALLET_INVALIDE = 'Choisissez *Wave* ou *Orange Money* avec les boutons ci-dessous.';
+const TXT_CHECKOUT_ANNULE = 'Commande annulée. Vous pouvez la reprendre quand vous voulez.';
+const TXT_CHECKOUT_EN_COURS = 'Un instant, je finalise votre commande…';
+const TXT_CHECKOUT_ECHEC = [
+  '⚠️ Je n\'ai pas pu finaliser la commande ici.',
+  '',
+  'Utilisez le lien ci-dessous pour terminer votre paiement en sécurité.',
+].join('\n');
+
+function txtRecapCommande(produit, order, walletLabel) {
+  return [
+    `✅ *Commande ${order.orderCode}*`,
+    `📦 ${produit.nom}`,
+    `💰 *${formatFcfa(order.totalAmount)} FCFA* (frais de protection inclus)`,
+    `💳 ${walletLabel}`,
+    '',
+    '🔒 Votre argent est protégé jusqu\'à ce que vous confirmiez la réception.',
+    '',
+    '⚠️ Validèl ne demandera jamais votre code secret Wave ou Orange Money.',
+  ].join('\n');
+}
+
+const btnWallets = (code) => [
+  { id: `co:w:${code}`, title: WALLETS.w.label },
+  { id: `co:o:${code}`, title: WALLETS.o.label },
+];
+
+// Lignes de la liste des quartiers. WhatsApp plafonne à 10 lignes au total :
+// 9 quartiers + « Autre quartier », qui bascule sur une saisie libre.
+const zoneRows = (code) => [
+  ...DELIVERY_ZONES.map((zone, i) => ({ id: `co:z:${i}:${code}`, title: zone })),
+  { id: `co:z:${ZONE_AUTRE}:${code}`, title: 'Autre quartier', description: 'Je précise moi-même' },
+];
+
+// Parcours perdu (expiré, ou état effacé par un redémarrage) : on ne bloque jamais
+// l'acheteur, on lui redonne le lien de paiement web.
+async function repliesCheckoutPerdu(code, findProduct) {
+  const produit = await findProduct(code);
+  return produit
+    ? [{ kind: 'cta', body: paiementCtaText(produit), displayText: 'Payer maintenant', url: paymentLink(code) }]
+    : [{ kind: 'text', body: TXT_AUCUN_CODE }];
+}
+
+function checkoutActive(state) {
+  return Boolean(
+    state && state.checkout && state.checkout.step && state.checkout.code
+    && (Date.now() - (state.checkout.startedAt || 0)) < CHECKOUT_TTL_MS
+  );
+}
+
+const isCancelWord = (text) => /^(annuler|annule|stop|cancel)$/i.test(String(text || '').trim());
+
+// Repli texte : les réponses de bouton D7 ne sont pas garanties (cf. extractButtonId),
+// donc on accepte aussi le wallet tapé à la main.
+function walletFromText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (/^(1|wave)$/.test(t)) return 'w';
+  if (/^(2|om|orange|orange money)$/.test(t)) return 'o';
+  return null;
+}
+
+async function postInternal(path, body) {
+  const response = await fetch(`${INTERNAL_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok || json.success === false) {
+    throw new Error(json.error || `HTTP ${response.status} sur ${path}`);
+  }
+  return json;
+}
+
+async function defaultCreateGuestOrder(payload) {
+  return postInternal('/api/guest/order', payload);
+}
+
+async function defaultInitiatePayment({ walletKey, amount, phone, orderId, orderCode }) {
+  const wallet = WALLETS[walletKey];
+  if (!wallet) throw new Error(`Wallet non supporté: ${walletKey}`);
+  const json = await postInternal(wallet.route, {
+    amount,
+    phone,
+    orderId,
+    customData: { order_id: orderId, order_code: orderCode, source: 'whatsapp_bot' },
+  });
+  if (!json.sms_link) throw new Error('Aucun lien de paiement renvoyé par le fournisseur');
+  return { url: json.sms_link };
+}
+
+// Crée la commande puis le lien de paiement. En cas d'échec on ne laisse JAMAIS le
+// client sans moyen de payer : on retombe sur le lien web historique.
+async function finalizeCheckout(ctx) {
+  const { phone, checkout, walletKey, findProduct, setConvState, createGuestOrder, initiatePayment } = ctx;
+  const produit = await findProduct(checkout.code);
+  if (!produit) {
+    await setConvState(phone, { checkout: null });
+    return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(checkout.code) }];
+  }
+
+  // Verrou anti double-commande : si un second message arrive pendant la création,
+  // il tombera sur l'étape 'creating' et recevra une simple attente.
+  await setConvState(phone, { checkout: { ...checkout, step: 'creating', walletKey } });
+
+  try {
+    const order = await createGuestOrder({
+      productCode: checkout.code,
+      buyerName: checkout.buyerName,
+      buyerPhone: phone,
+      deliveryAddress: checkout.address,
+      quantity: 1,
+    });
+    const pay = await initiatePayment({
+      walletKey,
+      amount: order.totalAmount,
+      phone,
+      orderId: order.orderId,
+      orderCode: order.orderCode,
+    });
+    await setConvState(phone, { checkout: null });
+    console.log('[WABOT] checkout terminé:', { orderCode: order.orderCode, wallet: WALLETS[walletKey].id });
+    return [{
+      kind: 'cta',
+      body: txtRecapCommande(produit, order, WALLETS[walletKey].label),
+      // 20 caractères max côté WhatsApp : « Payer avec Orange Money » serait tronqué.
+      displayText: 'Payer maintenant',
+      url: pay.url,
+    }];
+  } catch (e) {
+    console.error('[WABOT] checkout échec, repli lien web:', e && e.message);
+    await setConvState(phone, { checkout: null });
+    return [{
+      kind: 'cta',
+      body: TXT_CHECKOUT_ECHEC,
+      displayText: 'Payer maintenant',
+      url: paymentLink(checkout.code),
+    }];
+  }
+}
+
+// Traite un message texte reçu pendant un parcours de commande.
+async function handleCheckoutMessage(ctx) {
+  const { phone, text, checkout, findProduct, setConvState } = ctx;
+
+  if (isCancelWord(text)) {
+    await setConvState(phone, { checkout: null });
+    const produit = await findProduct(checkout.code);
+    return produit
+      ? [{ kind: 'buttons', body: TXT_CHECKOUT_ANNULE, buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)] }]
+      : [{ kind: 'text', body: TXT_CHECKOUT_ANNULE }];
+  }
+
+  if (checkout.step === 'creating') {
+    return [{ kind: 'text', body: TXT_CHECKOUT_EN_COURS }];
+  }
+
+  const value = String(text || '').trim();
+
+  if (checkout.step === 'name') {
+    if (value.length < 2 || value.length > 60) return [{ kind: 'text', body: TXT_NOM_INVALIDE }];
+    await setConvState(phone, { checkout: { ...checkout, step: 'zone', buyerName: value } });
+    return [{
+      kind: 'list',
+      body: TXT_DEMANDE_ZONE,
+      buttonLabel: TXT_ZONE_BOUTON,
+      rows: zoneRows(checkout.code),
+    }];
+  }
+
+  // L'acheteur a tapé au lieu de choisir dans la liste (ou la liste n'est pas passée
+  // côté D7). On accepte le texte comme adresse complète : le parcours ne bloque pas.
+  if (checkout.step === 'zone') {
+    if (value.length < 5 || value.length > 200) return [{ kind: 'text', body: TXT_ADRESSE_INVALIDE }];
+    await setConvState(phone, { checkout: { ...checkout, step: 'wallet', zone: null, address: value } });
+    return [{ kind: 'buttons', body: TXT_DEMANDE_WALLET, buttons: btnWallets(checkout.code) }];
+  }
+
+  if (checkout.step === 'address') {
+    if (value.length < 5 || value.length > 200) return [{ kind: 'text', body: TXT_ADRESSE_INVALIDE }];
+    // Quartier choisi dans la liste + détail saisi -> une adresse exploitable par le livreur.
+    const adresse = checkout.zone ? `${checkout.zone} — ${value}` : value;
+    await setConvState(phone, { checkout: { ...checkout, step: 'wallet', address: adresse } });
+    return [{ kind: 'buttons', body: TXT_DEMANDE_WALLET, buttons: btnWallets(checkout.code) }];
+  }
+  if (checkout.step === 'wallet') {
+    const walletKey = walletFromText(value);
+    if (!walletKey) {
+      return [{ kind: 'buttons', body: TXT_WALLET_INVALIDE, buttons: btnWallets(checkout.code) }];
+    }
+    return finalizeCheckout({ ...ctx, walletKey });
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Décision : quelles réponses envoyer ? (fonction pure et testable)
 // Retourne une liste d'actions : {kind:'text'|'buttons'|'cta', ...}
 // ---------------------------------------------------------------------------
@@ -328,6 +586,8 @@ async function decideReplies(parsed, deps) {
   const getConvState = (deps && deps.getConversationState) || defaultGetConversationState;
   const setConvState = (deps && deps.setConversationState) || defaultSetConversationState;
   const askProductQuestion = (deps && deps.askProductQuestion) || askProductQuestionAI;
+  const createGuestOrder = (deps && deps.createGuestOrder) || defaultCreateGuestOrder;
+  const initiatePayment = (deps && deps.initiatePayment) || defaultInitiatePayment;
   const phone = parsed.from;
 
   // 1) Réponse à un bouton interactif
@@ -340,6 +600,16 @@ async function decideReplies(parsed, deps) {
       if (phone && code) await setConvState(phone, { productCode: code });
       const produit = await findProduct(code);
       if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
+      // Checkout dans le chat : on collecte nom + adresse + wallet, puis on crée la
+      // commande et on renvoie le lien de paiement. Le formulaire web n'est plus
+      // qu'un repli (WHATSAPP_CHAT_CHECKOUT=false, ou échec du parcours).
+      if (CHAT_CHECKOUT && phone) {
+        await setConvState(phone, {
+          productCode: code,
+          checkout: { step: 'name', code, startedAt: Date.now() },
+        });
+        return [{ kind: 'text', body: txtDemandeNom(produit) }];
+      }
       return [{
         kind: 'cta',
         body: paiementCtaText(produit),
@@ -348,6 +618,33 @@ async function decideReplies(parsed, deps) {
       }];
     }
 
+    // Étapes du checkout pilotées par un bouton ou la liste des quartiers :
+    //   co:z:<index|autre>:CODE -> quartier choisi
+    //   co:w:CODE / co:o:CODE   -> wallet choisi
+    if (kindId === 'co') {
+      const kind = parts[1];
+      const code = kind === 'z' ? parts[3] : parts[2];
+      const state = phone ? await getConvState(phone) : null;
+      const perdu = !checkoutActive(state) || state.checkout.code !== code;
+
+      if (kind === 'z') {
+        if (perdu) return repliesCheckoutPerdu(code, findProduct);
+        // « Autre quartier » -> pas de zone imposée, l'acheteur écrit son adresse complète.
+        const zoneKey = parts[2];
+        const zone = zoneKey === ZONE_AUTRE ? null : (DELIVERY_ZONES[Number(zoneKey)] || null);
+        await setConvState(phone, { checkout: { ...state.checkout, step: 'address', zone } });
+        return [{ kind: 'text', body: txtDemandeAdresseDetail(zone) }];
+      }
+
+      if (!WALLETS[kind] || perdu) return repliesCheckoutPerdu(code, findProduct);
+      if (state.checkout.step === 'creating') {
+        return [{ kind: 'text', body: TXT_CHECKOUT_EN_COURS }];
+      }
+      return finalizeCheckout({
+        phone, checkout: state.checkout, walletKey: kind,
+        findProduct, setConvState, createGuestOrder, initiatePayment,
+      });
+    }
     if (kindId === 'faq') {
       const faqCode = parts.length === 2 ? parts[1] : parts[2];
       if (phone && faqCode) await setConvState(phone, { productCode: faqCode });
@@ -386,7 +683,9 @@ async function decideReplies(parsed, deps) {
     const produit = await findProduct(code);
     if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
     // Nouveau produit consulté -> repart avec un quota IA frais.
-    if (phone) await setConvState(phone, { productCode: code, aiCount: 0, aiWindowStart: null });
+    // Nouveau code produit -> quota IA frais ET abandon d'un checkout en cours :
+    // le client change d'article, on ne garde pas le nom/adresse de l'ancien.
+    if (phone) await setConvState(phone, { productCode: code, aiCount: 0, aiWindowStart: null, checkout: null });
     return [{
       kind: 'buttons',
       body: ficheProduitText(produit),
@@ -399,6 +698,21 @@ async function decideReplies(parsed, deps) {
   // sujet, répondue par IA en se basant UNIQUEMENT sur les vraies données produit.
   if (phone) {
     const state = await getConvState(phone);
+
+    // Un parcours de commande est en cours -> ce message répond à une de ses
+    // questions (nom, adresse, wallet). Prioritaire sur la question libre IA.
+    if (CHAT_CHECKOUT && checkoutActive(state)) {
+      const checkoutActions = await handleCheckoutMessage({
+        phone,
+        text: parsed.text,
+        checkout: state.checkout,
+        findProduct,
+        setConvState,
+        createGuestOrder,
+        initiatePayment,
+      });
+      if (checkoutActions) return checkoutActions;
+    }
     const hasActiveProduct = state
       && state.productCode
       && (Date.now() - (state.updatedAt || 0)) < PRODUCT_CONTEXT_TTL_MS;
@@ -491,7 +805,7 @@ async function defaultGetConversationState(phone) {
     try {
       const { data, error } = await supabase
         .from('whatsapp_conversation_state')
-        .select('product_code, ai_question_count, ai_window_started_at, updated_at')
+        .select('product_code, ai_question_count, ai_window_started_at, checkout, updated_at')
         .eq('phone', phone)
         .maybeSingle();
       if (!error) {
@@ -501,6 +815,7 @@ async function defaultGetConversationState(phone) {
             updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : 0,
             aiCount: data.ai_question_count || 0,
             aiWindowStart: data.ai_window_started_at ? new Date(data.ai_window_started_at).getTime() : 0,
+            checkout: data.checkout || null,
           };
         }
         // Aucune ligne en base. Ça peut être un vrai « numéro jamais vu »… ou une
@@ -531,6 +846,7 @@ async function defaultSetConversationState(phone, patch) {
           product_code: next.productCode || null,
           ai_question_count: next.aiCount || 0,
           ai_window_started_at: next.aiWindowStart ? new Date(next.aiWindowStart).toISOString() : null,
+          checkout: next.checkout || null,
           updated_at: new Date(next.updatedAt).toISOString(),
         }, { onConflict: 'phone' });
       if (error) console.warn('[WABOT] setConversationState Supabase erreur:', error.message);
@@ -831,6 +1147,10 @@ async function dryButtons(to, body, buttons, from) {
 async function dryCta(to, body, displayText, url, from) {
   console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (cta):\n${body}\n  bouton: [${displayText}] -> ${url}\n`);
 }
+async function dryList(to, body, buttonLabel, rows, from) {
+  const r = (rows || []).map((x) => `[${x.title} | ${x.id}]`).join('  ');
+  console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (liste):\n${body}\n  bouton: [${buttonLabel}]\n  lignes: ${r}\n`);
+}
 
 // `from` = numéro business qui a reçu le message entrant (parsed.to). On répond
 // DEPUIS ce numéro pour tenir le routage multi-numéro (prod/démo). Optionnel :
@@ -840,9 +1160,11 @@ async function executeAction(action, to, senders, from) {
   const sendText = s.sendText || (DRY_RUN ? dryText : sendWhatsApp);
   const sendButtons = s.sendButtons || (DRY_RUN ? dryButtons : sendWhatsAppButtons);
   const sendCta = s.sendCtaUrl || (DRY_RUN ? dryCta : sendWhatsAppCtaUrl);
+  const sendList = s.sendList || (DRY_RUN ? dryList : sendWhatsAppList);
   if (action.kind === 'text') return sendText(to, action.body, from);
   if (action.kind === 'buttons') return sendButtons(to, action.body, action.buttons, from);
   if (action.kind === 'cta') return sendCta(to, action.body, action.displayText, action.url, from);
+  if (action.kind === 'list') return sendList(to, action.body, action.buttonLabel, action.rows, from);
   return null;
 }
 
@@ -855,12 +1177,15 @@ function createBot(deps = {}) {
   const getConversationState = deps.getConversationState || defaultGetConversationState;
   const setConversationState = deps.setConversationState || defaultSetConversationState;
   const askProductQuestion = deps.askProductQuestion || askProductQuestionAI;
+  const createGuestOrder = deps.createGuestOrder || defaultCreateGuestOrder;
+  const initiatePayment = deps.initiatePayment || defaultInitiatePayment;
   const markRead = deps.markDeliveryNotificationRead || markDeliveryNotificationRead;
   const smsNow = deps.sendFallbackSmsNow || sendFallbackSmsNow;
   const senders = {
     sendText: deps.sendText,
     sendButtons: deps.sendButtons,
     sendCtaUrl: deps.sendCtaUrl,
+    sendList: deps.sendList,
   };
 
   async function processWebhook(body) {
@@ -892,6 +1217,8 @@ function createBot(deps = {}) {
       getConversationState,
       setConversationState,
       askProductQuestion,
+      createGuestOrder,
+      initiatePayment,
     });
     for (const action of actions) {
       // Répondre DEPUIS le numéro qui a reçu le message (parsed.to) -> routage

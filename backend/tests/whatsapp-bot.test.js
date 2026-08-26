@@ -36,6 +36,7 @@ function makeRecorder() {
     sendText: async (to, body, from) => sends.push({ kind: 'text', to, body, from }),
     sendButtons: async (to, body, buttons, from) => sends.push({ kind: 'buttons', to, body, buttons, from }),
     sendCtaUrl: async (to, body, displayText, url, from) => sends.push({ kind: 'cta', to, body, displayText, url, from }),
+    sendList: async (to, body, buttonLabel, rows, from) => sends.push({ kind: 'list', to, body, buttonLabel, rows, from }),
   };
 }
 
@@ -59,11 +60,26 @@ function makeBot(extra = {}) {
   // envoie par erreur un événement de statut sans l'injecter explicitement.
   const markDeliveryNotificationRead = async () => {};
   const sendFallbackSmsNow = async () => {};
+  // Stubs du checkout conversationnel : aucune commande ni paiement réel. `orders`
+  // permet de vérifier ce qui a été transmis à /api/guest/order.
+  const orders = [];
+  const createGuestOrder = async (payload) => {
+    orders.push(payload);
+    return {
+      success: true,
+      orderId: 'ord-1',
+      orderCode: 'VLD-0001',
+      totalAmount: bot.computeFees(FAKE.prix).total,
+      productName: FAKE.nom,
+      buyerPhone: payload.buyerPhone,
+    };
+  };
+  const initiatePayment = async () => ({ url: 'https://pay.test/abc' });
   const b = bot.createBot({
     findProduct, isDuplicate, getConversationState, setConversationState, askProductQuestion,
-    markDeliveryNotificationRead, sendFallbackSmsNow, ...rec, ...extra,
+    markDeliveryNotificationRead, sendFallbackSmsNow, createGuestOrder, initiatePayment, ...rec, ...extra,
   });
-  return { b, rec };
+  return { b, rec, orders };
 }
 
 let _mid = 0;
@@ -80,6 +96,10 @@ function inboundStatusEvent(requestId, status, reason) {
     event: { event_type: 'DELIVERY_EVENTS' },
     event_content: { message_status },
   };
+}
+// Sélection d'une ligne de liste : D7 renvoie `list_reply.id` (et non `button_reply`).
+function inboundListReply(id, msgId, from = '221771112233') {
+  return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { list_reply: { id } } } } };
 }
 function inboundButton(id, msgId, from = '221771112233') {
   return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { button_reply: { id } } } } };
@@ -186,16 +206,15 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends.length, 1, `attendu 1 envoi, obtenu ${rec.sends.length}`);
   });
 
-  // Crit. 12 : bouton pay -> message CTA url vers /product/{code}
-  await test('crit.12 pay:PD3431 -> CTA url /product/PD3431', async () => {
+  // Crit. 12 (révisé) : le bouton « Payer » ouvre désormais le checkout dans le chat.
+  // L'ancien envoi direct du lien web reste accessible via WHATSAPP_CHAT_CHECKOUT=false.
+  await test('crit.12 pay:PD3431 -> démarre le checkout et demande le nom', async () => {
     const { b, rec } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
     assert.strictEqual(rec.sends.length, 1);
-    assert.strictEqual(rec.sends[0].kind, 'cta');
-    assert.strictEqual(rec.sends[0].url, 'https://www.validel.shop/product/PD3431');
-    assert.ok(rec.sends[0].displayText.length <= 20);
+    assert.strictEqual(rec.sends[0].kind, 'text');
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[0].body), 'doit demander le nom');
   });
-
   // Crit. 13 : bouton faq -> menu à 3 boutons
   await test('crit.13 faq:PD3431 -> menu 3 boutons', async () => {
     const { b, rec } = makeBot();
@@ -382,6 +401,151 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const { b, rec } = makeBot();
     await b.processWebhook(inboundText('PD3431', 'm-legacy'));
     assert.strictEqual(rec.sends[0].from, null);
+  });
+
+
+  // --- Checkout conversationnel : nom + quartier + adresse + wallet dans le chat ---
+
+  await test('checkout complet : nom -> quartier (liste) -> repère -> Wave -> lien de paiement', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Awa Diop'));
+
+    // Étape quartier : une liste, pas une question ouverte.
+    const liste = rec.sends[1];
+    assert.strictEqual(liste.kind, 'list');
+    assert.ok(liste.rows.length <= 10, 'WhatsApp plafonne une liste à 10 lignes');
+    assert.strictEqual(liste.rows[0].id, 'co:z:0:PD3431');
+    assert.strictEqual(liste.rows[liste.rows.length - 1].id, 'co:z:autre:PD3431');
+    assert.ok(liste.buttonLabel.length <= 20);
+    assert.ok(liste.rows.every((r) => r.title.length <= 24), 'titre de ligne limité à 24 caractères');
+
+    await b.processWebhook(inboundListReply('co:z:2:PD3431')); // Sacré-Cœur
+    assert.ok(/Sacré-Cœur/.test(rec.sends[2].body), 'doit rappeler le quartier choisi');
+
+    await b.processWebhook(inboundText('villa 45, face pharmacie'));
+    assert.strictEqual(rec.sends[3].kind, 'buttons');
+    assert.deepStrictEqual(rec.sends[3].buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
+
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    const final = rec.sends[4];
+    assert.strictEqual(final.kind, 'cta');
+    assert.strictEqual(final.url, 'https://pay.test/abc');
+    assert.ok(final.displayText.length <= 20, 'display_text WhatsApp limité à 20 caractères');
+
+    // Le téléphone n'est jamais demandé : il vient du compte WhatsApp émetteur.
+    assert.strictEqual(orders.length, 1);
+    assert.deepStrictEqual(
+      { ...orders[0] },
+      {
+        productCode: 'PD3431',
+        buyerName: 'Awa Diop',
+        buyerPhone: '221771112233',
+        deliveryAddress: 'Sacré-Cœur — villa 45, face pharmacie',
+        quantity: 1,
+      },
+    );
+  });
+
+  await test('checkout : « Autre quartier » -> adresse entièrement libre', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Moussa Fall'));
+    await b.processWebhook(inboundListReply('co:z:autre:PD3431'));
+    await b.processWebhook(inboundText('Mbour, quartier Golf, face station'));
+    await b.processWebhook(inboundText('wave'));
+    assert.strictEqual(orders.length, 1);
+    // Aucun quartier préfixé : l'acheteur a tout écrit lui-même.
+    assert.strictEqual(orders[0].deliveryAddress, 'Mbour, quartier Golf, face station');
+  });
+
+  // Filet : si la liste ne passe pas côté D7, l'acheteur tape son adresse et ça marche.
+  await test('checkout : adresse tapée au lieu de choisir dans la liste', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Fatou Sow'));
+    await b.processWebhook(inboundText('Pikine, rue 12, face école'));
+    assert.strictEqual(rec.sends[2].kind, 'buttons', 'doit sauter directement au choix du wallet');
+    await b.processWebhook(inboundText('orange'));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].deliveryAddress, 'Pikine, rue 12, face école');
+  });
+
+  await test('checkout : « annuler » arrête le parcours et repropose les boutons', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('annuler'));
+    assert.strictEqual(rec.sends[1].kind, 'buttons');
+    assert.ok(/annul/i.test(rec.sends[1].body));
+    assert.strictEqual(orders.length, 0, 'aucune commande ne doit être créée');
+  });
+
+  await test('checkout : nom trop court -> redemande sans avancer', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('A'));
+    assert.strictEqual(rec.sends[1].kind, 'text');
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[1].body));
+    // L'étape n'a pas avancé : le message suivant est toujours interprété comme un nom.
+    await b.processWebhook(inboundText('Awa Diop'));
+    assert.strictEqual(rec.sends[2].kind, 'list');
+  });
+
+  await test('checkout : un nouveau code produit annule le parcours en cours', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundText('PD3431'));
+    // Retour à la fiche produit, pas à l'étape quartier.
+    assert.strictEqual(rec.sends[2].kind, 'buttons');
+    assert.ok(/Caisse de Yaourt/.test(rec.sends[2].body));
+    // Et le parcours repart de zéro : le message suivant redemande le nom.
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[3].body));
+    assert.strictEqual(orders.length, 0);
+  });
+
+  // Règle centrale : ne JAMAIS laisser l'acheteur sans moyen de payer.
+  await test('checkout : échec création commande -> repli sur le lien web', async () => {
+    const { b, rec } = makeBot({
+      createGuestOrder: async () => { throw new Error('guest/order indisponible'); },
+    });
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45'));
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    const final = rec.sends[3];
+    assert.strictEqual(final.kind, 'cta');
+    assert.strictEqual(final.url, 'https://www.validel.shop/product/PD3431');
+  });
+
+  await test('checkout : échec initiation paiement -> repli sur le lien web', async () => {
+    const { b, rec } = makeBot({
+      initiatePayment: async () => { throw new Error('pixpay indisponible'); },
+    });
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45'));
+    await b.processWebhook(inboundText('wave'));
+    assert.strictEqual(rec.sends[3].kind, 'cta');
+    assert.strictEqual(rec.sends[3].url, 'https://www.validel.shop/product/PD3431');
+  });
+
+  // Bouton wallet reçu alors qu'aucun parcours n'est en cours (parcours expiré,
+  // état perdu au redémarrage) : on ne bloque pas l'acheteur.
+  await test('checkout : bouton wallet sans parcours actif -> lien web', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'cta');
+    assert.strictEqual(rec.sends[0].url, 'https://www.validel.shop/product/PD3431');
+    assert.strictEqual(orders.length, 0);
+  });
+
+  await test('checkout : quartier choisi sans parcours actif -> lien web', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundListReply('co:z:0:PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'cta');
+    assert.strictEqual(rec.sends[0].url, 'https://www.validel.shop/product/PD3431');
   });
 
   console.log(`\n${passed} réussis, ${failed} échoués`);
