@@ -86,11 +86,19 @@ const DELIVERY_ZONES = String(
 ).split(',').map((z) => z.trim()).filter(Boolean).slice(0, 9);
 const ZONE_AUTRE = 'autre';
 
+// Bannière affichée en en-tête du message « Comment souhaitez-vous payer ? ».
+// Vide = aucun en-tête (comportement inchangé). Générée par
+// scripts/generate-wallet-banner.mjs à partir des logos de public/images/.
+const WALLET_BANNER_URL = String(process.env.WHATSAPP_WALLET_BANNER_URL || '').trim();
+
 // Wallets acceptés. Les identifiants sont ceux qu'attend le backend Pixpay
 // (voir pixpay.js sendMoney) : toute autre valeur y lève une exception.
 const WALLETS = {
-  w: { id: 'wave-senegal', label: 'Wave', route: '/api/payment/pixpay-wave/initiate' },
-  o: { id: 'orange-senegal', label: 'Orange Money', route: '/api/payment/pixpay/initiate' },
+  // `icon` : les boutons WhatsApp n'acceptent aucune image, seulement un titre de
+  // 20 caractères — l'emoji dans le libellé est le seul repère visuel possible.
+  // Mêmes symboles que l'admin (walletLogos / AdminDashboard) pour rester cohérent.
+  w: { id: 'wave-senegal', label: 'Wave', icon: '🌊', route: '/api/payment/pixpay-wave/initiate' },
+  o: { id: 'orange-senegal', label: 'Orange Money', icon: '🟠', route: '/api/payment/pixpay/initiate' },
 };
 
 // ---------------------------------------------------------------------------
@@ -361,11 +369,13 @@ const txtDemandeNom = (produit) => [
   '_Tapez « annuler » à tout moment pour arrêter._',
 ].join('\n');
 
+// Utilisé uniquement quand l'acheteur choisit « Autre quartier », ou s'il tape au
+// lieu de sélectionner. Le quartier seul suffit : les livreurs appellent avant de
+// livrer, et le numéro de l'acheteur est déjà sur la commande (compte WhatsApp).
 const TXT_DEMANDE_ADRESSE = [
-  '2️⃣ *Votre adresse de livraison ?*',
+  '2️⃣ *Votre quartier de livraison ?*',
   '',
-  'Quartier, rue et un point de repère.',
-  '_Ex : Sacré-Cœur 3, villa 45, face pharmacie._',
+  '_Ex : Mbour, quartier Golf._',
 ].join('\n');
 
 const TXT_DEMANDE_ZONE = [
@@ -374,13 +384,10 @@ const TXT_DEMANDE_ZONE = [
   'Choisissez votre quartier dans la liste.',
 ].join('\n');
 const TXT_ZONE_BOUTON = 'Choisir le quartier';
-const txtDemandeAdresseDetail = (zone) => (zone
-  ? [`📍 *${zone}* — précisez la rue et un point de repère.`, '', '_Ex : rue 12, face pharmacie._'].join('\n')
-  : TXT_DEMANDE_ADRESSE);
 
 const TXT_DEMANDE_WALLET = '3️⃣ *Comment souhaitez-vous payer ?*';
 const TXT_NOM_INVALIDE = 'Merci d\'indiquer votre prénom et nom (entre 2 et 60 caractères).';
-const TXT_ADRESSE_INVALIDE = 'Merci de préciser un peu plus votre adresse (quartier + point de repère).';
+const TXT_ADRESSE_INVALIDE = 'Merci d\'indiquer votre quartier de livraison (au moins 5 caractères).';
 const TXT_WALLET_INVALIDE = 'Choisissez *Wave* ou *Orange Money* avec les boutons ci-dessous.';
 const TXT_CHECKOUT_ANNULE = 'Commande annulée. Vous pouvez la reprendre quand vous voulez.';
 const TXT_CHECKOUT_EN_COURS = 'Un instant, je finalise votre commande…';
@@ -404,9 +411,18 @@ function txtRecapCommande(produit, order, walletLabel) {
 }
 
 const btnWallets = (code) => [
-  { id: `co:w:${code}`, title: WALLETS.w.label },
-  { id: `co:o:${code}`, title: WALLETS.o.label },
+  { id: `co:w:${code}`, title: `${WALLETS.w.icon} ${WALLETS.w.label}` },
+  { id: `co:o:${code}`, title: `${WALLETS.o.icon} ${WALLETS.o.label}` },
 ];
+
+// Question « comment payer ? » : mêmes boutons partout, plus la bannière des deux
+// logos en en-tête quand WHATSAPP_WALLET_BANNER_URL est renseignée.
+const replyDemandeWallet = (code, body = TXT_DEMANDE_WALLET) => ({
+  kind: 'buttons',
+  body,
+  buttons: btnWallets(code),
+  ...(WALLET_BANNER_URL ? { headerImageUrl: WALLET_BANNER_URL } : {}),
+});
 
 // Lignes de la liste des quartiers. WhatsApp plafonne à 10 lignes au total :
 // 9 quartiers + « Autre quartier », qui bascule sur une saisie libre.
@@ -556,20 +572,18 @@ async function handleCheckoutMessage(ctx) {
   if (checkout.step === 'zone') {
     if (value.length < 5 || value.length > 200) return [{ kind: 'text', body: TXT_ADRESSE_INVALIDE }];
     await setConvState(phone, { checkout: { ...checkout, step: 'wallet', zone: null, address: value } });
-    return [{ kind: 'buttons', body: TXT_DEMANDE_WALLET, buttons: btnWallets(checkout.code) }];
+    return [replyDemandeWallet(checkout.code)];
   }
 
   if (checkout.step === 'address') {
     if (value.length < 5 || value.length > 200) return [{ kind: 'text', body: TXT_ADRESSE_INVALIDE }];
-    // Quartier choisi dans la liste + détail saisi -> une adresse exploitable par le livreur.
-    const adresse = checkout.zone ? `${checkout.zone} — ${value}` : value;
-    await setConvState(phone, { checkout: { ...checkout, step: 'wallet', address: adresse } });
-    return [{ kind: 'buttons', body: TXT_DEMANDE_WALLET, buttons: btnWallets(checkout.code) }];
+    await setConvState(phone, { checkout: { ...checkout, step: 'wallet', address: value } });
+    return [replyDemandeWallet(checkout.code)];
   }
   if (checkout.step === 'wallet') {
     const walletKey = walletFromText(value);
     if (!walletKey) {
-      return [{ kind: 'buttons', body: TXT_WALLET_INVALIDE, buttons: btnWallets(checkout.code) }];
+      return [replyDemandeWallet(checkout.code, TXT_WALLET_INVALIDE)];
     }
     return finalizeCheckout({ ...ctx, walletKey });
   }
@@ -629,11 +643,18 @@ async function decideReplies(parsed, deps) {
 
       if (kind === 'z') {
         if (perdu) return repliesCheckoutPerdu(code, findProduct);
-        // « Autre quartier » -> pas de zone imposée, l'acheteur écrit son adresse complète.
         const zoneKey = parts[2];
-        const zone = zoneKey === ZONE_AUTRE ? null : (DELIVERY_ZONES[Number(zoneKey)] || null);
-        await setConvState(phone, { checkout: { ...state.checkout, step: 'address', zone } });
-        return [{ kind: 'text', body: txtDemandeAdresseDetail(zone) }];
+        // « Autre quartier » : le seul cas où l'on demande encore une saisie libre.
+        if (zoneKey === ZONE_AUTRE) {
+          await setConvState(phone, { checkout: { ...state.checkout, step: 'address', zone: null } });
+          return [{ kind: 'text', body: TXT_DEMANDE_ADRESSE }];
+        }
+        // Quartier connu -> on n'exige ni rue ni point de repère : le livreur appelle
+        // avant de livrer, et le numéro de l'acheteur est déjà sur la commande.
+        const zone = DELIVERY_ZONES[Number(zoneKey)];
+        if (!zone) return repliesCheckoutPerdu(code, findProduct);
+        await setConvState(phone, { checkout: { ...state.checkout, step: 'wallet', zone, address: zone } });
+        return [replyDemandeWallet(code)];
       }
 
       if (!WALLETS[kind] || perdu) return repliesCheckoutPerdu(code, findProduct);
@@ -1140,7 +1161,8 @@ if (String(process.env.ENABLE_WHATSAPP_READ_FALLBACK || 'true').toLowerCase() !=
 async function dryText(to, body, from) {
   console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (texte):\n${body}\n`);
 }
-async function dryButtons(to, body, buttons, from) {
+async function dryButtons(to, body, buttons, from, options = {}) {
+  if (options.headerImageUrl) console.log(`[WABOT][DRY] en-tête image: ${options.headerImageUrl}`);
   const b = (buttons || []).map((x) => `[${x.title} | ${x.id}]`).join('  ');
   console.log(`\n[WABOT][DRY] ${from || '(défaut)'} -> ${to} (boutons):\n${body}\n  boutons: ${b}\n`);
 }
@@ -1162,7 +1184,7 @@ async function executeAction(action, to, senders, from) {
   const sendCta = s.sendCtaUrl || (DRY_RUN ? dryCta : sendWhatsAppCtaUrl);
   const sendList = s.sendList || (DRY_RUN ? dryList : sendWhatsAppList);
   if (action.kind === 'text') return sendText(to, action.body, from);
-  if (action.kind === 'buttons') return sendButtons(to, action.body, action.buttons, from);
+  if (action.kind === 'buttons') return sendButtons(to, action.body, action.buttons, from, { headerImageUrl: action.headerImageUrl });
   if (action.kind === 'cta') return sendCta(to, action.body, action.displayText, action.url, from);
   if (action.kind === 'list') return sendList(to, action.body, action.buttonLabel, action.rows, from);
   return null;

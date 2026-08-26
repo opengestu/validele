@@ -8,6 +8,7 @@
 process.env.WHATSAPP_WEBHOOK_SECRET = 'testsecret';
 process.env.VALIDEL_COMMISSION_PCT = '3';
 process.env.PUBLIC_WEB_BASE_URL = 'https://www.validel.shop';
+process.env.WHATSAPP_WALLET_BANNER_URL = 'https://www.validel.shop/images/wallets-wave-orange.png';
 
 const assert = require('assert');
 const bot = require('../whatsapp-bot');
@@ -34,7 +35,7 @@ function makeRecorder() {
   return {
     sends,
     sendText: async (to, body, from) => sends.push({ kind: 'text', to, body, from }),
-    sendButtons: async (to, body, buttons, from) => sends.push({ kind: 'buttons', to, body, buttons, from }),
+    sendButtons: async (to, body, buttons, from, options = {}) => sends.push({ kind: 'buttons', to, body, buttons, from, headerImageUrl: options.headerImageUrl }),
     sendCtaUrl: async (to, body, displayText, url, from) => sends.push({ kind: 'cta', to, body, displayText, url, from }),
     sendList: async (to, body, buttonLabel, rows, from) => sends.push({ kind: 'list', to, body, buttonLabel, rows, from }),
   };
@@ -406,7 +407,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
 
   // --- Checkout conversationnel : nom + quartier + adresse + wallet dans le chat ---
 
-  await test('checkout complet : nom -> quartier (liste) -> repère -> Wave -> lien de paiement', async () => {
+  await test('checkout complet : nom -> quartier (liste) -> Wave -> lien de paiement', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
     await b.processWebhook(inboundText('Awa Diop'));
@@ -420,15 +421,21 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(liste.buttonLabel.length <= 20);
     assert.ok(liste.rows.every((r) => r.title.length <= 24), 'titre de ligne limité à 24 caractères');
 
+    // Quartier connu -> on passe DIRECTEMENT au paiement : ni rue ni point de repère.
+    // Le livreur appelle avant de livrer, et le numéro est déjà sur la commande.
     await b.processWebhook(inboundListReply('co:z:2:PD3431')); // Sacré-Cœur
-    assert.ok(/Sacré-Cœur/.test(rec.sends[2].body), 'doit rappeler le quartier choisi');
-
-    await b.processWebhook(inboundText('villa 45, face pharmacie'));
-    assert.strictEqual(rec.sends[3].kind, 'buttons');
-    assert.deepStrictEqual(rec.sends[3].buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
+    const wallets = rec.sends[2];
+    assert.strictEqual(wallets.kind, 'buttons');
+    assert.deepStrictEqual(wallets.buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
+    // Les boutons ne peuvent pas porter d'image : l'emoji dans le titre est le seul repère.
+    assert.ok(wallets.buttons.every((x) => x.title.length <= 20), 'titre de bouton limité à 20 caractères');
+    assert.ok(/🌊/.test(wallets.buttons[0].title) && /Wave/.test(wallets.buttons[0].title));
+    assert.ok(/🟠/.test(wallets.buttons[1].title) && /Orange Money/.test(wallets.buttons[1].title));
+    // Seul visuel possible : la bannière des deux logos en en-tête du message.
+    assert.strictEqual(wallets.headerImageUrl, 'https://www.validel.shop/images/wallets-wave-orange.png');
 
     await b.processWebhook(inboundButton('co:w:PD3431'));
-    const final = rec.sends[4];
+    const final = rec.sends[3];
     assert.strictEqual(final.kind, 'cta');
     assert.strictEqual(final.url, 'https://pay.test/abc');
     assert.ok(final.displayText.length <= 20, 'display_text WhatsApp limité à 20 caractères');
@@ -441,12 +448,11 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
         productCode: 'PD3431',
         buyerName: 'Awa Diop',
         buyerPhone: '221771112233',
-        deliveryAddress: 'Sacré-Cœur — villa 45, face pharmacie',
+        deliveryAddress: 'Sacré-Cœur',
         quantity: 1,
       },
     );
   });
-
   await test('checkout : « Autre quartier » -> adresse entièrement libre', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));

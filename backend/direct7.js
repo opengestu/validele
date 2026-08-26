@@ -387,7 +387,10 @@ async function postD7Whatsapp(messagePayload) {
 // Envoi d'un message avec 1 à 3 boutons de réponse rapide.
 // buttons = [{ id, title }] ; title tronqué à 20 caractères (contrainte WhatsApp),
 // id limité à 256 caractères. Max 3 boutons.
-async function sendWhatsAppButtons(phone, bodyText, buttons, from) {
+// `options.headerImageUrl` : un bouton de réponse WhatsApp n'accepte que `id` et
+// `title` — aucune image. Le seul visuel possible est un en-tête image, unique pour
+// tout le message (ex. bannière Wave + Orange au-dessus des deux boutons).
+async function sendWhatsAppButtons(phone, bodyText, buttons, from, options = {}) {
   const safeButtons = (Array.isArray(buttons) ? buttons : []).slice(0, 3).map((b) => ({
     type: 'reply',
     reply: {
@@ -395,18 +398,34 @@ async function sendWhatsAppButtons(phone, bodyText, buttons, from) {
       title: String(b.title || '').slice(0, 20),
     },
   }));
-  return postD7Whatsapp({
-    originator: resolveWhatsAppOriginator(from),
-    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
-    content: {
-      message_type: 'INTERACTIVE',
-      interactive: {
-        type: 'button',
-        body: { text: String(bodyText || '').slice(0, 1024) },
-        action: { buttons: safeButtons },
-      },
-    },
-  });
+
+  const build = (withHeader) => {
+    const interactive = {
+      type: 'button',
+      body: { text: String(bodyText || '').slice(0, 1024) },
+      action: { buttons: safeButtons },
+    };
+    if (withHeader) {
+      interactive.header = { type: 'image', image: { link: String(options.headerImageUrl) } };
+    }
+    return {
+      originator: resolveWhatsAppOriginator(from),
+      recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+      content: { message_type: 'INTERACTIVE', interactive },
+    };
+  };
+
+  if (!options.headerImageUrl) return postD7Whatsapp(build(false));
+
+  try {
+    return await postD7Whatsapp(build(true));
+  } catch (e) {
+    // D7 ne documente pas `header` dans son payload interactif : si l'en-tête est
+    // refusé, on renvoie le message sans image plutôt que de laisser l'acheteur
+    // sans boutons de paiement.
+    console.warn('[DIRECT7] En-tête image refusé, renvoi sans image:', e && e.message);
+    return postD7Whatsapp(build(false));
+  }
 }
 
 // Envoi d'un message avec un unique bouton CTA url (ouvre un lien). Ne se combine pas
