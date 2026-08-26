@@ -495,12 +495,20 @@ async function defaultGetConversationState(phone) {
         .eq('phone', phone)
         .maybeSingle();
       if (!error) {
-        return data ? {
-          productCode: data.product_code,
-          updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : 0,
-          aiCount: data.ai_question_count || 0,
-          aiWindowStart: data.ai_window_started_at ? new Date(data.ai_window_started_at).getTime() : 0,
-        } : null;
+        if (data) {
+          return {
+            productCode: data.product_code,
+            updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : 0,
+            aiCount: data.ai_question_count || 0,
+            aiWindowStart: data.ai_window_started_at ? new Date(data.ai_window_started_at).getTime() : 0,
+          };
+        }
+        // Aucune ligne en base. Ça peut être un vrai « numéro jamais vu »… ou une
+        // écriture refusée en amont : sous RLS, un SELECT ne renvoie PAS d'erreur,
+        // il renvoie zéro ligne. Retourner null ici rendait le secours mémoire
+        // inatteignable — l'état était écrit en mémoire puis jamais relu, donc le
+        // bot oubliait le produit actif et répondait « envoyez un code produit ».
+        return memConversationState.get(phone) || null;
       }
       console.warn('[WABOT] getConversationState Supabase indisponible, secours mémoire:', error.message);
     } catch (e) {

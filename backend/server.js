@@ -1805,7 +1805,17 @@ app.post('/api/debug/admin/reconcile-payments', requireAdmin, async (req, res) =
     if (error) return res.status(500).json({ error: 'failed fetching transactions' });
 
     const results = [];
+    // Les sorties d'argent (payouts, retraits admin, remboursements) ne peuvent JAMAIS être
+    // confirmées à l'aveugle : seul l'IPN Pixpay fait foi. `forceConfirm` reste réservé aux
+    // paiements entrants de commande.
+    const MONEY_OUT_TYPES = ['payout', 'vendor_payout', 'admin_withdrawal', 'withdrawal', 'refund'];
+
     for (const tx of txs || []) {
+      const txType = String(tx.transaction_type || '').toLowerCase();
+      if (MONEY_OUT_TYPES.includes(txType)) {
+        results.push({ tx: tx.id, ok: false, reason: 'sortie d\'argent : confirmation manuelle interdite, attendre l\'IPN Pixpay' });
+        continue;
+      }
       let providerOk = false;
       try {
         const pixpay = require('./pixpay');
@@ -2943,6 +2953,72 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     const isOrderPaymentType = !['payout', 'vendor_payout', 'refund', 'admin_withdrawal', 'withdrawal'].includes(normalizedTransactionType);
     const isUuidOrderId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(orderId || ''));
 
+    // ---------- Transferts admin (retrait Pixpay -> Wave / Orange Money) ----------
+    // L'IPN est la SEULE source de vérité sur l'issue réelle du transfert : à la création on ne
+    // connaît que l'accusé de réception Pixpay (PENDING1). Sans cette mise à jour, la ligne
+    // restait bloquée sur PENDING1 et l'admin voyait "réussi" alors que Wave avait refusé.
+    const isAdminWithdrawal = ['admin_withdrawal', 'withdrawal'].includes(normalizedTransactionType)
+      || String(orderId || '').startsWith('TRF-');
+
+    if (isAdminWithdrawal) {
+      const dbClient = supabaseAdmin || supabase;
+      const finalState = String(state).toUpperCase();
+      const transferUpdate = {
+        status: finalState,
+        provider_transaction_id: provider_id || transaction_id || null,
+        // admin_transfers n'a pas de colonne provider_error : on conserve l'IPN complet
+        // (état, réponse et erreur fournisseur) pour pouvoir diagnostiquer un refus Wave.
+        provider_response: {
+          state: finalState,
+          response: response === undefined ? null : response,
+          error: error === undefined ? null : error,
+          received_at: new Date().toISOString()
+        },
+        updated_at: new Date().toISOString()
+      };
+
+      try {
+        let updatedRows = null;
+
+        if (String(orderId || '').startsWith('TRF-')) {
+          const { data, error: trfErr } = await dbClient
+            .from('admin_transfers')
+            .update(transferUpdate)
+            .eq('id', orderId)
+            .select('id, amount, phone, wallet_type');
+          if (trfErr) throw trfErr;
+          updatedRows = data;
+        }
+
+        // Repli : retrouver le transfert via l'id de transaction Pixpay
+        if ((!updatedRows || updatedRows.length === 0) && transaction_id) {
+          const { data, error: trfErr } = await dbClient
+            .from('admin_transfers')
+            .update(transferUpdate)
+            .eq('provider_transaction_id', transaction_id)
+            .select('id, amount, phone, wallet_type');
+          if (trfErr) throw trfErr;
+          updatedRows = data;
+        }
+
+        if (!updatedRows || updatedRows.length === 0) {
+          console.warn('[PIXPAY-WEBHOOK] ⚠️ Transfert admin introuvable pour cet IPN:', { orderId, transaction_id, state: finalState });
+        } else if (finalState === 'FAILED') {
+          console.error('[PIXPAY-WEBHOOK] ❌ ECHEC transfert admin:', {
+            id: updatedRows[0].id,
+            amount: updatedRows[0].amount,
+            phone: updatedRows[0].phone,
+            wallet_type: updatedRows[0].wallet_type,
+            error: error || null
+          });
+        } else {
+          console.log('[PIXPAY-WEBHOOK] 💸 Transfert admin mis à jour:', { id: updatedRows[0].id, state: finalState });
+        }
+      } catch (e) {
+        console.error('[PIXPAY-WEBHOOK] Erreur mise à jour admin_transfers:', e?.message || e);
+      }
+    }
+
     if (state === 'SUCCESSFUL' && orderId && !isOrderPaymentType) {
       console.log('[PIXPAY-WEBHOOK] ℹ️ Transaction non-commande, mise à jour orders ignorée:', { orderId, transactionType: normalizedTransactionType });
     }
@@ -3144,14 +3220,21 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
       }
     }
 
-    // Si échec, notifier l'acheteur et l'admin mais NE PAS changer le status de la commande
-    if (state === 'FAILED' && orderId) {
-      console.error('[PIXPAY] ❌ Paiement échoué:', {
+    // Trace de tout échec, quel que soit le type de transaction (paiement, payout, retrait admin)
+    if (state === 'FAILED') {
+      console.error('[PIXPAY] ❌ Transaction échouée:', {
         transaction_id,
         orderId,
+        transactionType: normalizedTransactionType,
         error
       });
+    }
 
+    // Notification acheteur : uniquement pour un vrai paiement de commande (order_id = UUID).
+    // Les payouts et retraits admin portent un order_id non-UUID (ex: TRF-...) : interroger
+    // `orders` avec cet id déclenchait une erreur Postgres 22P02 avalée en log.
+    // NE PAS changer le status de la commande ici.
+    if (state === 'FAILED' && orderId && isOrderPaymentType && isUuidOrderId) {
       try {
         // Récupérer infos commande pour notifier l'acheteur (+ nom produit, pour
         // éviter le message cassé "Le paiement de votre commande votre produit a échoué").
@@ -4393,7 +4476,11 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Type de wallet invalide (wave-senegal ou orange-senegal)' });
     }
 
-    const adminUserId = req.adminUser?.id || 'admin';
+    // `created_by` est une colonne UUID (FK profiles.id). Y écrire la chaîne 'admin' faisait
+    // échouer l'insert en silence : le transfert partait chez Pixpay sans jamais être enregistré.
+    const rawAdminId = req.adminUser?.id || null;
+    const isUuidAdminId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(rawAdminId || ''));
+    const adminUserId = isUuidAdminId ? rawAdminId : null;
     const transferId = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
 
     console.log('[ADMIN] Initiating admin transfer:', { transferId, amount, phone, walletType, adminUserId });
@@ -4417,6 +4504,14 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
       db = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
     }
 
+    // État enregistré : c'est l'état BRUT renvoyé par Pixpay.
+    // `pixpayResult.success` signifie seulement "requête acceptée" (statut_code 200), PAS
+    // "transfert abouti". L'état final (SUCCESSFUL / FAILED) arrive plus tard via l'IPN,
+    // qui met cette ligne à jour (voir /api/payment/pixpay-webhook).
+    const transferStatus = pixpayResult.success
+      ? String(pixpayResult.state || 'PENDING1').toUpperCase()
+      : 'FAILED';
+
     // Try to insert into admin_transfers table
     const transferRecord = {
       id: transferId,
@@ -4424,17 +4519,26 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
       phone,
       wallet_type: walletType,
       note: note || null,
-      status: pixpayResult.success ? (pixpayResult.state || 'processing') : 'failed',
+      status: transferStatus,
       provider_transaction_id: pixpayResult.transaction_id || null,
-      provider_response: pixpayResult.raw || null,
+      provider_response: normalizeJsonField(pixpayResult.raw),
       created_by: adminUserId,
       created_at: new Date().toISOString()
     };
 
     const { error: insertErr } = await db.from('admin_transfers').insert(transferRecord);
     if (insertErr) {
-      console.warn('[ADMIN] Failed to record transfer in admin_transfers table:', insertErr.message);
-      // Still return success if PixPay worked
+      // L'argent a potentiellement déjà quitté Pixpay : renvoyer une erreur HTTP pousserait
+      // l'admin à relancer le transfert (double débit). On renvoie donc `recorded: false`
+      // pour que l'interface affiche une alerte explicite "à vérifier chez Pixpay".
+      console.error('[ADMIN] ⚠️ Transfert exécuté mais NON enregistré dans admin_transfers:', {
+        transferId,
+        amount: parseInt(amount),
+        phone,
+        walletType,
+        pixpay_transaction_id: pixpayResult.transaction_id || null,
+        error: insertErr.message
+      });
     }
 
     // Also record in payment_transactions for unified tracking
@@ -4443,9 +4547,9 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
       provider: 'pixpay',
       amount: parseInt(amount),
       phone,
-      status: pixpayResult.state || 'PENDING1',
+      status: transferStatus,
       transaction_type: 'admin_withdrawal',
-      raw_response: pixpayResult.raw,
+      raw_response: normalizeJsonField(pixpayResult.raw),
       provider_transaction_id: pixpayResult.transaction_id || null
     });
     if (txErr) {
@@ -4454,12 +4558,14 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
 
     return res.json({
       success: pixpayResult.success,
+      recorded: !insertErr,
+      warning: insertErr ? insertErr.message : undefined,
       transfer: {
         id: transferId,
         amount,
         phone,
         walletType,
-        status: pixpayResult.success ? 'processing' : 'failed',
+        status: transferStatus,
         provider_transaction_id: pixpayResult.transaction_id,
         message: pixpayResult.message
       },
@@ -5707,137 +5813,61 @@ app.post('/api/admin/sync-pending-transactions', requireAdmin, async (req, res) 
     
     console.log('[ADMIN] sync-pending-transactions: Found', pendingTxs.length, 'pending transactions');
     
+    // ⚠️ AUCUNE confirmation automatique ici.
+    // Pixpay n'expose pas d'endpoint de vérification de statut (cf. pixpay.checkTransactionStatus,
+    // qui est un stub). L'ancienne logique marquait "SUCCESSFUL" toute transaction de payout
+    // vieille de 30 minutes dont la réponse commençait par "EFB.", et écrivait un faux
+    // provider_response "operation success" : c'est ce qui affichait comme réussis des
+    // transferts refusés côté Wave. Cet endpoint se contente désormais d'inventorier ce qui
+    // est en attente et de signaler ce qui doit être vérifié manuellement chez Pixpay.
     const results = [];
-    let syncedCount = 0;
-    
+    const staleMinutes = parseInt(process.env.TRANSFER_STALE_MINUTES || '30', 10);
+    let staleCount = 0;
+
     for (const tx of pendingTxs) {
-      try {
-        // Check the raw_response for the actual status from Pixpay
-        let actualStatus = tx.status;
-        let rawData = null;
-        
-        // Parse raw_response if it's a string
-        if (tx.raw_response) {
-          try {
-            rawData = typeof tx.raw_response === 'string' ? JSON.parse(tx.raw_response) : tx.raw_response;
-          } catch (e) {
-            // ignore parse error
-          }
-        }
-        
-        // Check if the transaction type is a payout and has a response indicating success
-        const txType = tx.transaction_type || '';
-        const isPayout = txType === 'payout' || txType === 'vendor_payout' || txType === 'admin_withdrawal';
-        
-        // For payout transactions with PENDING1, check if they were actually processed
-        // Pixpay payouts with a "response" field like "EFB.xxxxx" typically succeeded
-        if (isPayout && rawData?.data?.response && rawData.data.response.startsWith('EFB.')) {
-          // This is likely a successful payout - check if the order/batch is already marked as paid
-          const orderId = tx.order_id;
-          const batchId = tx.batch_id;
-          
-          // Extract custom_data to get the real order_id for batch payouts
-          let customData = {};
-          if (rawData?.data?.custom_data) {
-            try {
-              customData = JSON.parse(rawData.data.custom_data);
-            } catch (e) {}
-          }
-          const realOrderId = customData.order_id || orderId;
-          
-          // Check if this is an old transaction (more than 30 minutes) - likely succeeded
-          const txAge = Date.now() - new Date(tx.created_at).getTime();
-          const isOld = txAge > 30 * 60 * 1000; // 30 minutes
-          
-          if (isOld) {
-            // Mark as SUCCESSFUL and finalize
-            actualStatus = 'SUCCESSFUL';
-            
-            await supabaseAdmin.from('payment_transactions').update({
-              status: 'SUCCESSFUL',
-              provider_response: { message: 'operation success', synced_at: new Date().toISOString() },
-              updated_at: new Date().toISOString()
-            }).eq('id', tx.id);
-            
-            // If it's an order payout, mark the order as paid
-            if (realOrderId) {
-              const { data: orderExists } = await supabaseAdmin.from('orders').select('id').eq('id', realOrderId).maybeSingle();
-              if (orderExists) {
-                await supabaseAdmin.from('orders').update({ 
-                  payout_status: 'paid', 
-                  payout_paid_at: new Date().toISOString() 
-                }).eq('id', realOrderId);
-              }
-            }
-            
-            // If it's a batch payout, mark batch items and orders as paid
-            if (batchId || (customData.order_id && !orderId)) {
-              const batchIdToUse = batchId || customData.order_id;
-              const { data: batchExists } = await supabaseAdmin.from('payout_batches').select('id').eq('id', batchIdToUse).maybeSingle();
-              if (batchExists) {
-                const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id, order_id').eq('batch_id', batchIdToUse);
-                if (items && items.length > 0) {
-                  const itemIds = items.map(i => i.id);
-                  const orderIds = items.map(i => i.order_id).filter(Boolean);
-                  await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-                  if (orderIds.length > 0) {
-                    await supabaseAdmin.from('orders').update({ 
-                      payout_status: 'paid', 
-                      payout_paid_at: new Date().toISOString() 
-                    }).in('id', orderIds);
-                  }
-                }
-                await supabaseAdmin.from('payout_batches').update({ 
-                  status: 'completed', 
-                  processed_at: new Date().toISOString() 
-                }).eq('id', batchIdToUse);
-              }
-            }
-            
-            syncedCount++;
-            results.push({ 
-              id: tx.id, 
-              transaction_id: tx.transaction_id, 
-              old_status: tx.status, 
-              new_status: 'SUCCESSFUL',
-              synced: true 
-            });
-          } else {
-            results.push({ 
-              id: tx.id, 
-              transaction_id: tx.transaction_id, 
-              status: tx.status, 
-              synced: false, 
-              reason: 'Transaction too recent, waiting for webhook' 
-            });
-          }
-        } else {
-          results.push({ 
-            id: tx.id, 
-            transaction_id: tx.transaction_id, 
-            status: tx.status, 
-            synced: false, 
-            reason: 'Not a payout or no EFB response' 
-          });
-        }
-      } catch (txError) {
-        console.error('[ADMIN] sync-pending-transactions: Error processing tx', tx.id, txError);
-        results.push({ 
-          id: tx.id, 
-          transaction_id: tx.transaction_id, 
-          synced: false, 
-          error: String(txError) 
+      const ageMs = Date.now() - new Date(tx.created_at).getTime();
+      const ageMinutes = Math.round(ageMs / 60000);
+      const isStale = ageMs > staleMinutes * 60 * 1000;
+      const txType = tx.transaction_type || '';
+
+      if (isStale) {
+        staleCount++;
+        console.warn('[ADMIN] sync-pending-transactions: aucun IPN depuis', ageMinutes, 'min — vérification manuelle requise:', {
+          transaction_id: tx.transaction_id,
+          type: txType,
+          amount: tx.amount,
+          phone: tx.phone,
+          status: tx.status
         });
       }
+
+      results.push({
+        id: tx.id,
+        transaction_id: tx.transaction_id,
+        transaction_type: txType,
+        amount: tx.amount,
+        phone: tx.phone,
+        status: tx.status,
+        age_minutes: ageMinutes,
+        synced: false,
+        needs_manual_check: isStale,
+        reason: isStale
+          ? 'Aucun IPN Pixpay reçu après ' + staleMinutes + ' min : à vérifier dans le tableau de bord Pixpay'
+          : 'En attente de l\'IPN Pixpay'
+      });
     }
-    
-    console.log('[ADMIN] sync-pending-transactions: Completed. Synced', syncedCount, 'transactions');
-    
-    return res.json({ 
-      success: true, 
-      synced: syncedCount, 
-      total: pendingTxs.length, 
-      results 
+
+    console.log('[ADMIN] sync-pending-transactions:', pendingTxs.length, 'en attente,', staleCount, 'à vérifier manuellement');
+
+    return res.json({
+      success: true,
+      synced: 0,
+      stale: staleCount,
+      total: pendingTxs.length,
+      message: staleCount > 0
+        ? staleCount + ' transaction(s) sans confirmation Pixpay. Aucune n\'a été marquée réussie : vérifiez-les dans le tableau de bord Pixpay.'
+        : 'Toutes les transactions en attente sont récentes et attendent encore l\'IPN Pixpay.',
+      results
     });
     
   } catch (error) {
@@ -5939,7 +5969,16 @@ if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
           return;
         }
 
+        // Une sortie d'argent (payout / retrait admin / remboursement) n'est jamais confirmée
+        // automatiquement : seul l'IPN Pixpay fait foi.
+        const MONEY_OUT_TYPES = ['payout', 'vendor_payout', 'admin_withdrawal', 'withdrawal', 'refund'];
+
         for (const tx of txs) {
+          const txType = String(tx.transaction_type || '').toLowerCase();
+          if (MONEY_OUT_TYPES.includes(txType)) {
+            console.log('[RECONCILER] Sortie d\'argent ignorée (confirmation manuelle interdite):', tx.transaction_id, txType);
+            continue;
+          }
           try {
             console.log('[RECONCILER] Inspecting tx:', tx.transaction_id, tx.id, 'order_id:', tx.order_id, 'status:', tx.status);
 
@@ -5992,6 +6031,57 @@ if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
     console.log(`[RECONCILER] Payment reconciler enabled (${expr})`);
   } catch (e) {
     console.warn('[RECONCILER] node-cron not installed, reconciler disabled');
+  }
+}
+
+// ---------- Veilleur des transferts admin ----------
+// Un transfert dont l'IPN Pixpay n'arrive jamais restait bloqué sur PENDING1, ce que
+// l'interface affichait comme "réussi". On le bascule explicitement sur UNKNOWN
+// ("À vérifier") après TRANSFER_STALE_MINUTES pour forcer une vérification manuelle.
+// Si l'IPN finit par arriver, le webhook écrase UNKNOWN par l'état réel.
+if (String(process.env.DISABLE_TRANSFER_WATCHDOG || 'false').toLowerCase() !== 'true') {
+  try {
+    const cron = require('node-cron');
+    const expr = process.env.TRANSFER_WATCHDOG_CRON || '*/10 * * * *';
+    const staleMinutes = parseInt(process.env.TRANSFER_STALE_MINUTES || '30', 10);
+
+    async function flagStaleAdminTransfers() {
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceRoleKey) {
+        console.warn('[TRANSFER-WATCHDOG] SUPABASE_SERVICE_ROLE_KEY manquante, veilleur inactif');
+        return;
+      }
+      const { createClient } = require('@supabase/supabase-js');
+      const db = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+
+      const threshold = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+      const { data: stale, error } = await db
+        .from('admin_transfers')
+        .update({ status: 'UNKNOWN', updated_at: new Date().toISOString() })
+        .in('status', ['PENDING1', 'PENDING2', 'processing', 'pending'])
+        .lte('created_at', threshold)
+        .select('id, amount, phone, wallet_type, created_at');
+
+      if (error) {
+        console.error('[TRANSFER-WATCHDOG] Erreur:', error.message);
+        return;
+      }
+      if (stale && stale.length > 0) {
+        console.error('[TRANSFER-WATCHDOG] ⚠️', stale.length, 'transfert(s) sans confirmation Pixpay après', staleMinutes, 'min — à vérifier manuellement:', stale);
+      }
+    }
+
+    cron.schedule(expr, async () => {
+      try {
+        await flagStaleAdminTransfers();
+      } catch (e) {
+        console.error('[TRANSFER-WATCHDOG] Exécution échouée:', e?.message || e);
+      }
+    }, { scheduled: true });
+
+    console.log('[TRANSFER-WATCHDOG] Veilleur des transferts admin activé (' + expr + ', seuil ' + staleMinutes + ' min)');
+  } catch (e) {
+    console.warn('[TRANSFER-WATCHDOG] node-cron indisponible, veilleur désactivé');
   }
 }
 
