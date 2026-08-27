@@ -99,11 +99,15 @@ function inboundStatusEvent(requestId, status, reason) {
   };
 }
 // Sélection d'une ligne de liste : D7 renvoie `list_reply.id` (et non `button_reply`).
-function inboundListReply(id, msgId, from = '221771112233') {
-  return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { list_reply: { id } } } } };
+function inboundListReply(id, msgId, from = '221771112233', recipient = undefined) {
+  const message = { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { list_reply: { id } } };
+  if (recipient !== undefined) message.recipient = recipient;
+  return { event_content: { message } };
 }
-function inboundButton(id, msgId, from = '221771112233') {
-  return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { button_reply: { id } } } } };
+function inboundButton(id, msgId, from = '221771112233', recipient = undefined) {
+  const message = { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { button_reply: { id } } };
+  if (recipient !== undefined) message.recipient = recipient;
+  return { event_content: { message } };
 }
 function mockReq(secret, body) { return { params: { secret }, body }; }
 function mockRes() {
@@ -411,6 +415,92 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends[0].from, null);
   });
 
+  // --- Persistance du numéro de bot sur la commande (migration 008) ----------
+  // Répondre depuis le bon numéro ne suffit pas : le numéro ne vit que le temps
+  // du webhook. Sans le figer sur la commande, les notifications ultérieures
+  // (livraison, remboursement, paiement confirmé) repartent du numéro par défaut,
+  // donc dans une AUTRE conversation que celle où l'acheteur a commandé.
+  await test('checkout depuis le numéro démo -> botNumber transmis à la commande', async () => {
+    const { b, orders } = makeBot();
+    const DEMO = '15554677146';
+    await b.processWebhook(inboundButton('pay:PD3431', 'm-bn1', '221771112233', DEMO));
+    await b.processWebhook(inboundText('Awa Diop', 'm-bn2', '221771112233', DEMO));
+    await b.processWebhook(inboundListReply('co:z:0:PD3431', 'm-bn3', '221771112233', DEMO));
+    await b.processWebhook(inboundButton('co:w:PD3431', 'm-bn4', '221771112233', DEMO));
+    assert.strictEqual(orders.length, 1, 'une commande doit être créée');
+    assert.strictEqual(orders[0].botNumber, DEMO, 'la commande doit porter le numéro démo');
+  });
+
+  await test('checkout sans recipient -> botNumber null (commande historique)', async () => {
+    const { b, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431', 'm-bn5'));
+    await b.processWebhook(inboundText('Awa Diop', 'm-bn6'));
+    await b.processWebhook(inboundListReply('co:z:0:PD3431', 'm-bn7'));
+    await b.processWebhook(inboundButton('co:w:PD3431', 'm-bn8'));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].botNumber, null);
+  });
+
+  // Le checkout piloté au clavier (liste non passée côté D7) doit garder le numéro
+  // lui aussi : c'est le chemin de repli le plus probable en vrai.
+  await test('checkout tapé au clavier depuis le démo -> botNumber conservé', async () => {
+    const { b, orders } = makeBot();
+    const DEMO = '15554677146';
+    await b.processWebhook(inboundButton('pay:PD3431', 'm-bn9', '221771112233', DEMO));
+    await b.processWebhook(inboundText('Awa Diop', 'm-bn10', '221771112233', DEMO));
+    await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45', 'm-bn11', '221771112233', DEMO));
+    await b.processWebhook(inboundText('wave', 'm-bn12', '221771112233', DEMO));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].botNumber, DEMO);
+  });
+
+  // Sans client Supabase (cas des tests / config absente), la lecture ne doit ni
+  // jeter ni bloquer la notification : null -> repli sur WHATSAPP_BOT_NUMBER.
+  await test('resolveOrderBotNumber sans Supabase -> null (pas de crash)', async () => {
+    assert.strictEqual(await bot.resolveOrderBotNumber('ord-1'), null);
+    assert.strictEqual(await bot.resolveOrderBotNumber(null), null);
+  });
+
+  // --- Test mode : visibilité du catalogue démo (migration 009) --------------
+  // Filtre à sens unique : le numéro démo voit tout (y compris de vrais produits,
+  // c'est ce qui rend la démo crédible) ; le numéro de prod ne voit JAMAIS un
+  // produit démo, donc un vrai client ne peut pas commander un décor.
+  function makeDemoAwareBot() {
+    const seen = [];
+    const findProductSpy = async (code, options) => {
+      seen.push({ code, options });
+      return code === 'PD3431' ? FAKE : null;
+    };
+    return { ...makeBot({ findProduct: findProductSpy }), seen };
+  }
+
+  await test('numéro démo -> le catalogue démo est visible (allowDemo true)', async () => {
+    const { b, seen } = makeDemoAwareBot();
+    await b.processWebhook(inboundText('PD3431', 'm-cat1', '221771112233', '15554677146'));
+    assert.ok(seen.length > 0, 'findProduct doit être appelé');
+    assert.deepStrictEqual(seen[0].options, { allowDemo: true });
+  });
+
+  await test('numéro prod -> catalogue démo masqué (allowDemo false)', async () => {
+    const { b, seen } = makeDemoAwareBot();
+    await b.processWebhook(inboundText('PD3431', 'm-cat2', '221771112233', '221768171175'));
+    assert.deepStrictEqual(seen[0].options, { allowDemo: false });
+  });
+
+  await test('sans recipient -> catalogue démo masqué (allowDemo false)', async () => {
+    const { b, seen } = makeDemoAwareBot();
+    await b.processWebhook(inboundText('PD3431', 'm-cat3'));
+    assert.deepStrictEqual(seen[0].options, { allowDemo: false });
+  });
+
+  // Le contexte démo doit tenir sur TOUT le parcours, pas seulement au 1er message :
+  // un bouton pressé plus tard ne doit pas faire disparaître le produit démo.
+  await test('le contexte démo survit aux étapes suivantes (bouton)', async () => {
+    const { b, seen } = makeDemoAwareBot();
+    await b.processWebhook(inboundButton('pay:PD3431', 'm-cat4', '221771112233', '15554677146'));
+    assert.ok(seen.every((s) => s.options.allowDemo === true), 'toutes les recherches doivent rester en contexte démo');
+  });
+
 
   // --- Checkout conversationnel : nom + quartier + adresse + wallet dans le chat ---
 
@@ -457,6 +547,9 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
         buyerPhone: '221771112233',
         deliveryAddress: 'Sacré-Cœur',
         quantity: 1,
+        // Webhook de test sans `recipient` -> null : le serveur laissera la
+        // colonne bot_number vide et les notifs retomberont sur le numéro par défaut.
+        botNumber: null,
       },
     );
   });

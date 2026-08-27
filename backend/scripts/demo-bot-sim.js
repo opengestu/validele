@@ -47,6 +47,18 @@ const b = bot.createBot({
   askProductQuestion: async (p, q) => `Oui, ${p.nom} est disponible et vérifié sur Validèl. Votre paiement reste protégé jusqu'à la réception. (réponse IA simulée pour : « ${q} »)`,
   markDeliveryNotificationRead: async () => {},
   sendFallbackSmsNow: async () => {},
+  // Stubs OBLIGATOIRES : sans eux, un scénario qui irait jusqu'au bout du checkout
+  // appellerait le VRAI /api/guest/order et le vrai fournisseur de paiement. Le
+  // simulateur doit rester hermétique quoi qu'on lui fasse jouer.
+  createGuestOrder: async (payload) => {
+    console.log(`[SIM] commande simulée (aucune écriture DB) — bot_number = ${payload.botNumber || '(aucun)'}`);
+    return {
+      success: true, orderId: 'sim-ord-1', orderCode: 'VLD-SIM01',
+      totalAmount: bot.computeFees(DEMO_PRODUIT.prix).total,
+      productName: DEMO_PRODUIT.nom, buyerPhone: payload.buyerPhone,
+    };
+  },
+  initiatePayment: async () => ({ url: 'https://pay.simule.test/aucun-paiement-reel' }),
   sendText: async (to, body, from) => record('text', to, body, { from }),
   sendButtons: async (to, body, buttons, from) => record('buttons', to, body, { buttons, from }),
   sendCtaUrl: async (to, body, displayText, url, from) => record('cta', to, body, { displayText, url, from }),

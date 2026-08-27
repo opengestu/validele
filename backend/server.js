@@ -40,6 +40,8 @@ const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
 const notificationService = require('./notification-service');
 const { getNotificationTemplate } = require('./notification-templates');
+// Test mode : reconnaissance des numéros de bot démo (source unique, cf. backend/demo.js).
+const { isDemoBotNumber } = require('./demo');
 
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
@@ -260,12 +262,21 @@ function normalizeGuestPhone(phone) {
 
 app.post('/api/guest/order', async (req, res) => {
   try {
-    const { productCode, buyerName, buyerPhone, deliveryAddress, quantity } = req.body || {};
+    const { productCode, buyerName, buyerPhone, deliveryAddress, quantity, botNumber } = req.body || {};
     if (!productCode || !buyerName || !buyerPhone || !deliveryAddress) {
       return res.status(400).json({ success: false, error: 'Champs obligatoires manquants (produit, nom, téléphone, adresse).' });
     }
     // Quantité : entier >= 1 (plafonné pour éviter un total aberrant). Défaut 1.
     const qty = Math.min(999, Math.max(1, Math.floor(Number(quantity) || 1)));
+
+    // Numéro du bot WhatsApp d'origine (prod ou démo), fourni par whatsapp-bot.js.
+    // Chiffres seuls, comme l'originator D7. Absent (commande web/app) -> NULL :
+    // les notifications retombent alors sur WHATSAPP_BOT_NUMBER. Longueur bornée
+    // pour ne jamais stocker une chaîne arbitraire venue du corps de requête.
+    const botNumberDigits = String(botNumber || '').replace(/\D/g, '');
+    const bot_number = botNumberDigits.length >= 8 && botNumberDigits.length <= 15
+      ? botNumberDigits
+      : null;
 
     const formattedPhone = normalizeGuestPhone(buyerPhone);
     if (!formattedPhone) {
@@ -277,7 +288,7 @@ app.post('/api/guest/order', async (req, res) => {
     // 1) Produit par code
     const { data: product, error: productError } = await supabaseAdmin
       .from('products')
-      .select('id, name, price, vendor_id, is_available')
+      .select('id, name, price, vendor_id, is_available, is_demo')
       .ilike('code', String(productCode).trim())
       .maybeSingle();
     if (productError) {
@@ -355,27 +366,45 @@ app.post('/api/guest/order', async (req, res) => {
     const qr_code_vendor = generateSecureQrCode('V-');
     const order_code = await generateUniqueReadableOrderCode(supabaseAdmin);
 
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from('orders')
-      .insert({
-        buyer_id: buyerId,
-        vendor_id: product.vendor_id,
-        product_id: product.id,
-        quantity: qty,
-        total_amount,
-        // Frais de protection encaissé, NON remboursable : stocké pour le déduire
-        // précisément au moment d'un remboursement (indépendant du % courant).
-        protection_fee: protectionFee,
-        payment_method: 'wave',
-        delivery_address: deliveryAddress,
-        buyer_phone: formattedPhone,
-        qr_code,
-        qr_code_vendor,
-        order_code,
-        status: 'pending',
-      })
-      .select('*')
-      .single();
+    const orderRow = {
+      buyer_id: buyerId,
+      vendor_id: product.vendor_id,
+      product_id: product.id,
+      quantity: qty,
+      total_amount,
+      // Frais de protection encaissé, NON remboursable : stocké pour le déduire
+      // précisément au moment d'un remboursement (indépendant du % courant).
+      protection_fee: protectionFee,
+      payment_method: 'wave',
+      delivery_address: deliveryAddress,
+      buyer_phone: formattedPhone,
+      qr_code,
+      qr_code_vendor,
+      order_code,
+      status: 'pending',
+      // Numéro du bot d'origine : toutes les notifications de cette commande
+      // repartiront de ce numéro (même conversation côté acheteur).
+      bot_number,
+      // Commande de démonstration : soit la conversation vient d'un numéro de bot
+      // démo, soit le produit lui-même est un produit de démo (cas d'un accès par
+      // le web au catalogue démo). Exclut la commande des payouts et des chiffres
+      // réels — voir backend/demo.js et la migration 009.
+      is_demo: isDemoBotNumber(bot_number) || product.is_demo === true,
+    };
+
+    const insertOrder = (row) => supabaseAdmin.from('orders').insert(row).select('*').single();
+    let { data: order, error: orderError } = await insertOrder(orderRow);
+
+    // Filet : si le code est déployé AVANT les migrations 008/009, les colonnes
+    // bot_number / is_demo n'existent pas encore et l'insert échoue (PGRST204 /
+    // 42703). Perdre le routage multi-numéro ou le marquage démo est acceptable ;
+    // perdre la commande ne l'est pas -> on réessaie sans ces colonnes.
+    // À retirer une fois 008 et 009 passées partout.
+    if (orderError && /bot_number|is_demo/i.test(orderError.message || '')) {
+      console.warn('[GUEST] Colonnes bot_number/is_demo absentes (migrations 008/009 non appliquées) -> commande créée sans routage multi-numéro ni marquage démo.');
+      const { bot_number: _ignoredBot, is_demo: _ignoredDemo, ...legacyRow } = orderRow;
+      ({ data: order, error: orderError } = await insertOrder(legacyRow));
+    }
 
     if (orderError) {
       console.error('[GUEST] Erreur création commande:', orderError);
@@ -2849,7 +2878,7 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
   try {
     const { data: order } = await supabase
       .from('orders')
-      .select('buyer_phone, total_amount, product_id')
+      .select('buyer_phone, total_amount, product_id, bot_number')
       .eq('id', orderId)
       .maybeSingle();
     if (!order?.buyer_phone) return;
@@ -2865,7 +2894,9 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
     const trackingUrl = `${webBase}/order/${orderId}`;
     const amount = Number(order.total_amount || 0).toLocaleString('fr-FR');
     const body = `✅ Paiement confirmé pour *${productName}* (${amount} FCFA).\n\nVotre argent est protégé jusqu'à la réception. Suivez votre commande à tout moment.`;
-    await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Suivre ma commande', trackingUrl);
+    // Répondre depuis le numéro de bot où la commande a été passée (prod ou démo) ;
+    // NULL (commande web/app) -> repli sur WHATSAPP_BOT_NUMBER.
+    await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Suivre ma commande', trackingUrl, order.bot_number || undefined);
     console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
   } catch (waErr) {
     console.warn('[WHATSAPP] Echec notification paiement confirmé (non bloquant):', waErr?.message || waErr);
@@ -4223,7 +4254,7 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
   // Fetch order (include payment_confirmed_at)
   const { data: order, error: orderErr } = await db
     .from('orders')
-    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at, payment_confirmed_at')
+    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at, payment_confirmed_at, is_demo')
     .eq('id', orderId)
     .maybeSingle();
 
@@ -4333,8 +4364,15 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
   // Recalculate payoutStatusOk after potential reset
   const payoutStatusOkFinal = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
 
+  // Barrière test mode : une commande de démonstration ne doit JAMAIS déclencher
+  // un virement réel vers un vendeur. C'est le dernier verrou avant l'argent :
+  // il est volontairement ici, dans la fonction que TOUS les chemins de payout
+  // traversent (batch, verify-and-payout, exécution). `undefined` (colonne absente
+  // avant la migration 009) -> false -> comportement historique inchangé.
+  const isDemoOrder = order.is_demo === true;
+
   // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
-  const eligible = delivered && paid && payoutStatusOkFinal && !alreadyPaid && vendorOk;
+  const eligible = delivered && paid && payoutStatusOkFinal && !alreadyPaid && vendorOk && !isDemoOrder;
 
   const reasons = [];
   if (!delivered) reasons.push('not_delivered');
@@ -4342,6 +4380,7 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
   if (!vendorOk) reasons.push('vendor_info_missing');
   if (!payoutStatusOkFinal) reasons.push('invalid_payout_status');
   if (alreadyPaid) reasons.push('already_paid');
+  if (isDemoOrder) reasons.push('demo_order');
 
   return {
     ok: true,
@@ -4354,7 +4393,8 @@ async function verifyOrderForPayout(orderId, dbClient = null) {
       payoutStatusOk: payoutStatusOkFinal,
       vendorOk,
       payout_status: order.payout_status || null,
-      alreadyPaid
+      alreadyPaid,
+      isDemoOrder
     },
     eligible,
     reasons
@@ -4599,11 +4639,14 @@ app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
     if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
 
     // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
+    // Les commandes de démonstration sont écartées ici (elles le sont aussi dans
+    // verifyOrderForPayout) : elles ne doivent jamais entrer dans un lot de virements.
     const { data: orders, error } = await supabaseAdmin
       .from('orders')
       .select('id, vendor_id, total_amount, payment_confirmed_at, status')
       .eq('status', 'delivered')
-      .eq('payout_status', 'requested');
+      .eq('payout_status', 'requested')
+      .eq('is_demo', false);
 
     if (error) {
       console.error('[ADMIN] create payout batch - fetch orders error:', error);
@@ -7246,7 +7289,9 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     }
 
     // Fetch current order
-    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code').eq('id', orderId).maybeSingle();
+    // total_amount et product_id sont nécessaires aux notifications : sans eux le
+    // vendeur recevait « Montant: undefined FCFA ».
+    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code, total_amount, product_id').eq('id', orderId).maybeSingle();
     if (orderErr || !order) {
       console.error('[MARK-DELIVERED] Order not found:', orderErr);
       return res.status(404).json({ success: false, error: 'order_not_found' });
@@ -7277,6 +7322,22 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
 
     // Notify buyer and vendor about completed delivery
     try {
+      // Nom du produit, pour que les deux notifications parlent de l'article et
+      // pas seulement du code de commande.
+      let productName = null;
+      if (order.product_id) {
+        try {
+          const { data: prod } = await dbClient.from('products').select('name').eq('id', order.product_id).maybeSingle();
+          productName = prod?.name || null;
+        } catch (e) { /* le repli sur order_code suffit */ }
+      }
+      const notifData = {
+        orderCode: order.order_code,
+        orderId: order.id,
+        productName,
+        amount: order.total_amount,
+      };
+
       // Notification à l'acheteur
       if (order.buyer_id) {
         const { data: buyerTokens } = await dbClient
@@ -7286,10 +7347,7 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
           .eq('is_active', true);
 
         if (buyerTokens && buyerTokens.length > 0) {
-          const notif = getNotificationTemplate('ORDER_DELIVERED', {
-            orderCode: order.order_code,
-            orderId: order.id
-          });
+          const notif = getNotificationTemplate('ORDER_DELIVERED', notifData);
 
           for (const { token } of buyerTokens) {
             await sendPushNotification(token, notif.title, notif.body, notif.data);
@@ -7298,7 +7356,9 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
         }
       }
 
-      // Notification au vendeur
+      // Notification au vendeur : la livraison d'abord, le paiement ensuite.
+      // Auparavant il recevait PAYOUT_REQUESTED, qui ne mentionnait pas la livraison
+      // et affichait « Montant: undefined FCFA » faute de `amount`.
       if (order.vendor_id) {
         const { data: vendorTokens } = await dbClient
           .from('push_tokens')
@@ -7307,15 +7367,15 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
           .eq('is_active', true);
 
         if (vendorTokens && vendorTokens.length > 0) {
-          const notif = getNotificationTemplate('PAYOUT_REQUESTED', {
-            orderCode: order.order_code,
-            orderId: order.id
-          });
+          const notif = getNotificationTemplate('ORDER_DELIVERED_VENDOR', notifData);
 
           for (const { token } of vendorTokens) {
             await sendPushNotification(token, notif.title, notif.body, notif.data);
           }
           console.log('[MARK-DELIVERED] Notification vendeur envoyée');
+        } else {
+          // Sans token push, le vendeur n'apprend la livraison nulle part.
+          console.warn('[MARK-DELIVERED] Vendeur sans token push actif, aucune notification envoyée:', order.vendor_id);
         }
       }
     } catch (notifErr) {

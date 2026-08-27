@@ -100,9 +100,29 @@ const NOTIFICATION_TEMPLATES = {
 
   PAYOUT_REQUESTED: {
     title: '💰 Demande de paiement',
-    body: (data) => `Demande de paiement pour ${data.productName || data.orderCode}. Montant: ${data.amount} FCFA`,
+    // `amount` est optionnel : sans garde, un appelant qui l'oublie envoyait
+    // littéralement « Montant: undefined FCFA » au vendeur.
+    body: (data) => `Demande de paiement pour ${data.productName || data.orderCode}.`
+      + (data.amount != null ? ` Montant: ${data.amount} FCFA` : ''),
     data: (data) => ({
       type: 'payout_requested',
+      order_id: data.orderId,
+      order_code: data.orderCode,
+      product_name: data.productName,
+      amount: data.amount,
+      screen: 'VendorPayouts'
+    })
+  },
+
+  // Vendeur : la livraison est confirmée par l'acheteur. C'est LE moment où le
+  // vendeur veut savoir que sa vente est allée au bout — l'ancienne notification
+  // ne parlait que de paiement, jamais de livraison.
+  ORDER_DELIVERED_VENDOR: {
+    title: '🎉 Commande livrée',
+    body: (data) => `${data.productName || data.orderCode} a été livrée et confirmée par l'acheteur.`
+      + (data.amount != null ? ` Votre paiement de ${data.amount} FCFA est en préparation.` : ' Votre paiement est en préparation.'),
+    data: (data) => ({
+      type: 'order_delivered_vendor',
       order_id: data.orderId,
       order_code: data.orderCode,
       product_name: data.productName,
@@ -322,6 +342,7 @@ const NOTIFICATIONS_BY_ROLE = {
   ],
   vendor: [
     'NEW_ORDER_VENDOR',
+    'ORDER_DELIVERED_VENDOR',
     'PAYOUT_REQUESTED',
     'PAYOUT_PAID',
     'BATCH_PAYOUT_PROCESSING',

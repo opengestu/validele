@@ -15,6 +15,8 @@
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('./supabase');
+// Test mode : reconnaissance des numéros de bot démo (source unique, cf. backend/demo.js).
+const { isDemoBotNumber } = require('./demo');
 const {
   sendWhatsApp,
   sendWhatsAppButtons,
@@ -245,11 +247,15 @@ function extractButtonId(message) {
 // ---------------------------------------------------------------------------
 // Accès données (Supabase) — lecture seule
 // ---------------------------------------------------------------------------
-async function trouverProduit(code) {
+// `allowDemo` : le catalogue de démonstration n'est visible QUE depuis un numéro
+// de bot démo. Filtre à sens unique — le numéro démo voit tout (c'est ce qui rend
+// la démo crédible : on peut y montrer un vrai produit), le numéro de prod ne voit
+// jamais un produit démo, donc un vrai client ne peut pas commander un décor.
+async function trouverProduit(code, { allowDemo = false } = {}) {
   if (!supabase || !code) return null;
   const { data: product, error } = await supabase
     .from('products')
-    .select('id, name, price, code, is_available, vendor_id, description')
+    .select('id, name, price, code, is_available, vendor_id, description, is_demo')
     .ilike('code', code)
     .maybeSingle();
   if (error) {
@@ -257,6 +263,10 @@ async function trouverProduit(code) {
     return null;
   }
   if (!product || product.is_available === false) return null;
+  if (product.is_demo === true && !allowDemo) {
+    console.log('[WABOT] produit démo demandé depuis un numéro non-démo, ignoré:', code);
+    return null;
+  }
 
   let vendeurNom = 'Vendeur';
   let vendeurQuartier = '';
@@ -539,7 +549,7 @@ async function defaultInitiatePayment({ walletKey, amount, phone, orderId, order
 // Crée la commande puis le lien de paiement. En cas d'échec on ne laisse JAMAIS le
 // client sans moyen de payer : on retombe sur le lien web historique.
 async function finalizeCheckout(ctx) {
-  const { phone, checkout, walletKey, findProduct, setConvState, createGuestOrder, initiatePayment } = ctx;
+  const { phone, checkout, walletKey, findProduct, setConvState, createGuestOrder, initiatePayment, botNumber } = ctx;
   const produit = await findProduct(checkout.code);
   if (!produit) {
     await setConvState(phone, { checkout: null });
@@ -557,6 +567,10 @@ async function finalizeCheckout(ctx) {
       buyerPhone: phone,
       deliveryAddress: checkout.address,
       quantity: 1,
+      // Numéro business qui a reçu la conversation (prod OU démo). Figé sur la
+      // commande pour que les notifications ultérieures repartent du MÊME numéro,
+      // dans la même conversation. Absent -> le serveur laisse la colonne NULL.
+      botNumber: botNumber || null,
     });
     const pay = await initiatePayment({
       walletKey,
@@ -644,13 +658,20 @@ async function handleCheckoutMessage(ctx) {
 // Retourne une liste d'actions : {kind:'text'|'buttons'|'cta', ...}
 // ---------------------------------------------------------------------------
 async function decideReplies(parsed, deps) {
-  const findProduct = (deps && deps.findProduct) || trouverProduit;
+  const baseFindProduct = (deps && deps.findProduct) || trouverProduit;
   const getConvState = (deps && deps.getConversationState) || defaultGetConversationState;
   const setConvState = (deps && deps.setConversationState) || defaultSetConversationState;
   const askProductQuestion = (deps && deps.askProductQuestion) || askProductQuestionAI;
   const createGuestOrder = (deps && deps.createGuestOrder) || defaultCreateGuestOrder;
   const initiatePayment = (deps && deps.initiatePayment) || defaultInitiatePayment;
   const phone = parsed.from;
+  // Numéro business qui a reçu le message (prod ou démo) : sert à répondre depuis
+  // ce numéro ET à le figer sur la commande créée dans le chat.
+  const botNumber = parsed.to || null;
+  // Conversation de démonstration -> le catalogue démo devient visible. Enveloppé
+  // ici une seule fois : tous les appels findProduct() en aval héritent du contexte.
+  const demoContext = isDemoBotNumber(botNumber);
+  const findProduct = (code) => baseFindProduct(code, { allowDemo: demoContext });
 
   // 1) Réponse à un bouton interactif
   if (parsed.buttonId) {
@@ -711,7 +732,7 @@ async function decideReplies(parsed, deps) {
       }
       return finalizeCheckout({
         phone, checkout: state.checkout, walletKey: kind,
-        findProduct, setConvState, createGuestOrder, initiatePayment,
+        findProduct, setConvState, createGuestOrder, initiatePayment, botNumber,
       });
     }
     if (kindId === 'faq') {
@@ -779,6 +800,7 @@ async function decideReplies(parsed, deps) {
         setConvState,
         createGuestOrder,
         initiatePayment,
+        botNumber,
       });
       if (checkoutActions) return checkoutActions;
     }
@@ -1102,17 +1124,42 @@ async function markDeliveryNotificationRead(requestId) {
   }
 }
 
+// Numéro du bot qui a pris la commande (colonne orders.bot_number, migration 008).
+// Une notification part TOUJOURS du numéro où l'acheteur a commandé, sinon elle
+// atterrit dans une autre conversation (prod) que celle qu'il connaît (démo).
+// NULL / commande hors bot / erreur -> null -> repli sur WHATSAPP_BOT_NUMBER.
+async function resolveOrderBotNumber(orderId) {
+  if (!supabase || !orderId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('bot_number')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error) {
+      console.warn('[WABOT] lecture bot_number échouée, repli numéro par défaut:', error.message);
+      return null;
+    }
+    return (data && data.bot_number) || null;
+  } catch (e) {
+    console.warn('[WABOT] lecture bot_number exception, repli numéro par défaut:', e && e.message);
+    return null;
+  }
+}
+
 // Notification "en cours de livraison" : WhatsApp d'abord (template approuvé si
 // configuré, sinon message libre), SMS de secours si non lu après 10 min.
-// Appelée depuis server.js (mark-in-delivery).
-async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl }) {
+// Appelée depuis server.js (mark-in-delivery). `botNumber` explicite prioritaire
+// (tests / appelant qui a déjà la commande en main) ; sinon relu sur la commande.
+async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, botNumber }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
+  const from = botNumber !== undefined ? botNumber : await resolveOrderBotNumber(orderId);
 
   // Message libre : ne part que dans la fenêtre 24h, mais sert de repli si le
   // template n'est pas configuré OU s'il échoue à l'envoi.
   const sendFreeForm = () => {
     const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
-    return sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl);
+    return sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl, from);
   };
 
   const fallbackSmsText = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${orderId}`;
@@ -1131,6 +1178,7 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
             language: DELIVERY_TEMPLATE_LANG,
             bodyParams: [productName || 'votre commande'],
             urlButtonSuffix: DELIVERY_TEMPLATE_URL_DYNAMIC ? String(orderId) : null,
+            from,
           });
         } catch (tplErr) {
           console.warn('[WABOT] Envoi template livraison échoué, repli sur message libre:', tplErr && tplErr.message);
@@ -1145,8 +1193,9 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
 // Notification "remboursement effectué" : WhatsApp d'abord (message libre, pas de
 // template dédié), SMS de secours si non lu après 10 min. Appelée depuis server.js
 // (approbation admin d'un remboursement). walletLabel = 'Wave' / 'Orange Money'.
-async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, walletLabel }) {
+async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, walletLabel, botNumber }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
+  const from = botNumber !== undefined ? botNumber : await resolveOrderBotNumber(orderId);
   const amountStr = Number(amount || 0).toLocaleString('fr-FR');
   const label = walletLabel || 'votre compte mobile';
   const waBody = `✅ *Remboursement effectué*\nVotre remboursement de *${amountStr} FCFA* a été envoyé vers ${label} (${buyerPhone}).\n\nMerci de votre confiance avec Validèl.`;
@@ -1155,7 +1204,7 @@ async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, 
     orderId,
     buyerPhone,
     fallbackSmsText,
-    sendWhatsAppFn: () => sendWhatsApp(buyerPhone, waBody),
+    sendWhatsAppFn: () => sendWhatsApp(buyerPhone, waBody, from),
   });
 }
 
@@ -1350,4 +1399,5 @@ module.exports = {
   markDeliveryNotificationRead,
   sendFallbackSmsNow,
   runDeliveryReadFallbackCheck,
+  resolveOrderBotNumber,
 };

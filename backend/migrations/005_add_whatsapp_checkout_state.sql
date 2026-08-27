@@ -11,3 +11,4 @@
 --    "buyerName":"Awa Diop","address":"Sacré-Cœur 3, villa 45","walletKey":"w"}
 ALTER TABLE whatsapp_conversation_state
   ADD COLUMN IF NOT EXISTS checkout jsonb;
+

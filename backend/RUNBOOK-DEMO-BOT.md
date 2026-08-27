@@ -69,16 +69,68 @@ repli). Vérifie après déploiement que les tests passent :
 cd backend && node tests/whatsapp-bot.test.js
 ```
 
+### Étape 2 bis — Migration 008 (obligatoire, à faire AVANT le déploiement)
+
+Répondre depuis le bon numéro ne suffit pas : `recipient` ne vit que le temps du
+webhook. Sans le figer sur la commande, les notifications ultérieures (livraison,
+remboursement, paiement confirmé) repartent du numéro **prod**, donc dans une
+autre conversation que celle où le prospect a commandé.
+
+Dans l'éditeur SQL Supabase, exécuter :
+
+```text
+backend/migrations/008_add_orders_bot_number.sql
+```
+
+Elle ajoute `orders.bot_number` (texte, NULL par défaut). Rétrocompatible :
+`NULL` = commande web/app ou antérieure → repli sur `WHATSAPP_BOT_NUMBER`.
+
+> Si le code part **avant** la migration, `/api/guest/order` détecte la colonne
+> absente et recrée la commande sans elle (log `[GUEST] Colonne bot_number
+> absente`) : la commande passe, seul le routage multi-numéro est perdu le temps
+> d'appliquer la 008.
+
+### Étape 2 ter — Migration 009 + catalogue de démonstration
+
+Même éditeur SQL Supabase :
+
+```text
+backend/migrations/009_add_demo_flags.sql
+```
+
+Elle ajoute `is_demo` sur `profiles`, `products` et `orders` (`false` partout par
+défaut → aucune donnée existante ne change de nature).
+
+Puis créer le vendeur et le produit de démonstration :
+
+```bash
+node backend/scripts/seed-demo-catalog.js
+```
+
+Le script est **idempotent** (relançable) et affiche les identifiants du vendeur
+démo. Il refuse d'écrire si la 009 n'est pas passée, et refuse d'écraser un
+produit réel qui occuperait déjà le code démo.
+
+| Variable d'env (toutes optionnelles) | Défaut | Rôle |
+|---|---|---|
+| `WHATSAPP_DEMO_BOT_NUMBERS` | `15554677146` | Numéros de bot traités comme démo (séparés par des virgules ; vide = plus aucun) |
+| `DEMO_PRODUCT_CODE` | `PD0000` | Code du produit de démonstration |
+| `DEMO_VENDOR_EMAIL` | `demo-vendeur@validel.shop` | Identifiant du vendeur démo |
+| `DEMO_VENDOR_PASSWORD` | *(généré, affiché une fois)* | Fixe le mot de passe du vendeur démo |
+
 ---
 
 ## Étape 3 — Le premier test live
 
-1. Depuis ton WhatsApp perso, écris **`PD3431`** (ou un vrai code produit) au
-   **`+1 555-467-7146`**.
+1. Depuis ton WhatsApp perso, écris **`PD0000`** au **`+1 555-467-7146`**.
 2. Tu dois recevoir la **fiche produit** + boutons — envoyée **depuis le numéro
    démo**.
 3. Logs Render : l'événement est traité, l'envoi part depuis `15554677146`.
-4. Contrôle croisé : un message au numéro **prod** répond toujours depuis la prod.
+4. Contrôle croisé : un message au numéro **prod** répond toujours depuis la prod
+   — et `PD0000` y est **introuvable** (le catalogue démo est masqué en prod).
+
+> ⚠️ N'utilise plus `PD3431` : ce code n'existe pas en base et le bot répond
+> « Ne payez pas ce vendeur », ce qui ouvre la démo sur une alarme anti-fraude.
 
 Pour rejouer le parcours hors-ligne (sans D7) à tout moment :
 ```bash
@@ -90,20 +142,34 @@ node backend/scripts/demo-bot-sim.js
 ## Étape 4 — Le lien de marque (optionnel)
 
 `functions/demo/[code].js` est prêt : après **déploiement Cloudflare Pages**,
-`validel.shop/demo/PD3431` redirige vers le numéro démo. En face-à-face tu n'en as
-pas besoin : `https://wa.me/15554677146?text=Demarrer%20PD3431` suffit.
+`validel.shop/demo/PD0000` redirige vers le numéro démo. En face-à-face tu n'en as
+pas besoin : `https://wa.me/15554677146?text=Demarrer%20PD0000` suffit.
 
 ---
 
-## ⚠️ Limite « démo complète » : le paiement est RÉEL
+## Ce qui est isolé, et ce qui ne l'est pas encore
 
-Le bouton **« Payer maintenant »** renvoie vers `/product/{code}` = la **vraie**
-page de paiement Wave/Orange Money. Une démo qui va au bout traverse **du vrai
-argent**. Deux options propres :
+**Isolé** (marquage `is_demo`, migration 009) :
 
-- **Arrête-toi à l'écran de paiement** (« …et là, il paie en sécurité »).
-- Ou crée un **produit démo à petit prix** (ex. 100 FCFA) payé pour de vrai afin
-  de dérouler tout le cycle jusqu'à la **validation QR** à la livraison.
+- Le **catalogue démo** n'est visible que depuis un numéro de bot démo. Depuis la
+  prod, `PD0000` répond « code introuvable ».
+- Toute commande née d'un numéro démo (ou portant sur un produit démo) est marquée
+  `orders.is_demo = true`.
+- Ces commandes **ne peuvent pas déclencher de virement vendeur** : elles sont
+  écartées à la constitution des lots ET dans `verifyOrderForPayout` (motif
+  `demo_order`). C'est le verrou qui protège l'argent réel.
+- Dans le back-office admin elles restent **visibles**, avec un badge « Démo » —
+  volontaire : tu peux montrer le back-office pendant une démo.
+
+**⚠️ Pas encore isolé : le paiement est toujours RÉEL.** Le bouton « Payer »
+mène au vrai Wave / Orange Money. Tant que le **simulateur de paiement** n'est pas
+en place, deux options :
+
+- **Arrête-toi à l'écran de paiement** (« …et là, il paie en sécurité ») ;
+- ou baisse le prix du produit démo (`DEMO_PRODUCT_PRICE=100`, puis relancer le
+  seed) et paie pour de vrai afin de dérouler tout le cycle jusqu'à la
+  **validation QR** — l'argent part réellement, mais aucun virement vendeur ne
+  suivra.
 
 ---
 
@@ -111,8 +177,11 @@ argent**. Deux options propres :
 
 | Étape | Où | Action |
 |---|---|---|
-| Code | backend + functions | ✅ fait (routage `recipient`, tests 34/34, lien démo) |
+| Code | backend + functions | ✅ fait (routage `recipient`, `bot_number`, `is_demo`, tests 59/59) |
 | Webhook | Console D7 | ✅ les deux numéros → **même** webhook backend |
-| Déploiement | Render (service prod existant) | pousser le code ; aucune nouvelle var |
-| Test | WhatsApp | écrire `PD3431` au `+1 555…` → réponse depuis le numéro démo |
+| Migrations | Supabase (SQL) | 008 puis 009, **avant** le déploiement |
+| Catalogue démo | ligne de commande | `node backend/scripts/seed-demo-catalog.js` |
+| Déploiement | Render (service prod existant) | pousser le code ; aucune nouvelle var obligatoire |
+| Test | WhatsApp | écrire `PD0000` au `+1 555…` → réponse depuis le numéro démo |
 | Prod | — | **inchangée** (repli par défaut si pas de `recipient`) |
+| Reste à faire | backend | simulateur de paiement (`is_demo` → paiement fictif) |
