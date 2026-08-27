@@ -51,6 +51,13 @@ const COMMISSION_PCT = (() => {
 // Mode test : n'appelle PAS D7, affiche dans les logs ce que le bot AURAIT envoyé.
 // Permet de tester tout le parcours en local sans numéro WhatsApp ni compte D7.
 const DRY_RUN = /^true$/i.test(process.env.WHATSAPP_BOT_DRY_RUN || '');
+// Le produit de démonstration est-il accessible depuis le numéro de PROD ?
+// true (défaut) : n'importe qui peut dérouler le parcours sur le produit démo
+// depuis le bot principal. La fiche l'annonce dès sa première ligne, la commande
+// créée est marquée is_demo (server.js) donc exclue des payouts et des chiffres
+// réels, et AUCUN lien de paiement réel n'est jamais émis (cf. txtDemoStop).
+// false : ancien comportement, catalogue démo réservé aux numéros de bot démo.
+const DEMO_PRODUCT_PUBLIC = !/^false$/i.test(process.env.WHATSAPP_DEMO_PRODUCT_PUBLIC || '');
 
 // Regex tolérante : « bonjour PD3431 svp » -> PD3431. Insensible à la casse.
 const PRODUCT_CODE_RE = /\b(PD\d{3,})\b/i;
@@ -291,6 +298,9 @@ async function trouverProduit(code, { allowDemo = false } = {}) {
     vendeurQuartier,
     vendeurPhone,
     description: product.description || '',
+    // Produit de démonstration : pilote la bannière de la fiche et l'arrêt du
+    // parcours AVANT tout lien de paiement réel.
+    isDemo: product.is_demo === true,
   };
 }
 
@@ -306,6 +316,25 @@ function shortDescription(text, maxLen = 180) {
   return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
 }
 
+// Fin de parcours sur un produit de démonstration. Remplace SYSTÉMATIQUEMENT le
+// lien de paiement : les prestataires tournent en live, un testeur ne doit jamais
+// pouvoir engager d'argent réel sur un produit de décor.
+function txtDemoStop(produit, order) {
+  return [
+    '🧪 *Fin de la démonstration*',
+    '',
+    `Vous venez de dérouler le parcours d'achat complet de Validèl sur *${produit.nom}*.`,
+    order && order.orderCode ? `Commande de test créée : *${order.orderCode}*` : null,
+    '',
+    'C\'est ici que s\'ouvrirait le paiement Wave ou Orange Money sur une vraie commande.',
+    'Aucun paiement ne vous est demandé : ce produit est une démonstration.',
+    '',
+    'Pour une vraie commande, demandez son code produit à votre vendeur.',
+    // Ne retire QUE la ligne absente (order null) : `''` sont les lignes vides
+    // qui aèrent le message, un filter(Boolean) les supprimerait aussi.
+  ].filter((l) => l !== null).join('\n').slice(0, 1024);
+}
+
 function ficheProduitText(produit) {
   const { prix, frais, total } = computeFees(produit.prix);
   const ligneVendeur = produit.vendeurQuartier
@@ -314,16 +343,20 @@ function ficheProduitText(produit) {
   // Description du produit (si renseignée) : rend la fiche compréhensible pour le
   // client, au lieu d'un simple code + nom sans explication.
   const desc = shortDescription(produit.description);
-  const lignes = [
-    `📦 *${produit.nom}*`,
-  ];
+  const lignes = [];
+  // Annoncé AVANT tout le reste : le testeur doit savoir dès la première ligne
+  // qu'il ne s'engage à rien.
+  if (produit.isDemo) lignes.push('🧪 *DÉMONSTRATION — ceci n\'est pas une vraie vente*', '');
+  lignes.push(`📦 *${produit.nom}*`);
   if (desc) lignes.push(desc);
   lignes.push(
     `Prix : *${formatFcfa(prix)} FCFA*`,
     ligneVendeur,
     `Code : ${produit.code}`,
     '',
-    '✅ Ce produit est bien enregistré sur Validèl.',
+    produit.isDemo
+      ? '🧪 Produit de démonstration : déroulez le parcours librement, aucun paiement ne vous sera demandé.'
+      : '✅ Ce produit est bien enregistré sur Validèl.',
     '',
     `Frais de protection : ${formatFcfa(frais)} FCFA`,
     `*Total à payer : ${formatFcfa(total)} FCFA*`,
@@ -493,9 +526,9 @@ const zoneRows = (code) => [
 // l'acheteur, on lui redonne le lien de paiement web.
 async function repliesCheckoutPerdu(code, findProduct) {
   const produit = await findProduct(code);
-  return produit
-    ? [{ kind: 'cta', body: paiementCtaText(produit), displayText: 'Payer maintenant', url: paymentLink(code) }]
-    : [{ kind: 'text', body: TXT_AUCUN_CODE }];
+  if (!produit) return [{ kind: 'text', body: TXT_AUCUN_CODE }];
+  if (produit.isDemo) return [{ kind: 'text', body: txtDemoStop(produit, null) }];
+  return [{ kind: 'cta', body: paiementCtaText(produit), displayText: 'Payer maintenant', url: paymentLink(code) }];
 }
 
 function checkoutActive(state) {
@@ -572,6 +605,14 @@ async function finalizeCheckout(ctx) {
       // dans la même conversation. Absent -> le serveur laisse la colonne NULL.
       botNumber: botNumber || null,
     });
+    // Produit de démonstration : le parcours s'arrête ICI. La commande existe
+    // (marquée is_demo, donc hors payouts et hors chiffres réels) mais aucun lien
+    // de paiement réel n'est créé.
+    if (produit.isDemo) {
+      await setConvState(phone, { checkout: null });
+      console.log('[WABOT] démo : parcours terminé sans paiement,', order.orderCode);
+      return [{ kind: 'text', body: txtDemoStop(produit, order) }];
+    }
     const pay = await initiatePayment({
       walletKey,
       amount: order.totalAmount,
@@ -591,6 +632,7 @@ async function finalizeCheckout(ctx) {
   } catch (e) {
     console.error('[WABOT] checkout échec, repli lien web:', e && e.message);
     await setConvState(phone, { checkout: null });
+    if (produit.isDemo) return [{ kind: 'text', body: txtDemoStop(produit, null) }];
     return [{
       kind: 'cta',
       body: TXT_CHECKOUT_ECHEC,
@@ -671,7 +713,7 @@ async function decideReplies(parsed, deps) {
   // Conversation de démonstration -> le catalogue démo devient visible. Enveloppé
   // ici une seule fois : tous les appels findProduct() en aval héritent du contexte.
   const demoContext = isDemoBotNumber(botNumber);
-  const findProduct = (code) => baseFindProduct(code, { allowDemo: demoContext });
+  const findProduct = (code) => baseFindProduct(code, { allowDemo: demoContext || DEMO_PRODUCT_PUBLIC });
 
   // 1) Réponse à un bouton interactif
   if (parsed.buttonId) {
@@ -693,6 +735,7 @@ async function decideReplies(parsed, deps) {
         });
         return [{ kind: 'text', body: txtDemandeNom(produit) }];
       }
+      if (produit.isDemo) return [{ kind: 'text', body: txtDemoStop(produit, null) }];
       return [{
         kind: 'cta',
         body: paiementCtaText(produit),

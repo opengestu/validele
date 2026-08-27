@@ -481,16 +481,24 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.deepStrictEqual(seen[0].options, { allowDemo: true });
   });
 
-  await test('numéro prod -> catalogue démo masqué (allowDemo false)', async () => {
+  // CHANGEMENT DE COMPORTEMENT (WHATSAPP_DEMO_PRODUCT_PUBLIC, défaut true) :
+  // le produit de démonstration est désormais accessible depuis le numéro de PROD,
+  // pour qu'un testeur puisse dérouler le parcours sans numéro démo dédié.
+  // La protection ne repose plus sur l'invisibilité du produit, mais sur deux
+  // verrous en aval, testés juste en dessous :
+  //   1. la fiche annonce la démonstration dès sa première ligne ;
+  //   2. aucun lien de paiement réel n'est jamais émis (txtDemoStop).
+  // Plus le verrou serveur : la commande est marquée is_demo -> hors payouts.
+  await test('numéro prod -> le produit démo est accessible (allowDemo true)', async () => {
     const { b, seen } = makeDemoAwareBot();
     await b.processWebhook(inboundText('PD3431', 'm-cat2', '221771112233', '221768171175'));
-    assert.deepStrictEqual(seen[0].options, { allowDemo: false });
+    assert.deepStrictEqual(seen[0].options, { allowDemo: true });
   });
 
-  await test('sans recipient -> catalogue démo masqué (allowDemo false)', async () => {
+  await test('sans recipient -> le produit démo reste accessible (allowDemo true)', async () => {
     const { b, seen } = makeDemoAwareBot();
     await b.processWebhook(inboundText('PD3431', 'm-cat3'));
-    assert.deepStrictEqual(seen[0].options, { allowDemo: false });
+    assert.deepStrictEqual(seen[0].options, { allowDemo: true });
   });
 
   // Le contexte démo doit tenir sur TOUT le parcours, pas seulement au 1er message :
@@ -499,6 +507,74 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const { b, seen } = makeDemoAwareBot();
     await b.processWebhook(inboundButton('pay:PD3431', 'm-cat4', '221771112233', '15554677146'));
     assert.ok(seen.every((s) => s.options.allowDemo === true), 'toutes les recherches doivent rester en contexte démo');
+  });
+
+  // --- Produit démo joué depuis la PROD : les deux verrous ------------------
+  // Le produit étant désormais visible partout, la sécurité repose entièrement
+  // sur ces garanties. Les prestataires de paiement tournent en `live` : un
+  // testeur ne doit jamais pouvoir engager d'argent réel sur un produit de décor.
+  const FAKE_DEMO = { ...FAKE, code: 'PD0000', nom: 'Caisse de yaourt (démonstration)', isDemo: true };
+
+  function makeDemoProductBot() {
+    let paymentCalls = 0;
+    const made = makeBot({
+      findProduct: async (code) => {
+        if (code === 'PD0000') return FAKE_DEMO;
+        return code === 'PD3431' ? FAKE : null;
+      },
+      initiatePayment: async () => { paymentCalls += 1; return { url: 'https://pay.test/abc' }; },
+    });
+    return { ...made, payments: () => paymentCalls };
+  }
+
+  await test('fiche démo -> bannière DÉMONSTRATION avant le nom du produit', async () => {
+    const { b, rec } = makeDemoProductBot();
+    await b.processWebhook(inboundText('PD0000'));
+    const body = String(rec.sends[0].body);
+    assert.ok(/DÉMONSTRATION/.test(body), 'la fiche doit annoncer la démonstration');
+    assert.ok(body.indexOf('DÉMONSTRATION') < body.indexOf('Caisse'), 'la mention doit précéder le produit');
+    assert.ok(!/Ce produit est bien enregistré/.test(body), 'la réassurance normale ne doit pas apparaître');
+  });
+
+  await test('fiche d\'un produit réel -> aucune mention de démonstration', async () => {
+    const { b, rec } = makeDemoProductBot();
+    await b.processWebhook(inboundText('PD3431'));
+    const body = String(rec.sends[0].body);
+    assert.ok(!/DÉMONSTRATION/.test(body));
+    assert.ok(/Ce produit est bien enregistré/.test(body));
+  });
+
+  await test('checkout démo -> initiatePayment n\'est JAMAIS appelé', async () => {
+    const { b, rec, payments } = makeDemoProductBot();
+    await b.processWebhook(inboundButton('pay:PD0000'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundListReply('co:z:2:PD0000'));
+    await b.processWebhook(inboundButton('co:w:PD0000'));
+    assert.strictEqual(payments(), 0, 'aucun paiement réel ne doit être initié sur un produit démo');
+    const final = rec.sends[rec.sends.length - 1];
+    assert.strictEqual(final.kind, 'text', 'pas de bouton de paiement en fin de parcours');
+    assert.ok(/Fin de la démonstration/.test(final.body), final.body);
+  });
+
+  await test('parcours démo -> aucun message ne porte d\'URL', async () => {
+    const { b, rec } = makeDemoProductBot();
+    await b.processWebhook(inboundButton('pay:PD0000'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundListReply('co:z:2:PD0000'));
+    await b.processWebhook(inboundButton('co:w:PD0000'));
+    assert.ok(rec.sends.every((s) => !s.url), 'aucun envoi du parcours démo ne doit porter d\'url');
+  });
+
+  await test('non-régression : un produit réel émet toujours son lien de paiement', async () => {
+    const { b, rec, payments } = makeDemoProductBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundListReply('co:z:2:PD3431'));
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    assert.strictEqual(payments(), 1);
+    const final = rec.sends[rec.sends.length - 1];
+    assert.strictEqual(final.kind, 'cta');
+    assert.strictEqual(final.url, 'https://pay.test/abc');
   });
 
 
