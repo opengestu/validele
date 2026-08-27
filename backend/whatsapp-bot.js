@@ -1300,6 +1300,11 @@ function createBot(deps = {}) {
   const initiatePayment = deps.initiatePayment || defaultInitiatePayment;
   const markRead = deps.markDeliveryNotificationRead || markDeliveryNotificationRead;
   const smsNow = deps.sendFallbackSmsNow || sendFallbackSmsNow;
+  // Parsers du webhook entrant. Defaut = D7 -> comportement historique STRICTEMENT
+  // inchange. Le bot demo Meta injecte les siens (backend/meta-whatsapp.js), ce qui
+  // rend processWebhook agnostique du transporteur sans dupliquer une ligne de logique.
+  const parseMessage = deps.parseMessage || parseD7Message;
+  const parseStatusEvent = deps.parseStatusEvent || parseD7StatusEvent;
   const senders = {
     sendText: deps.sendText,
     sendButtons: deps.sendButtons,
@@ -1309,7 +1314,7 @@ function createBot(deps = {}) {
 
   async function processWebhook(body) {
     // Accusé de statut D7 (sent/delivered/read) -> pas un message, traité à part.
-    const statusEvent = parseD7StatusEvent(body);
+    const statusEvent = parseStatusEvent(body);
     if (statusEvent) {
       if (statusEvent.status === 'read') {
         await markRead(statusEvent.requestId);
@@ -1321,7 +1326,7 @@ function createBot(deps = {}) {
       return;
     }
 
-    const parsed = parseD7Message(body);
+    const parsed = parseMessage(body);
     if (!parsed) return; // DLR / statut / payload sans message -> rien à faire
     if (await isDuplicate(parsed.msgId)) {
       console.log('[WABOT] message déjà traité, ignoré:', parsed.msgId);

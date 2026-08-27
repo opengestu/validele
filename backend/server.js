@@ -117,6 +117,17 @@ try {
   console.error('[INIT] Échec du montage du bot WhatsApp:', e && (e.message || e));
 }
 
+// Bot WhatsApp DEMO (Meta Cloud API) : GET/POST /api/whatsapp/webhook/meta/:secret
+// Transporteur SEPARE de D7 -> la prod ci-dessus n'est pas impactee. Ne se monte
+// que si META_ACCESS_TOKEN / META_PHONE_NUMBER_ID / META_BOT_NUMBER sont definis,
+// donc absent par defaut (dev, CI, deploiements sans numero demo Meta).
+try {
+  const { registerMetaWhatsAppBot } = require('./meta-whatsapp');
+  registerMetaWhatsAppBot(app);
+} catch (e) {
+  console.error('[INIT] Échec du montage du bot WhatsApp DEMO (Meta):', e && (e.message || e));
+}
+
 // Helper: normalize a provider/raw response into a JSON object for DB jsonb columns
 function normalizeJsonField(val) {
   try {
