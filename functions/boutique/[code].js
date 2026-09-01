@@ -34,11 +34,11 @@ export async function onRequestGet(context) {
     return next();
   }
 
-  // Mot-clé « Catalogue » reconnu par le bot (backend/whatsapp-bot.js :
-  // SHOP_CODE_RE + extractShopCode). Sans emoji ni accent : les accents latins
-  // sont sûrs (encodeURIComponent -> %XX ASCII), mais on reste aligné sur le
-  // reste des textes du bot. À garder cohérent avec buildShopCatalogBotLink
-  // (src/lib/whatsappBot.ts).
-  const text = `Catalogue ${code}`;
+  // Phrase pré-remplie explicite pour le client (« Catalogue BQxxxxx » seul était
+  // cryptique). Le bot n'a besoin que du code boutique présent dans le message
+  // (backend/whatsapp-bot.js : SHOP_CODE_RE + extractShopCode) ; le reste est là
+  // pour l'humain. Sans emoji (mojibake) ; les accents latins sont sûrs.
+  // À garder ALIGNÉ avec buildShopCatalogPrefillText (src/lib/whatsappBot.ts).
+  const text = `Bonjour ! Montrez-moi le catalogue de cette boutique (code ${code}) sur Validèl. Appuyez sur Envoyer pour l'afficher.`;
   return Response.redirect(`https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent(text)}`, 302);
 }
