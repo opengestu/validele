@@ -58,17 +58,17 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
 
   return (
     <div className={cn(
-      "fixed left-0 top-0 h-full bg-white shadow-xl z-50 transition-all duration-300 ease-in-out border-r border-gray-200",
+      "fixed left-0 top-0 h-full bg-white shadow-xl z-50 transition-all duration-300 ease-in-out border-r border-border",
       isOpen ? "w-64" : "w-16 lg:w-16"
     )}>
       {/* Logo */}
-      <div className="flex items-center p-4 border-b border-gray-100">
+      <div className="flex items-center p-4 border-b border-border">
         {userRole !== 'delivery' && (
-          <img src={validelLogo} alt="Validèl" className="w-10 h-10 object-contain rounded-lg shadow-md bg-white" />
+          <img src={validelLogo} alt="Validèl" className="w-10 h-10 object-contain" />
         )}
         {isOpen && (
           <div className="ml-3">
-            <h2 className="text-lg font-bold text-gray-900">Validèl</h2>
+            <h2 className="text-lg font-bold text-foreground">Validèl</h2>
             <p className={cn("text-xs font-medium", `text-${config.color}`)}>
               {config.title}
             </p>
@@ -91,7 +91,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
                     "flex items-center px-3 py-2.5 rounded-lg transition-all duration-200 group",
                     isActive 
                       ? `bg-${config.color}/10 text-${config.color} border-r-2 border-${config.color}`
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                 >
                   <Icon className={cn(
@@ -111,10 +111,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-100 space-y-1">
+      <div className="p-4 border-t border-border space-y-1">
         <Link 
           to="/"
-          className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
+          className="flex items-center px-3 py-2 text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted"
         >
           <Home className="h-5 w-5" />
           {isOpen && <span className="ml-3 text-sm font-medium">Retour accueil</span>}
@@ -124,7 +124,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
           <>
             <Link
               to={PRIVACY_POLICY_ROUTE}
-              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
+              className="flex items-center px-3 py-2 text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted"
             >
               <Shield className="h-5 w-5" />
               {isOpen && <span className="ml-3 text-sm font-medium">Confidentialité</span>}
@@ -132,7 +132,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, userRole, config }) => {
 
             <Link
               to={TERMS_OF_USE_ROUTE}
-              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-50"
+              className="flex items-center px-3 py-2 text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted"
             >
               <FileText className="h-5 w-5" />
               {isOpen && <span className="ml-3 text-sm font-medium">Conditions</span>}

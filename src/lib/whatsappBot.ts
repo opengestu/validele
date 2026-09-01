@@ -30,10 +30,19 @@ export const buildBotShortShareLink = (productCode: string) =>
   `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(`Demarrer ${productCode}`)}`;
 
 // ── Catalogue de boutique ───────────────────────────────────────────────────
-// Mot-clé reconnu par le bot (backend/whatsapp-bot.js, SHOP_CODE_RE) : le
-// message pré-rempli doit contenir le code boutique, le reste est décoratif.
+// Phrase pré-remplie quand un client ouvre le lien de catalogue : elle doit lui
+// dire clairement ce qu'il s'apprête à envoyer (« Catalogue BQ94650 » seul était
+// cryptique). Le bot n'a besoin que du code boutique présent quelque part dans le
+// message (backend/whatsapp-bot.js, SHOP_CODE_RE) — le reste est là pour l'humain.
+// Sans emoji (source de mojibake), les accents latins sont sûrs.
+//
+// ⚠️ Dupliqué dans functions/boutique/[code].js (Pages Function isolée du bundle) :
+// à garder aligné avec ce texte.
+export const buildShopCatalogPrefillText = (shopCode: string) =>
+  `Bonjour ! Montrez-moi le catalogue de cette boutique (code ${shopCode}) sur Validèl. Appuyez sur Envoyer pour l'afficher.`;
+
 export const buildShopCatalogBotLink = (shopCode: string) =>
-  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(`Catalogue ${shopCode}`)}`;
+  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(buildShopCatalogPrefillText(shopCode))}`;
 
 // Page catalogue web publique. `baseUrl` = origine publique du site (le vendeur
 // partage une URL absolue, jamais un chemin relatif).

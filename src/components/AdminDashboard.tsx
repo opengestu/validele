@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { apiUrl } from '@/lib/api';
 import useNetwork from '@/hooks/useNetwork';
 import AdminLoginForm from '@/components/AdminLoginForm';
+import { LogOut } from 'lucide-react';
 
 type Order = {
   id: string;
@@ -23,6 +24,9 @@ type Order = {
   payout_paid_at?: string | null;
   created_at?: string;
   updated_at?: string;
+  // Commande de démonstration (test mode) : visible ici pour pouvoir montrer le
+  // back-office pendant une démo, mais exclue des payouts côté backend.
+  is_demo?: boolean | null;
 };
 
 type Transaction = {
@@ -416,7 +420,11 @@ const AdminDashboard: React.FC = () => {
   };
 
   // Transaction statuses mapping and helper for badge classes
-  // Include Pixpay statuses: PENDING1, PENDING2, SUCCESSFUL, SUCCESS, FAILED
+  // Statuts Pixpay : PENDING1 (requête acceptée, en file), PENDING2 (en attente),
+  // SUCCESSFUL (état final positif), FAILED (état final négatif).
+  // IMPORTANT : PENDING1 ne veut PAS dire "réussie" — il signifie seulement que Pixpay a
+  // accepté la demande. Le débit réel vers Wave/Orange peut encore échouer ensuite, et
+  // seul l'IPN nous donne l'issue réelle. Ne jamais afficher PENDING1 en vert.
   const TX_STATUS_LABELS_FR: Record<string, string> = {
     pending: 'En attente',
     queued: 'En file',
@@ -424,31 +432,34 @@ const AdminDashboard: React.FC = () => {
     paid: 'Payée',
     failed: 'Échouée',
     cancelled: 'Annulée',
+    unknown: 'À vérifier ⚠️',
     // Pixpay statuses
-    // Treat PENDING1 as a success (Pixpay uses PENDING1 for completed transfers in some cases)
-    PENDING1: 'Réussie ✓',
+    PENDING1: 'En cours',
     PENDING2: 'En attente',
     SUCCESSFUL: 'Réussie ✓',
     SUCCESS: 'Réussie ✓',
-    FAILED: 'Échouée'
+    FAILED: 'Échouée',
+    UNKNOWN: 'À vérifier ⚠️'
   };
-  
+
   // Normalize status for consistent display
   const normalizeStatus = (s?: string): string => {
     const st = String(s || '').toUpperCase();
-    // In Pixpay, PENDING1 indicates a completed transfer in some flows; treat it as paid
-    if (st === 'SUCCESSFUL' || st === 'SUCCESS' || st === 'PENDING1') return 'paid';
+    if (st === 'SUCCESSFUL' || st === 'SUCCESS') return 'paid';
+    if (st === 'PENDING1') return 'processing';
     if (st === 'PENDING2') return 'pending';
     if (st === 'FAILED') return 'failed';
+    if (st === 'UNKNOWN') return 'unknown';
     return String(s || '').toLowerCase();
   };
-  
+
   const txStatusClass = (s?: string) => {
     const st = normalizeStatus(s);
     if (st === 'pending' || st === 'queued') return 'bg-yellow-100 text-yellow-800';
     if (st === 'processing') return 'bg-blue-100 text-blue-800';
     if (st === 'paid' || st === 'confirmed') return 'bg-green-100 text-green-800';
     if (st === 'failed' || st === 'error') return 'bg-red-100 text-red-800';
+    if (st === 'unknown') return 'bg-orange-100 text-orange-800';
     if (st === 'cancelled') return 'bg-slate-200 text-slate-600';
     return 'bg-slate-100 text-slate-700';
   };
@@ -1216,22 +1227,17 @@ const AdminDashboard: React.FC = () => {
           >
             📢 Notifier les vendeurs
           </Button>
-          <Button 
-            variant="destructive" 
+          <Button
+            variant="outline"
             size="sm"
-            className="w-full sm:w-auto"
+            className="w-full sm:w-auto flex items-center justify-center"
             onClick={handleLogout}
           >
-            Se déconnecter
+            <LogOut className="h-4 w-4 mr-2" />
+            Déconnexion
           </Button>
         </div>
       </div>
-
-      {!isOnline && (
-        <div className="max-w-6xl mx-auto mb-4">
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 px-4 py-2 rounded">⚠️ Hors-ligne — affichage des données en cache</div>
-        </div>
-      )}
 
       <div>
         <div className="mb-4 space-y-3">
@@ -1302,7 +1308,17 @@ const AdminDashboard: React.FC = () => {
                     .map((o: OrderFull) => (
                       <TableRow key={o.id}>
                         <TableCell className="font-mono text-xs truncate max-w-[80px]" title={o.id}>{o.id.substring(0, 8)}...</TableCell>
-                        <TableCell>{o.order_code}</TableCell>
+                        <TableCell>
+                          {o.order_code}
+                          {o.is_demo ? (
+                            <span
+                              className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+                              title="Commande de démonstration : jamais incluse dans un virement vendeur."
+                            >
+                              Démo
+                            </span>
+                          ) : null}
+                        </TableCell>
                         <TableCell>{displayOrderPerson(o, 'buyer')}</TableCell>
                         <TableCell>{displayOrderPerson(o, 'vendor')}</TableCell>
                         <TableCell>{displayOrderPerson(o, 'delivery')}</TableCell>
@@ -1370,7 +1386,7 @@ const AdminDashboard: React.FC = () => {
                 size="sm"
                 disabled={processing}
                 onClick={async () => {
-                  if (!confirm('Synchroniser les transactions en attente ? Cela va marquer comme réussies les transactions PENDING1 qui ont plus de 30 minutes.')) return;
+                  if (!confirm("Synchroniser les transactions en attente ? Seules les transactions réellement confirmées par Pixpay seront mises à jour. Aucune transaction ne sera marquée « réussie » sans confirmation du fournisseur.")) return;
                   setProcessing(true);
                   try {
                     const res = await fetch(apiUrl('/api/admin/sync-pending-transactions'), { 
@@ -1380,9 +1396,10 @@ const AdminDashboard: React.FC = () => {
                     });
                     const json = await res.json();
                     if (!res.ok) throw new Error(json?.error || 'Erreur synchronisation');
-                    toast({ 
-                      title: 'Synchronisation terminée', 
-                      description: `${json.synced || 0} transactions mises à jour sur ${json.total || 0}` 
+                    toast({
+                      title: (json.stale || 0) > 0 ? '⚠️ Transactions à vérifier' : 'Vérification terminée',
+                      description: json.message || `${json.total || 0} transaction(s) en attente`,
+                      variant: (json.stale || 0) > 0 ? 'destructive' : 'default'
                     });
                     fetchData();
                   } catch (err: unknown) {
@@ -1781,13 +1798,23 @@ const AdminDashboard: React.FC = () => {
                         if (!res.ok) {
                           throw new Error(json?.error || 'Erreur lors du transfert');
                         }
-                        toast({ 
-                          title: json.success ? 'Transfert initié' : 'Attention', 
-                          description: json.success 
-                            ? `Transfert de ${parseInt(transferAmount).toLocaleString()} FCFA en cours de traitement` 
-                            : (json.transfer?.message || 'Le transfert a été soumis'),
-                          variant: json.success ? 'default' : 'destructive'
-                        });
+                        if (json.success && json.recorded === false) {
+                          // Le transfert est parti chez Pixpay mais n'a pas pu être enregistré en base :
+                          // on alerte l'admin au lieu de laisser croire que tout s'est bien passé.
+                          toast({
+                            title: '⚠️ Transfert non enregistré',
+                            description: `Transfert de ${parseInt(transferAmount).toLocaleString()} FCFA envoyé à Pixpay mais NON enregistré en base (${json.warning || 'erreur base de données'}). Ne pas le relancer : vérifiez d'abord dans le tableau de bord Pixpay.`,
+                            variant: 'destructive'
+                          });
+                        } else {
+                          toast({
+                            title: json.success ? 'Transfert initié' : 'Échec du transfert',
+                            description: json.success
+                              ? `Transfert de ${parseInt(transferAmount).toLocaleString()} FCFA soumis à Pixpay. Il reste « En cours » tant que Wave/Orange n'a pas confirmé.`
+                              : (json.transfer?.message || json.error || 'Pixpay a refusé le transfert'),
+                            variant: json.success ? 'default' : 'destructive'
+                          });
+                        }
                         // Reset form
                         setTransferAmount('');
                         setTransferPhone('');
@@ -1835,17 +1862,11 @@ const AdminDashboard: React.FC = () => {
                       </TableCell>
                       <TableCell>{t.note || '-'}</TableCell>
                       <TableCell>
-                        {/* Normalize the status for consistent label + color, treat PENDING1 as success per Pixpay behaviour */}
+                        {/* Statut réel : vert uniquement quand l'IPN Pixpay a confirmé SUCCESSFUL */}
                         {(() => {
-                          const normalized = normalizeStatus(t.status);
-                          const label = (TX_STATUS_LABELS_FR[t.status || ''] || TX_STATUS_LABELS_FR[normalized] || t.status || '-');
-                          const cls = normalized === 'paid' ? 'bg-green-100 text-green-800' :
-                                    normalized === 'processing' ? 'bg-blue-100 text-blue-800' :
-                                    normalized === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                    normalized === 'failed' ? 'bg-red-100 text-red-800' :
-                                    'bg-slate-100 text-slate-700';
+                          const label = (TX_STATUS_LABELS_FR[t.status || ''] || TX_STATUS_LABELS_FR[normalizeStatus(t.status)] || t.status || '-');
                           return (
-                            <span className={`px-2 py-1 rounded text-sm ${cls}`}>
+                            <span className={`px-2 py-1 rounded text-sm ${txStatusClass(t.status)}`}>
                               {label}
                             </span>
                           );

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { ArrowRight, CreditCard, QrCode, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Carousel,
   CarouselContent,
@@ -12,29 +11,28 @@ import {
 } from "@/components/ui/carousel";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-import validelLogo from "@/assets/validel-logo.png";
 
 const ONBOARDING_STORAGE_KEY = "validele:onboarding_seen_v1";
 
 const SLIDES = [
   {
-  icon: ShieldCheck,
-  title: "Paiement sécurisé par séquestre",
-  description:
-    "Le client paie via Wave ou Orange Money et l'argent est sécurisé sur Validèl jusqu'à la confirmation de livraison."
-},
-{
-  icon: QrCode,
-  title: "Commandez avec un simple code",
-  description:
-    "Le vendeur génère un code produit. Le client l'entre dans l'application pour voir le produit, commander et payer en toute confiance."
-},
-{
-  icon: CreditCard,
-  title: "Livraison validée par QR Code",
-  description:
-    "Le livreur récupère la commande avec un code ou QR Code, puis la valide chez le client par scan pour libérer le paiement au vendeur."
-},
+    icon: ShieldCheck,
+    title: "Paiement sécurisé par séquestre",
+    description:
+      "Le client paie via Wave ou Orange Money. L'argent est gardé sur Validèl jusqu'à la confirmation de livraison.",
+  },
+  {
+    icon: QrCode,
+    title: "Commandez avec un simple code",
+    description:
+      "Le vendeur génère un code produit. Le client l'entre dans l'application pour voir le produit, commander et payer en toute confiance.",
+  },
+  {
+    icon: CreditCard,
+    title: "Livraison validée par QR Code",
+    description:
+      "Le livreur récupère la commande avec un QR Code, puis la valide chez le client par scan pour libérer le paiement au vendeur.",
+  },
 ] as const;
 
 export default function HomePage() {
@@ -43,6 +41,7 @@ export default function HomePage() {
   const [api, setApi] = React.useState<CarouselApi>();
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const lastIndex = SLIDES.length - 1;
+  const isLastSlide = currentIndex === lastIndex;
 
   const onboardingSeen = React.useMemo(() => {
     try {
@@ -90,94 +89,69 @@ export default function HomePage() {
     navigate("/auth", { replace: true });
   };
 
+  const handlePrimaryAction = () => {
+    if (isLastSlide) {
+      handleContinue();
+      return;
+    }
+    api?.scrollTo(currentIndex + 1);
+  };
+
   return (
-    <div className="relative min-h-[100svh] overflow-hidden bg-white text-foreground">
-      {/* Fond animé selon la slide active */}
-      {/* Fond animé supprimé pour fond uni */}
+    <div className="relative flex min-h-[100svh] flex-col overflow-hidden bg-background text-foreground">
+      {/* En-tête : lien "Passer" */}
+      <header className="relative z-20 flex items-center justify-end px-6 pt-[calc(env(safe-area-inset-top,0px)+1.25rem)]">
+        <button
+          type="button"
+          onClick={handleContinue}
+          className="rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Passer
+        </button>
+      </header>
 
-      {/* Décor léger (ne change pas le parcours) */}
-      {/* Décor léger supprimé pour fond uni */}
-
+      {/* Carrousel d'onboarding */}
       <Carousel
         setApi={setApi}
         opts={{ loop: false, align: "start" }}
-        className="h-[100svh]"
+        className="flex-1"
       >
-        <CarouselContent className="h-[100svh]">
+        <CarouselContent className="h-full">
           {SLIDES.map((slide, index) => {
             const Icon = slide.icon;
             const isActive = index === currentIndex;
             return (
-              <CarouselItem key={index} className="h-[100svh]">
-                <div className="relative z-10 flex h-full w-full items-center justify-center px-6">
-                  <Card
+              <CarouselItem key={index}>
+                <div className="flex min-h-[60svh] w-full flex-col items-center justify-center px-8 text-center">
+                  <div
                     className={cn(
-                      "w-full max-w-md border bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/60",
+                      "mb-9 flex h-20 w-20 items-center justify-center rounded-[1.5rem] bg-primary text-primary-foreground shadow-premium",
                       "transition-all duration-500",
-                      isActive
-                        ? "opacity-100 translate-y-0 scale-100"
-                        : "opacity-70 translate-y-1 scale-[0.98]"
+                      isActive ? "scale-100 opacity-100" : "scale-90 opacity-70"
                     )}
                   >
-                    <CardContent className="p-8 text-center">
-                      {/* Logo Validel */}
-                      <img 
-                        src={validelLogo} 
-                        alt="Validèl" 
-                        className={cn(
-                          "mx-auto mb-4 h-10 w-auto object-contain",
-                          "transition-transform duration-500",
-                          isActive ? "scale-100" : "scale-90"
-                        )}
-                      />
-                      <div
-                        className={cn(
-                          "mx-auto mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl",
-                          "bg-primary/10 text-primary",
-                          "transition-transform duration-500",
-                          isActive ? "scale-100 rotate-0" : "scale-95 -rotate-3"
-                        )}
-                      >
-                        <Icon className="h-8 w-8" />
-                      </div>
+                    <Icon className="h-9 w-9" strokeWidth={1.75} />
+                  </div>
 
-                      <h1
-                        className={cn(
-                          "text-3xl font-bold tracking-tight",
-                          "transition-all duration-500",
-                          isActive
-                            ? "opacity-100 translate-y-0"
-                            : "opacity-80 translate-y-1"
-                        )}
-                      >
-                        {slide.title}
-                      </h1>
-                      <p
-                        className={cn(
-                          "mt-3 text-base text-muted-foreground",
-                          "transition-all duration-500",
-                          isActive
-                            ? "opacity-100 translate-y-0"
-                            : "opacity-80 translate-y-1"
-                        )}
-                      >
-                        {slide.description}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <h1
+                    className={cn(
+                      "font-heading text-[1.7rem] font-bold leading-tight tracking-tight text-foreground",
+                      "transition-all duration-500",
+                      isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-80"
+                    )}
+                  >
+                    {slide.title}
+                  </h1>
 
-                  {/* Bouton seulement sur la 3ème (dernière) slide */}
-                  {index === lastIndex && (
-                    <div className="absolute bottom-6 right-6">
-                      <Button
-                        onClick={handleContinue}
-                        className="gap-2 transition-transform motion-reduce:transition-none hover:translate-y-[-1px] active:translate-y-0"
-                      >
-                        Continuer
-                        <ArrowRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
+                  <p
+                    className={cn(
+                      "mx-auto mt-4 max-w-sm text-[0.95rem] leading-relaxed text-muted-foreground",
+                      "transition-all duration-500",
+                      isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-80"
+                    )}
+                  >
+                    {slide.description}
+                  </p>
                 </div>
               </CarouselItem>
             );
@@ -185,9 +159,9 @@ export default function HomePage() {
         </CarouselContent>
       </Carousel>
 
-      {/* Indicateurs (animation + feedback visuel) */}
-      <div className="fixed bottom-6 left-1/2 z-20 -translate-x-1/2">
-        <div className="flex items-center gap-2 rounded-full border bg-background/70 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {/* Pied : indicateurs + rappel paiement + CTA */}
+      <div className="relative z-20 px-6 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
+        <div className="mb-6 flex items-center justify-center gap-2">
           {SLIDES.map((_, index) => {
             const isActive = index === currentIndex;
             return (
@@ -197,17 +171,26 @@ export default function HomePage() {
                 aria-label={`Aller à l'étape ${index + 1}`}
                 onClick={() => api?.scrollTo(index)}
                 className={cn(
-                  "h-2.5 rounded-full transition-all duration-300",
-                  isActive
-                    ? "w-7 bg-primary"
-                    : "w-2.5 bg-muted-foreground/30 hover:bg-muted-foreground/45"
+                  "h-2 rounded-full transition-all duration-300",
+                  isActive ? "w-7 bg-primary" : "w-2 bg-border hover:bg-muted-foreground/40"
                 )}
               />
             );
           })}
         </div>
-      </div>
 
+        <p className="mb-4 text-center text-xs text-muted-foreground">
+          Paiement via Wave · Orange Money
+        </p>
+
+        <Button
+          onClick={handlePrimaryAction}
+          className="h-12 w-full rounded-2xl bg-primary text-base font-medium text-primary-foreground shadow-premium transition-transform hover:bg-primary/90 active:scale-[0.99] motion-reduce:transition-none"
+        >
+          {isLastSlide ? "Continuer" : "Suivant"}
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }

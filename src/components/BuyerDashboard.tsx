@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle, Image as ImageIcon, LogOut } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Capacitor } from '@capacitor/core';
@@ -25,6 +25,7 @@ import { isDevTestNumber } from '@/lib/devTestNumbers';
 import { toFrenchErrorMessage } from '@/lib/errors';
 import { Spinner } from '@/components/ui/spinner';
 import useNetwork from '@/hooks/useNetwork';
+import QRCode from 'qrcode';
 import.meta.env;
 
 // Temporary placeholders for payment logos — replace with real imports if available
@@ -32,17 +33,56 @@ const waveLogo = '/images/wave.png';
 const orangeMoneyLogo = '/images/orange_money.png';
 const SHARED_PRODUCT_PENDING_CODE_KEY = 'pending_shared_product_code';
 
+// Composant pour générer le QR code localement (fonctionne hors ligne)
+const LocalQRCode = ({ value, size = 260 }: { value: string; size?: number }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!value || !canvasRef.current) return;
+
+    const generateQR = async () => {
+      try {
+        setError(false);
+        await QRCode.toCanvas(canvasRef.current, value, {
+          width: size,
+          margin: 1,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          }
+        });
+      } catch (err) {
+        console.error('Erreur génération QR code:', err);
+        setError(true);
+      }
+    };
+
+    generateQR();
+  }, [value, size]);
+
+  if (error) {
+    return (
+      <div style={{ width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', borderRadius: 10 }}>
+        <span style={{ color: '#9ca3af', fontSize: 14 }}>Erreur QR code</span>
+      </div>
+    );
+  }
+
+  return <canvas ref={canvasRef} style={{ width: size, height: size, display: 'block', margin: '0 auto', borderRadius: 10 }} />;
+};
+
 const ProductImage3D = ({ imageUrl, name, compact = false }: { imageUrl?: string | null; name?: string; compact?: boolean }) => (
   <div className={compact ? 'w-full' : 'mx-auto max-w-md'}>
     {imageUrl ? (
       <img
         src={imageUrl}
         alt={name ? `Image de ${name}` : 'Image du produit'}
-        className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} w-full rounded-xl border border-gray-200 object-cover`}
+        className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} w-full rounded-xl border border-border object-cover`}
         loading="lazy"
       />
     ) : (
-      <div className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} flex w-full flex-col items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-500`}>
+      <div className={`${compact ? 'h-24 sm:h-36' : 'h-52 sm:h-64'} flex w-full flex-col items-center justify-center rounded-xl border border-border bg-muted text-muted-foreground`}>
         <ImageIcon className="mb-2 h-9 w-9" />
         <span className="text-sm font-medium">Aucune image</span>
       </div>
@@ -289,8 +329,8 @@ const BuyerDashboard = () => {
     // smsSessionStr et sms sont déjà déclarés au niveau du composant
     if (!user && !smsSessionStr) return;
     if (!opts?.silent) setOrdersLoading(true);
+    const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
     try {
-      const buyerId = user?.id || (smsSessionStr ? (JSON.parse(smsSessionStr || '{}')?.profileId || null) : null);
       if (!buyerId) {
         if (!opts?.silent) setOrdersLoading(false);
         return;
@@ -478,6 +518,25 @@ const BuyerDashboard = () => {
       }
     } catch (error) {
       console.error('Erreur lors du chargement des commandes:', error);
+      // En cas d'erreur réseau, utiliser le cache local pour préserver les QR codes
+      const cacheKey = `cached_buyer_orders_${buyerId}`;
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.orders) {
+            console.warn('[BUYER] network error — using cached orders to preserve QR codes');
+            setOrders(parsed.orders as Order[]);
+          } else {
+            setOrders([]);
+          }
+        } else {
+          setOrders([]);
+        }
+      } catch (cacheError) {
+        console.warn('[BUYER] cache read error:', cacheError);
+        setOrders([]);
+      }
       // Suppressed user-facing destructive toast; use cached data / silent fallback instead
       console.debug('[BUYER] fetchOrders failed, handled silently');
     } finally {
@@ -792,7 +851,7 @@ const BuyerDashboard = () => {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             code: 'PD-DEV-1',
-            profiles: { company_name: 'Boutique Dev', full_name: 'Dev Vendeur', phone: undefined }
+            profiles: { company_name: 'Boutique Dev' }
           } as Product;
           setSearchResult(demoProduct);
           setSearchModalOpen(true);
@@ -827,7 +886,7 @@ const BuyerDashboard = () => {
         .from('products')
         .select(`
           *,
-          profiles(full_name, company_name)
+          profiles(company_name)
         `)
         .ilike('code', codeToSearch)
         .single();
@@ -844,7 +903,6 @@ const BuyerDashboard = () => {
         stock_quantity: data.stock_quantity ?? undefined,
         profiles: data.profiles ? {
           company_name: data.profiles.company_name ?? '',
-          full_name: data.profiles.full_name ?? undefined,
         } : undefined,
       };
       setSearchResult(normalizedProduct);
@@ -1489,26 +1547,28 @@ const BuyerDashboard = () => {
     }
   };
 
-  // Télécharger le QR code (fetch blob puis trigger download) ✅
+  // Télécharger le QR code (génération locale) ✅
   const handleDownloadQr = async () => {
     if (!qrModalValue) {
       toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
       return;
     }
     try {
-      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Erreur téléchargement');
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
+      const dataUrl = await QRCode.toDataURL(qrModalValue, {
+        width: 360,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
       const a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = dataUrl;
       const filename = orderId ? `qr-order-${orderId}.png` : 'qr-code.png';
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(blobUrl);
       toast({ title: 'Téléchargé', description: `QR enregistré (${filename})` });
     } catch (e) {
       console.error('Download QR error', e);
@@ -1516,18 +1576,24 @@ const BuyerDashboard = () => {
     }
   };
 
-  // Partager le QR code (Web Share API / fallback vers clipboard ou téléchargement)
+  // Partager le QR code (génération locale)
   const handleShareQr = async () => {
     if (!qrModalValue) {
       toast({ title: 'Erreur', description: 'QR code manquant', variant: 'destructive' });
       return;
     }
     try {
-      const url = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(qrModalValue)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Erreur préparation du QR');
+      const dataUrl = await QRCode.toDataURL(qrModalValue, {
+        width: 360,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+      const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const file = new File([blob], orderId ? `qr-order-${orderId}.png` : 'qr-code.png', { type: blob.type });
+      const file = new File([blob], orderId ? `qr-order-${orderId}.png` : 'qr-code.png', { type: 'image/png' });
 
       // Prefer sharing the image file when supported
       const nav = navigator as unknown as NavigatorShareWithFiles;
@@ -1540,7 +1606,7 @@ const BuyerDashboard = () => {
 
       // Fallback: use navigator.share with url or text if available
       if (nav.share) {
-        await nav.share({ title: 'QR code', text: qrModalValue, url });
+        await nav.share({ title: 'QR code', text: qrModalValue, url: dataUrl });
         toast({ title: 'Partagé', description: 'QR code partagé' });
         setQrModalOpen(false);
         return;
@@ -1591,8 +1657,8 @@ const BuyerDashboard = () => {
     if (!status) return null;
     const text = getStatusTextFr(status);
     // mapping to styles
-    let bg = 'bg-gray-100 text-gray-700';
-    let dot = 'bg-gray-400';
+    let bg = 'bg-muted text-muted-foreground';
+    let dot = 'bg-muted-foreground';
     if (status === 'in_delivery') { bg = 'bg-blue-100 text-blue-700'; dot = 'bg-blue-500'; }
     else if (status === 'paid') { bg = 'bg-purple-100 text-purple-700'; dot = 'bg-purple-500'; }
     else if (status === 'delivered') { bg = 'bg-black/5 text-black'; dot = 'bg-black'; }
@@ -1717,7 +1783,7 @@ const BuyerDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-muted">
 
 
       {/* Spinner overlay uniquement lors du paiement Wave ou Orange Money */}
@@ -1761,7 +1827,7 @@ const BuyerDashboard = () => {
       {/* Debug panel (visible when ?debug=1) */}
       {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1' && (
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 mb-4">
-          <div className="rounded border p-3 bg-white text-sm text-gray-700">
+          <div className="rounded border p-3 bg-white text-sm text-muted-foreground">
             <strong>Debug:</strong>
             <div>user.id: {user?.id || 'null'}</div>
             <div>authProfile.id: {authUserProfile?.id || 'null'}</div>
@@ -1804,7 +1870,7 @@ const BuyerDashboard = () => {
               <div className="flex gap-3">
                 <Button
                   variant="outline"
-                  className="flex-1 border-2 border-gray-400"
+                  className="flex-1 border-2 border-border"
                   onClick={handleSaveProfile}
                   disabled={savingProfile}
                 >
@@ -1812,18 +1878,19 @@ const BuyerDashboard = () => {
                 </Button>
                 <Button
                   variant="outline"
-                  className="flex-1 border-2 border-gray-300 text-gray-600"
+                  className="flex-1 border-2 border-border text-muted-foreground"
                   onClick={() => setDrawerOpen(false)}
                 >
                   Annuler
                 </Button>
               </div>
               <Button
-                variant="destructive"
-                className="w-full border-2 border-red-600"
+                variant="outline"
+                className="w-full mt-2 flex items-center justify-center"
                 onClick={handleSignOut}
               >
-                Se déconnecter
+                <LogOut className="h-4 w-4 mr-2" />
+                Déconnexion
               </Button>
             </div>
           </div>
@@ -1835,7 +1902,7 @@ const BuyerDashboard = () => {
         <Card className="w-full">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-lg font-semibold">
-              <Search className="h-5 w-5 text-gray-500" />
+              <Search className="h-5 w-5 text-muted-foreground" />
               <span>Rechercher un produit</span>
             </CardTitle>
           </CardHeader>
@@ -1891,7 +1958,7 @@ const BuyerDashboard = () => {
 
                   if (displayedOrders.length === 0) {
                     return (
-                      <p className="text-gray-500 text-center py-4">Aucune commande pour le moment</p>
+                      <p className="text-muted-foreground text-center py-4">Aucune commande pour le moment</p>
                     );
                   }
 
@@ -1916,7 +1983,7 @@ const BuyerDashboard = () => {
                         };
                         
                         return (
-                        <div key={order.id} className="relative rounded-xl border border-gray-200 bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[calc(100vw-32px)] min-w-[240px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[520px]" style={{marginLeft: 0, marginRight: 0}}>
+                        <div key={order.id} className="relative rounded-xl border border-border bg-white p-6 shadow-md transition hover:shadow-lg w-full max-w-[calc(100vw-32px)] min-w-[240px] mx-auto sm:mx-auto sm:min-w-[340px] sm:max-w-[520px]" style={{marginLeft: 0, marginRight: 0}}>
                           {/* Statut en coin haut-droit */}
                           <div className="absolute top-0 right-0">
                             {(() => {
@@ -1940,10 +2007,10 @@ const BuyerDashboard = () => {
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 w-full">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-3">
-                                  <p className="font-bold text-gray-900 break-words text-lg sm:truncate">
+                                  <p className="font-bold text-foreground break-words text-lg sm:truncate">
                                     {order.products?.name || 'Commande'}
                                     {typeof order.quantity === 'number' && (
-                                      <span className="ml-2 text-xs font-semibold text-black bg-gray-50 px-2 py-0.5 rounded-full">x{order.quantity}</span>
+                                      <span className="ml-2 text-xs font-semibold text-black bg-muted px-2 py-0.5 rounded-full">x{order.quantity}</span>
                                     )}
                                   </p>
                                   <div className="flex items-center gap-3">
@@ -1952,15 +2019,15 @@ const BuyerDashboard = () => {
                                     </span>
                                   </div>
                                 </div>
-                                <div className="mt-3 space-y-2 text-base text-gray-700">
+                                <div className="mt-3 space-y-2 text-base text-muted-foreground">
                                   <div className="flex flex-col gap-2 pb-2">
                                     <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Quantité:</span>
+                                      <span className="font-semibold text-muted-foreground text-base whitespace-nowrap">Quantité:</span>
                                       <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.quantity ?? 1}</span>
                                     </div>
                                     <div className="flex items-center gap-4">
-                                      <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Vendeur(se):</span>
-                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || 'N/A'}</span>
+                                      <span className="font-semibold text-muted-foreground text-base whitespace-nowrap">Vendeur(se):</span>
+                                      <span className="flex-1 min-w-0 break-words sm:truncate text-base">{order.profiles?.company_name || order.profiles?.full_name || 'N/A'}</span>
                                     </div>
                                     {order.profiles?.phone && (
                                       <div className="flex items-center gap-3 text-base">
@@ -1994,7 +2061,7 @@ const BuyerDashboard = () => {
                                     <div className="flex flex-col gap-2 mt-4">
                                       {order.delivery_person?.phone ? (
                                         <div className="flex items-center gap-4 text-base">
-                                          <span className="font-semibold text-gray-700 text-base whitespace-nowrap">Livreur:</span>
+                                          <span className="font-semibold text-muted-foreground text-base whitespace-nowrap">Livreur:</span>
                                           <div className="flex items-center gap-3">
                                             <Tooltip>
                                               <TooltipTrigger asChild>
@@ -2079,14 +2146,14 @@ const BuyerDashboard = () => {
                                   Voir QR code
                                 </button>
                               ) : (
-                                <div className="w-full h-[44px] rounded-2xl bg-gray-50 flex items-center justify-center border border-gray-100">
-                                  <span className="text-[13px] text-gray-400">QR code indisponible</span>
+                                <div className="w-full h-[44px] rounded-2xl bg-muted flex items-center justify-center border border-border">
+                                  <span className="text-[13px] text-muted-foreground">QR code indisponible</span>
                                 </div>
                               )}
 
                               <div className="flex gap-2">
                                 <button
-                                  className="flex-1 h-[40px] rounded-2xl border border-gray-200 text-[14px] font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition-all"
+                                  className="flex-1 h-[40px] rounded-2xl border border-border text-[14px] font-semibold text-muted-foreground bg-muted hover:bg-muted transition-all"
                                   onClick={() => openInvoiceInModal(`/api/orders/${order.id}/invoice`, 'Facture de la commande', true)}
                                 >
                                   Voir facture
@@ -2140,11 +2207,7 @@ const BuyerDashboard = () => {
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: 'white', borderRadius: 20, padding: 28, boxShadow: '0 8px 32px rgba(0,0,0,0.15)', width: 340, maxWidth: '92vw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 24 }}>
             <h3 style={{ marginBottom: 4, fontSize: 17, fontWeight: 700 }}>QR Code de la commande</h3>
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(qrModalValue)}`}
-              alt="QR Code"
-              style={{ width: 260, height: 260, objectFit: 'contain', display: 'block', margin: '0 auto', borderRadius: 10 }}
-            />
+            <LocalQRCode value={qrModalValue} size={260} />
 
             <button
               onClick={() => setQrModalOpen(false)}
@@ -2173,7 +2236,7 @@ const BuyerDashboard = () => {
               </div>
             )}
             {!invoiceViewerLoading && !invoiceViewerHtml && (
-              <div className="text-center py-8 text-gray-500">Aucune facture à afficher</div>
+              <div className="text-center py-8 text-muted-foreground">Aucune facture à afficher</div>
             )}
           </div>
         </DialogContent>
@@ -2439,7 +2502,7 @@ const BuyerDashboard = () => {
         <Dialog open={showRefundModal} onOpenChange={setShowRefundModal}>
           <DialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto max-h-[90vh] overflow-auto rounded-2xl p-0 sm:p-0">
             {/* Header coloré */}
-            <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-t-2xl px-5 py-4">
+            <div className="bg-destructive rounded-t-2xl px-5 py-4">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2.5 text-white text-base font-bold">
                   <AlertTriangle className="h-5 w-5 flex-shrink-0" />
@@ -2450,15 +2513,15 @@ const BuyerDashboard = () => {
 
             <div className="px-5 pb-5 pt-4 space-y-4">
               {/* Résumé de la commande */}
-              <div className="bg-gray-50 border border-gray-100 p-3.5 rounded-xl">
-                <p className="font-semibold text-sm text-gray-900 leading-tight">{refundOrder.products?.name}</p>
+              <div className="bg-muted border border-border p-3.5 rounded-xl">
+                <p className="font-semibold text-sm text-foreground leading-tight">{refundOrder.products?.name}</p>
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-gray-500">Montant</span>
-                  <span className="text-sm font-bold text-gray-900">{refundOrder.total_amount?.toLocaleString()} FCFA</span>
+                  <span className="text-xs text-muted-foreground">Montant</span>
+                  <span className="text-sm font-bold text-foreground">{refundOrder.total_amount?.toLocaleString()} FCFA</span>
                 </div>
                 <div className="flex items-center justify-between mt-1">
-                  <span className="text-xs text-gray-500">Statut</span>
-                  <span className="text-xs font-medium text-gray-600">{getStatusTextFr(refundOrder.status ?? '')}</span>
+                  <span className="text-xs text-muted-foreground">Statut</span>
+                  <span className="text-xs font-medium text-muted-foreground">{getStatusTextFr(refundOrder.status ?? '')}</span>
                 </div>
               </div>
 
@@ -2479,11 +2542,11 @@ const BuyerDashboard = () => {
 
               {/* Raison du remboursement */}
               <div>
-                <label htmlFor="refund-reason" className="block text-xs font-semibold text-gray-700 mb-1.5">Raison de l'annulation</label>
+                <label htmlFor="refund-reason" className="block text-xs font-semibold text-muted-foreground mb-1.5">Raison de l'annulation</label>
                 <select
                   id="refund-reason"
                   title="Raison de l'annulation"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none transition-all appearance-none"
+                  className="w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none transition-all appearance-none"
                   value={refundReason}
                   onChange={(e) => setRefundReason(e.target.value)}
                 >
@@ -2500,7 +2563,7 @@ const BuyerDashboard = () => {
               <div className="flex gap-3 pt-1">
                 <Button
                   variant="outline"
-                  className="flex-1 rounded-xl h-11 text-sm font-medium border-gray-200"
+                  className="flex-1 rounded-xl h-11 text-sm font-medium border-border"
                   onClick={() => {
                     setShowRefundModal(false);
                     setRefundOrder(null);
@@ -2545,13 +2608,13 @@ const BuyerDashboard = () => {
 
       {/* Modal de résultat de recherche produit */}
       {searchModalOpen && searchResult && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-2 backdrop-blur-sm sm:p-4">
-          <div className="w-full max-w-[520px] rounded-[28px] border border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 text-slate-900 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.5)] ring-1 ring-slate-100/80">
-            <div className="flex items-center justify-between border-b border-slate-200/70 bg-slate-50/70 px-6 py-4">
-              <p className="text-lg font-semibold tracking-tight text-slate-800">Produit trouvé</p>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-primary/60 p-2 backdrop-blur-sm sm:p-4">
+          <div className="w-full max-w-[520px] rounded-[28px] border border-border/80 bg-card text-foreground shadow-premium-lg ring-1 ring-border">
+            <div className="flex items-center justify-between border-b border-border/70 bg-muted/70 px-6 py-4">
+              <p className="text-lg font-semibold tracking-tight text-foreground">Produit trouvé</p>
               <button
                 onClick={() => closeSearchModal()}
-                className="grid h-9 w-9 place-items-center rounded-full border border-slate-200/70 bg-white text-slate-500 shadow-sm transition-all hover:bg-slate-50 hover:text-slate-900"
+                className="grid h-9 w-9 place-items-center rounded-full border border-border/70 bg-white text-muted-foreground shadow-sm transition-all hover:bg-muted hover:text-foreground"
                 aria-label="Fermer la fenêtre"
                 title="Fermer"
               >
@@ -2560,16 +2623,16 @@ const BuyerDashboard = () => {
             </div>
 
             <div className="space-y-5 px-6 py-5">
-              <div className="flex gap-4 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm">
+              <div className="flex gap-4 rounded-2xl border border-border/70 bg-white/80 p-4 shadow-sm">
                 {searchResult.image_url ? (
                   <img
                     src={searchResult.image_url}
                     alt={searchResult.name ? `Image de ${searchResult.name}` : 'Image du produit'}
-                    className="h-16 w-16 rounded-2xl border border-slate-200/70 bg-white object-cover shadow-sm"
+                    className="h-16 w-16 rounded-2xl border border-border/70 bg-white object-cover shadow-sm"
                     loading="lazy"
                   />
                 ) : (
-                  <div className="grid h-16 w-16 place-items-center rounded-2xl border border-slate-200/70 bg-slate-50 text-slate-400">
+                  <div className="grid h-16 w-16 place-items-center rounded-2xl border border-border/70 bg-muted text-muted-foreground">
                     <ImageIcon className="h-6 w-6" />
                   </div>
                 )}
@@ -2577,13 +2640,13 @@ const BuyerDashboard = () => {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h3 className="truncate text-lg font-bold text-slate-900">{searchResult.name}</h3>
-                      <p className="text-xs text-slate-500">Code · {searchResult.code || 'NA'}</p>
+                      <h3 className="truncate text-lg font-bold text-foreground">{searchResult.name}</h3>
+                      <p className="text-xs text-muted-foreground">Code · {searchResult.code || 'NA'}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-lg font-extrabold text-slate-900">
+                      <p className="text-lg font-extrabold text-foreground">
                         {searchResult.price.toLocaleString()}
-                        <span className="ml-1 text-xs font-semibold text-slate-400">FCFA</span>
+                        <span className="ml-1 text-xs font-semibold text-muted-foreground">FCFA</span>
                       </p>
                       {searchResult.is_available ? (
                         <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
@@ -2599,14 +2662,14 @@ const BuyerDashboard = () => {
                     </div>
                   </div>
 
-                  <p className={`mt-2 text-sm text-slate-600 ${isDescriptionExpanded ? '' : 'line-clamp-3'}`}>
+                  <p className={`mt-2 text-sm text-muted-foreground ${isDescriptionExpanded ? '' : 'line-clamp-3'}`}>
                     {searchResult.description || 'Aucune description disponible pour ce produit.'}
                   </p>
                   {searchResult.description && searchResult.description.length > 120 && (
                     <button
                       type="button"
                       onClick={() => setIsDescriptionExpanded((prev) => !prev)}
-                      className="mt-1 text-xs font-semibold text-slate-500 hover:text-slate-900"
+                      className="mt-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
                     >
                       {isDescriptionExpanded ? 'Voir moins' : 'Voir plus'}
                     </button>
@@ -2615,24 +2678,22 @@ const BuyerDashboard = () => {
               </div>
 
               <div className="grid grid-cols-1 gap-3">
-                <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Vendeur</p>
-                  <p className="mt-1 truncate text-sm font-semibold text-slate-700">
-                    {searchResult.profiles?.company_name && searchResult.profiles?.full_name
-                      ? `${searchResult.profiles.company_name} - ${searchResult.profiles.full_name}`
-                      : searchResult.profiles?.company_name || searchResult.profiles?.full_name || 'NA'}
+                <div className="rounded-2xl border border-border/80 bg-muted/70 px-4 py-3 shadow-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Vendeur</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-muted-foreground">
+                    {searchResult.profiles?.company_name || 'NA'}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-sm">
-                <p className="text-sm font-medium text-slate-600">Quantité</p>
+              <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-white px-4 py-3 shadow-sm">
+                <p className="text-sm font-medium text-muted-foreground">Quantité</p>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-9 w-9 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    className="h-9 w-9 rounded-xl border-border bg-white text-muted-foreground hover:bg-muted"
                     onClick={() => setPurchaseQuantity(q => Math.max(1, q - 1))}
                     disabled={!searchResult.is_available || purchaseQuantity <= 1}
                     aria-label="Diminuer la quantité"
@@ -2650,13 +2711,13 @@ const BuyerDashboard = () => {
                     }}
                     onBlur={() => setPurchaseQuantity(q => (q > 0 ? q : 1))}
                     disabled={!searchResult.is_available}
-                    className="h-9 w-14 border-0 bg-transparent text-center text-lg font-bold text-slate-900 shadow-none focus-visible:ring-0"
+                    className="h-9 w-14 border-0 bg-transparent text-center text-lg font-bold text-foreground shadow-none focus-visible:ring-0"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-9 w-9 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    className="h-9 w-9 rounded-xl border-border bg-white text-muted-foreground hover:bg-muted"
                     onClick={() => setPurchaseQuantity(q => q + 1)}
                     disabled={!searchResult.is_available}
                     aria-label="Augmenter la quantité"
@@ -2666,16 +2727,16 @@ const BuyerDashboard = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-slate-50 px-4 py-3 shadow-sm">
-                <p className="text-sm font-semibold text-slate-700">Total à payer</p>
-                <p className="text-lg font-extrabold text-slate-900">
+              <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted px-4 py-3 shadow-sm">
+                <p className="text-sm font-semibold text-muted-foreground">Total à payer</p>
+                <p className="text-lg font-extrabold text-foreground">
                   {(searchResult.price * purchaseQuantity).toLocaleString()}
-                  <span className="ml-1 text-xs font-semibold text-slate-500">FCFA</span>
+                  <span className="ml-1 text-xs font-semibold text-muted-foreground">FCFA</span>
                 </p>
               </div>
 
               <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-slate-400">Moyen de paiement</label>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted-foreground">Moyen de paiement</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
@@ -2683,18 +2744,18 @@ const BuyerDashboard = () => {
                     disabled={!searchResult.is_available}
                     className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
                       paymentMethod === 'wave'
-                        ? 'border-slate-900 bg-slate-50 shadow-sm'
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        ? 'border-primary bg-muted shadow-sm'
+                        : 'border-border bg-white hover:border-border hover:bg-muted'
                     } ${
                       !searchResult.is_available ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:shadow-md'
                     }`}
                   >
-                    <img src={waveLogo} alt="Wave" className="h-10 w-10 rounded-xl bg-slate-900 object-contain" />
+                    <img src={waveLogo} alt="Wave" className="h-10 w-10 rounded-xl bg-primary object-contain" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-bold">Wave</span>
-                      <span className="block text-xs text-slate-500">Mobile money</span>
+                      <span className="block text-xs text-muted-foreground">Mobile money</span>
                     </span>
-                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'wave' ? 'border-slate-900 bg-slate-900' : 'border-slate-300'}`} />
+                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'wave' ? 'border-primary bg-primary' : 'border-border'}`} />
                   </button>
                   <button
                     type="button"
@@ -2703,7 +2764,7 @@ const BuyerDashboard = () => {
                     className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
                       paymentMethod === 'orange_money'
                         ? 'border-orange-500 bg-orange-50 shadow-sm'
-                        : 'border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40'
+                        : 'border-border bg-white hover:border-orange-200 hover:bg-orange-50/40'
                     } ${
                       !searchResult.is_available ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:shadow-md'
                     }`}
@@ -2711,9 +2772,9 @@ const BuyerDashboard = () => {
                     <img src={orangeMoneyLogo} alt="Orange Money" className="h-10 w-10 rounded-xl bg-orange-500 object-contain" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-bold">Orange</span>
-                      <span className="block text-xs text-slate-500">Orange Money</span>
+                      <span className="block text-xs text-muted-foreground">Orange Money</span>
                     </span>
-                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'orange_money' ? 'border-orange-500 bg-orange-500' : 'border-slate-300'}`} />
+                    <span className={`h-5 w-5 rounded-full border ${paymentMethod === 'orange_money' ? 'border-orange-500 bg-orange-500' : 'border-border'}`} />
                   </button>
                 </div>
               </div>
@@ -2722,14 +2783,14 @@ const BuyerDashboard = () => {
                 <Button
                   variant="outline"
                   onClick={() => closeSearchModal()}
-                  className="h-12 flex-1 rounded-2xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  className="h-12 flex-1 rounded-2xl border-border bg-white text-muted-foreground hover:bg-muted"
                 >
                   Annuler
                 </Button>
                 <Button
                   onClick={handleCreateOrderAndShowPayment}
                   disabled={processingPayment || !searchResult.is_available}
-                  className={`min-w-0 h-12 flex-[2] rounded-2xl px-3 text-center text-sm font-semibold leading-tight text-white whitespace-normal transition-all sm:px-4 sm:text-base ${paymentMethod === 'wave' ? 'bg-slate-900 hover:bg-black' : 'bg-orange-600 hover:bg-orange-700'} ${processingPayment ? '' : 'hover:-translate-y-0.5 hover:shadow-md'}`}
+                  className={`min-w-0 h-12 flex-[2] rounded-2xl px-3 text-center text-sm font-semibold leading-tight text-white whitespace-normal transition-all sm:px-4 sm:text-base ${paymentMethod === 'wave' ? 'bg-primary hover:bg-black' : 'bg-orange-600 hover:bg-orange-700'} ${processingPayment ? '' : 'hover:-translate-y-0.5 hover:shadow-md'}`}
                 >
                   {processingPayment ? (
                     <>

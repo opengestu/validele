@@ -1,7 +1,7 @@
 {
-  "name": "Validel Admin",
-  "short_name": "Validel",
-  "description": "Tableau de bord admin Validel installable en application PWA.",
+  "name": "Validèl",
+  "short_name": "Validèl",
+  "description": "Transactions sécurisées : validation de livraisons par QR Code avec paiement sous séquestre.",
   "lang": "fr",
   "id": "/",
   "start_url": "/",

@@ -837,8 +837,11 @@ const QRScanner = () => {
         }
 
         setIsConfirmingDelivery(true);
-
         let updatedOrder: Order | null = null;
+        // `/api/orders/mark-delivered` notifie déjà l'acheteur ET le vendeur.
+        // On ne relance donc `notifyDeliveryCompleted` que si cet appel a échoué :
+        // sinon les deux parties recevaient DEUX notifications de livraison.
+        let backendNotified = false;
         try {
           const resp = await fetch(apiUrl('/api/orders/mark-delivered'), {
             method: 'POST',
@@ -848,6 +851,7 @@ const QRScanner = () => {
           const json = await resp.json().catch(() => ({}));
           if (!resp.ok || !json || !json.success) throw new Error(json?.error || json?.message || 'Échec confirmation livraison côté serveur');
           updatedOrder = json.order || json.updated || { id: validationResult.id, status: 'delivered' };
+          backendNotified = true;
         } catch (e) {
           console.warn('QRScanner: mark-delivered backend échoué, fallback client activé', e);
           const { data: fallbackUpdated, error: fallbackError } = await supabase
@@ -862,12 +866,16 @@ const QRScanner = () => {
 
         console.log('QRScanner: ✅ Commande livrée:', updatedOrder?.status || 'delivered');
 
-        notifyDeliveryCompleted(
-          validationResult.vendor_id as string,
-          validationResult.buyer_id as string,
-          validationResult.id as string,
-          validationResult.order_code || undefined,
-        ).catch(err => console.warn('Notification livraison terminée échouée:', err));
+        // Chemin de repli uniquement : la commande est passée en `delivered` sans
+        // que le backend ait pu notifier. C'est le seul filet qui reste.
+        if (!backendNotified) {
+          notifyDeliveryCompleted(
+            validationResult.vendor_id as string,
+            validationResult.buyer_id as string,
+            validationResult.id as string,
+            validationResult.order_code || undefined,
+          ).catch(err => console.warn('Notification livraison terminée échouée:', err));
+        }
 
         toast({
           title: "✅ Livraison validée",
