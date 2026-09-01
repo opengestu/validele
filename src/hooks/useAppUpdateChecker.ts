@@ -193,45 +193,15 @@ export default function useAppUpdateChecker() {
   }, [nativeAndroid]);
 
   useEffect(() => {
-    if (nativeAndroid) {
-      return;
-    }
-
-    let cleanedUp = false;
-    let appStateListener: PluginListenerHandle | null = null;
-
-    const runCheck = () => {
-      if (cleanedUp) return;
-      void checkForUpdate();
-    };
-
-    const timeoutId = window.setTimeout(runCheck, 0);
-
-    if (Capacitor.isNativePlatform()) {
-      void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) return;
-        runCheck();
-      })
-        .then((listener) => {
-          if (cleanedUp) {
-            void listener.remove();
-            return;
-          }
-          appStateListener = listener;
-        })
-        .catch(() => {
-          // Ignore listener registration errors.
-        });
-    }
-
-    return () => {
-      cleanedUp = true;
-      window.clearTimeout(timeoutId);
-      if (appStateListener) {
-        void appStateListener.remove();
-      }
-    };
-  }, [checkForUpdate, nativeAndroid]);
+    // La mise à jour de l'application native est gérée par le Play Store : côté
+    // web on ne vérifie plus rien et on n'affiche aucun pop-up. La version n'y
+    // est de toute façon pas détectable (getCurrentAppVersion renvoie 0.0.0),
+    // ce qui faisait paraître le web perpétuellement en retard et déclenchait un
+    // pop-up bloquant « 0.0.0 -> x.y.z ». On s'assure juste que le modal reste
+    // fermé. checkForUpdate reste exposé par le hook pour un appel manuel natif.
+    setUpdateInfo(null);
+    setIsOpen(false);
+  }, []);
 
   const handleUpdateNow = useCallback(async () => {
     const appId = getPlayStoreAppId();
