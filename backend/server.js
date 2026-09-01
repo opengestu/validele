@@ -795,18 +795,23 @@ const getVersionPayload = (req) => {
   );
 
   const currentVersion = normalizeVersion(req?.query?.currentVersion || req?.headers?.['x-app-version'] || '');
-  const updateAvailable = Boolean(latestVersion && currentVersion && compareVersions(currentVersion, latestVersion) < 0);
+  // « 0.0.0 » est le sentinelle que le client envoie quand il n'a PAS pu détecter
+  // sa version — typiquement le web, où getCurrentAppVersion() échoue. Ce n'est
+  // pas une vraie version installée : la traiter comme telle la fait paraître en
+  // retard sur n'importe quelle latestVersion, d'où le pop-up « 0.0.0 -> x.y.z »
+  // affiché en boucle sur le web. On la considère donc comme inconnue.
+  const hasKnownCurrent = Boolean(currentVersion) && currentVersion !== '0.0.0';
+  const updateAvailable = Boolean(latestVersion && hasKnownCurrent && compareVersions(currentVersion, latestVersion) < 0);
 
   // Guardrail: never force updates when latestVersion is missing.
   if (!latestVersion) {
     forceUpdate = false;
   }
 
-  // Garde-fou : on ne FORCE une mise à jour que si l'on a la preuve d'un retard,
-  // c.-à-d. une currentVersion connue ET réellement antérieure (updateAvailable).
-  // Sans currentVersion (web, en-tête absent, mauvaise détection), la version est
-  // lue « 0.0.0 » et paraît toujours en retard : forceUpdate y déclenchait un
-  // pop-up bloquant « 0.0.0 -> x.y.z » alors qu'aucun retard n'est établi.
+  // On ne FORCE une mise à jour que si un retard est PROUVÉ : une currentVersion
+  // connue (≠ 0.0.0) et réellement antérieure. Le front n'ouvre son modal que si
+  // updateAvailable est vrai — le remettre à false ci-dessus suffit donc à faire
+  // disparaître le pop-up partout où la version installée est inconnue.
   if (!updateAvailable) {
     forceUpdate = false;
   }
