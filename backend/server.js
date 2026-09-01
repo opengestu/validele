@@ -802,6 +802,15 @@ const getVersionPayload = (req) => {
     forceUpdate = false;
   }
 
+  // Garde-fou : on ne FORCE une mise à jour que si l'on a la preuve d'un retard,
+  // c.-à-d. une currentVersion connue ET réellement antérieure (updateAvailable).
+  // Sans currentVersion (web, en-tête absent, mauvaise détection), la version est
+  // lue « 0.0.0 » et paraît toujours en retard : forceUpdate y déclenchait un
+  // pop-up bloquant « 0.0.0 -> x.y.z » alors qu'aucun retard n'est établi.
+  if (!updateAvailable) {
+    forceUpdate = false;
+  }
+
   return {
     latestVersion,
     currentVersion,
