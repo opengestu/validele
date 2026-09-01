@@ -28,3 +28,14 @@ export const buildBotShareLink = (productCode: string) =>
 // bot reconnaît le code et répond avec la fiche complète.
 export const buildBotShortShareLink = (productCode: string) =>
   `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(`Demarrer ${productCode}`)}`;
+
+// ── Catalogue de boutique ───────────────────────────────────────────────────
+// Mot-clé reconnu par le bot (backend/whatsapp-bot.js, SHOP_CODE_RE) : le
+// message pré-rempli doit contenir le code boutique, le reste est décoratif.
+export const buildShopCatalogBotLink = (shopCode: string) =>
+  `https://wa.me/${WHATSAPP_BOT_NUMBER}?text=${encodeURIComponent(`Catalogue ${shopCode}`)}`;
+
+// Page catalogue web publique. `baseUrl` = origine publique du site (le vendeur
+// partage une URL absolue, jamais un chemin relatif).
+export const buildShopCatalogWebLink = (baseUrl: string, shopCode: string) =>
+  `${String(baseUrl || '').replace(/\/+$/, '')}/boutique/${encodeURIComponent(shopCode)}`;

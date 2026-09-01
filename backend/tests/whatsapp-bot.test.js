@@ -731,6 +731,94 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   });
 
 
+
+  // --- Catalogue de boutique (migration 010) --------------------------------
+  // La boutique est un stub : `findShop` est injectable exactement comme
+  // `findProduct`, donc aucun test ne touche Supabase.
+  const FAKE_SHOP = {
+    shopCode: 'BQ12345',
+    nom: 'Chez Awa',
+    quartier: 'Colobane',
+    produits: [
+      { code: 'PD3431', nom: 'Caisse de Yaourt', prix: 15000 },
+      { code: 'PD3432', nom: 'Pack de lait', prix: 8000 },
+    ],
+    tronque: false,
+  };
+  const findShop = async (shopCode) => (shopCode === 'BQ12345' ? FAKE_SHOP : null);
+
+  await test('extractShopCode tolérant + insensible casse, sans collision avec PD', () => {
+    assert.strictEqual(bot.extractShopCode('Catalogue BQ12345'), 'BQ12345');
+    assert.strictEqual(bot.extractShopCode('bq12345'), 'BQ12345');
+    assert.strictEqual(bot.extractShopCode('PD3431'), null);
+    assert.strictEqual(bot.extractShopCode('bonjour'), null);
+  });
+
+  await test('catalogue : code boutique -> liste des produits', async () => {
+    const { b, rec } = makeBot({ findShop });
+    await b.processWebhook(inboundText('Catalogue BQ12345'));
+    assert.strictEqual(rec.sends.length, 1);
+    const sent = rec.sends[0];
+    assert.strictEqual(sent.kind, 'list');
+    assert.ok(sent.body.includes('Chez Awa'), 'le nom de la boutique doit apparaître');
+    assert.deepStrictEqual(sent.rows.map((r) => r.id), ['cat:PD3431', 'cat:PD3432']);
+    assert.strictEqual(sent.rows[0].title, 'Caisse de Yaourt');
+  });
+
+  await test('catalogue : choix d\'un produit dans la liste -> fiche produit', async () => {
+    const { b, rec } = makeBot({ findShop });
+    await b.processWebhook(inboundListReply('cat:PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'buttons');
+    assert.ok(rec.sends[0].body.includes('Caisse de Yaourt'));
+    assert.deepStrictEqual(rec.sends[0].buttons.map((x) => x.id), ['pay:PD3431', 'faq:PD3431']);
+  });
+
+  // Le produit choisi devient le produit "actif" : les questions libres qui
+  // suivent doivent porter dessus, comme si le code avait été tapé à la main.
+  await test('catalogue : le produit choisi devient le produit actif', async () => {
+    const { b, rec } = makeBot({ findShop });
+    await b.processWebhook(inboundListReply('cat:PD3431'));
+    await b.processWebhook(inboundText('c\'est frais ?'));
+    assert.ok(rec.sends[1].body.includes('Réponse IA test sur Caisse de Yaourt'));
+  });
+
+  await test('catalogue : code boutique inconnu -> message clair, aucune liste', async () => {
+    const { b, rec } = makeBot({ findShop });
+    await b.processWebhook(inboundText('BQ99999'));
+    assert.strictEqual(rec.sends[0].kind, 'text');
+    assert.ok(rec.sends[0].body.includes('BQ99999'));
+  });
+
+  await test('catalogue : boutique sans produit -> message, pas de liste vide', async () => {
+    const vide = { ...FAKE_SHOP, produits: [] };
+    const { b, rec } = makeBot({ findShop: async () => vide });
+    await b.processWebhook(inboundText('BQ12345'));
+    assert.strictEqual(rec.sends[0].kind, 'text');
+    assert.ok(rec.sends[0].body.includes('aucun produit'));
+  });
+
+  // WhatsApp plafonne une liste à 10 lignes : au-delà, le message doit renvoyer
+  // vers le catalogue web, sinon les produits en trop sont invisibles.
+  await test('catalogue tronqué -> renvoi vers le catalogue web', async () => {
+    const gros = {
+      ...FAKE_SHOP,
+      produits: Array.from({ length: 10 }, (_, i) => ({ code: `PD40${i}0`, nom: `Produit ${i}`, prix: 1000 })),
+      tronque: true,
+    };
+    const { b, rec } = makeBot({ findShop: async () => gros });
+    await b.processWebhook(inboundText('BQ12345'));
+    assert.strictEqual(rec.sends[0].rows.length, 10);
+    assert.ok(rec.sends[0].body.includes('https://www.validel.shop/boutique/BQ12345'));
+  });
+
+  // Un message contenant les deux codes vise un article précis, pas la vitrine.
+  await test('code produit prioritaire sur code boutique dans le même message', async () => {
+    const { b, rec } = makeBot({ findShop });
+    await b.processWebhook(inboundText('vu sur BQ12345 : PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'buttons');
+    assert.ok(rec.sends[0].body.includes('Caisse de Yaourt'));
+  });
+
   // --- Vérification de la bannière de paiement au démarrage ---------------
   // Une URL qui ne sert pas une vraie image fait échouer l'envoi WhatsApp avec
   // « Media upload error », et D7 ne le signale qu'en accusé de livraison : aucun

@@ -61,6 +61,13 @@ const DEMO_PRODUCT_PUBLIC = !/^false$/i.test(process.env.WHATSAPP_DEMO_PRODUCT_P
 
 // Regex tolérante : « bonjour PD3431 svp » -> PD3431. Insensible à la casse.
 const PRODUCT_CODE_RE = /\b(PD\d{3,})\b/i;
+// Code de boutique (profiles.shop_code, migration 010) : « Catalogue BQ12345 ».
+// Préfixe distinct de PD -> aucune ambiguïté possible avec un code produit.
+const SHOP_CODE_RE = /\b(BQ\d{3,})\b/i;
+
+// Nombre de produits listés dans le catalogue WhatsApp. WhatsApp plafonne une
+// liste interactive à 10 lignes : au-delà, on renvoie vers le catalogue web.
+const CATALOG_MAX_ROWS = 10;
 
 function parsePositiveIntLocal(value, fallback) {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -172,6 +179,11 @@ function extractProductCode(text) {
   return m ? m[1].toUpperCase() : null;
 }
 
+function extractShopCode(text) {
+  const m = SHOP_CODE_RE.exec(String(text || ''));
+  return m ? m[1].toUpperCase() : null;
+}
+
 function computeFees(price) {
   const p = Number(price) || 0;
   const frais = Math.round((p * COMMISSION_PCT) / 100);
@@ -184,6 +196,11 @@ function formatFcfa(n) {
 
 function paymentLink(code) {
   return `${PUBLIC_WEB_BASE_URL}/product/${encodeURIComponent(code)}`;
+}
+
+// Catalogue web public d'une boutique (src/components/ShopCatalog.tsx).
+function catalogLink(shopCode) {
+  return `${PUBLIC_WEB_BASE_URL}/boutique/${encodeURIComponent(shopCode)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +321,57 @@ async function trouverProduit(code, { allowDemo = false } = {}) {
   };
 }
 
+// Catalogue d'une boutique à partir de son code public (profiles.shop_code).
+// Même règle démo que trouverProduit : un numéro de prod ne voit jamais un
+// produit de décor, un numéro démo voit tout.
+// Retourne null si le code ne correspond à aucun vendeur ; une boutique existante
+// mais sans produit en vente renvoie bien un objet avec produits: [].
+async function trouverBoutique(shopCode, { allowDemo = false } = {}) {
+  if (!supabase || !shopCode) return null;
+
+  const { data: vendeur, error } = await supabase
+    .from('profiles')
+    .select('id, company_name, full_name, address, shop_code, role')
+    .ilike('shop_code', shopCode)
+    .maybeSingle();
+  if (error) {
+    console.error('[WABOT] trouverBoutique erreur:', error.message);
+    return null;
+  }
+  if (!vendeur || vendeur.role !== 'vendor') return null;
+
+  let query = supabase
+    .from('products')
+    .select('name, price, code, is_demo')
+    .eq('vendor_id', vendeur.id)
+    .eq('is_available', true)
+    .order('created_at', { ascending: false })
+    // +1 : permet de savoir qu'il RESTE des produits au-delà de la liste
+    // WhatsApp, et donc de proposer le catalogue web.
+    .limit(CATALOG_MAX_ROWS + 1);
+  if (!allowDemo) query = query.not('is_demo', 'is', true);
+
+  const { data: produits, error: prodError } = await query;
+  if (prodError) {
+    console.error('[WABOT] trouverBoutique produits erreur:', prodError.message);
+    return null;
+  }
+
+  const tous = (produits || []).filter((p) => p.code);
+  return {
+    shopCode: vendeur.shop_code || shopCode.toUpperCase(),
+    nom: vendeur.company_name || vendeur.full_name || 'Boutique',
+    quartier: vendeur.address || '',
+    produits: tous.slice(0, CATALOG_MAX_ROWS).map((p) => ({
+      code: String(p.code).toUpperCase(),
+      nom: p.name,
+      prix: Number(p.price) || 0,
+    })),
+    // Vrai dès qu'au moins un produit n'a pas pu entrer dans la liste WhatsApp.
+    tronque: tous.length > CATALOG_MAX_ROWS,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Contenu des messages
 // ---------------------------------------------------------------------------
@@ -380,7 +448,42 @@ const TXT_CODE_INTROUVABLE = (code) =>
   `⚠️ Le code ${code} n'existe pas sur Validèl.\nNe payez pas ce vendeur tant que le produit n'est pas enregistré.`;
 
 const TXT_AUCUN_CODE =
-  'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.';
+  'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.\nPour voir tout le catalogue d\'une boutique, envoyez son code (ex : BQ12345).';
+
+// ── Catalogue de boutique ──────────────────────────────────────────────────
+const TXT_BOUTIQUE_INTROUVABLE = (shopCode) =>
+  `⚠️ Le code boutique ${shopCode} n'existe pas sur Validèl.\nVérifiez le lien reçu du vendeur.`;
+
+const txtCatalogueVide = (boutique) =>
+  `🏪 *${boutique.nom}*\n\nCette boutique n'a aucun produit en vente pour l'instant. Revenez plus tard.`;
+
+function txtCatalogue(boutique) {
+  const nb = boutique.produits.length;
+  const lignes = [
+    `🏪 *${boutique.nom}*`,
+    boutique.quartier ? boutique.quartier : null,
+    '',
+    boutique.tronque
+      ? `Voici ses ${nb} produits les plus récents. Le catalogue complet est sur ${catalogLink(boutique.shopCode)}`
+      : `${nb} produit${nb > 1 ? 's' : ''} disponible${nb > 1 ? 's' : ''}.`,
+    '',
+    'Ouvrez la liste ci-dessous et choisissez un produit pour voir sa fiche.',
+    '',
+    '🔒 Votre argent est protégé : le vendeur n\'est payé qu\'après votre confirmation de réception.',
+  ];
+  return lignes.filter((l) => l !== null).join('\n').slice(0, 1024);
+}
+
+// Lignes de la liste WhatsApp. `cat:CODE` retombe sur le même affichage de fiche
+// produit qu'un code tapé à la main — un seul chemin de code, un seul rendu.
+const catalogRows = (boutique) =>
+  boutique.produits.map((p) => ({
+    id: `cat:${p.code}`,
+    title: p.nom,
+    description: `${formatFcfa(p.prix)} FCFA · ${p.code}`,
+  }));
+
+const TXT_CATALOGUE_BOUTON = 'Voir les produits';
 
 const TXT_AI_QUOTA_DEPASSE =
   'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, contactez directement le vendeur ou utilisez le menu "Autres questions".\n\n⚠️ *Important* : payez toujours via Validèl. En dehors de Validèl, votre argent n\'est plus protégé et, en cas de problème, Validèl ne pourra rien faire.';
@@ -529,6 +632,37 @@ async function repliesCheckoutPerdu(code, findProduct) {
   if (!produit) return [{ kind: 'text', body: TXT_AUCUN_CODE }];
   if (produit.isDemo) return [{ kind: 'text', body: txtDemoStop(produit, null) }];
   return [{ kind: 'cta', body: paiementCtaText(produit), displayText: 'Payer maintenant', url: paymentLink(code) }];
+}
+
+// Affichage d'une fiche produit + boutons d'action. Chemin UNIQUE, partagé par
+// le code tapé à la main et la sélection d'une ligne du catalogue : la fiche est
+// donc rigoureusement identique dans les deux cas.
+async function repliesFicheProduit(code, { phone, findProduct, setConvState }) {
+  const produit = await findProduct(code);
+  if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
+  // Nouveau produit consulté -> quota IA frais ET abandon d'un checkout en cours :
+  // le client change d'article, on ne garde pas le nom/adresse de l'ancien.
+  if (phone) await setConvState(phone, { productCode: code, aiCount: 0, aiWindowStart: null, checkout: null });
+  return [{
+    kind: 'buttons',
+    body: ficheProduitText(produit),
+    buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)],
+  }];
+}
+
+// Catalogue d'une boutique -> liste interactive WhatsApp.
+async function repliesCatalogue(shopCode, findShop) {
+  const boutique = await findShop(shopCode);
+  if (!boutique) return [{ kind: 'text', body: TXT_BOUTIQUE_INTROUVABLE(shopCode) }];
+  if (boutique.produits.length === 0) {
+    return [{ kind: 'text', body: txtCatalogueVide(boutique) }];
+  }
+  return [{
+    kind: 'list',
+    body: txtCatalogue(boutique),
+    buttonLabel: TXT_CATALOGUE_BOUTON,
+    rows: catalogRows(boutique),
+  }];
 }
 
 function checkoutActive(state) {
@@ -701,6 +835,7 @@ async function handleCheckoutMessage(ctx) {
 // ---------------------------------------------------------------------------
 async function decideReplies(parsed, deps) {
   const baseFindProduct = (deps && deps.findProduct) || trouverProduit;
+  const baseFindShop = (deps && deps.findShop) || trouverBoutique;
   const getConvState = (deps && deps.getConversationState) || defaultGetConversationState;
   const setConvState = (deps && deps.setConversationState) || defaultSetConversationState;
   const askProductQuestion = (deps && deps.askProductQuestion) || askProductQuestionAI;
@@ -714,6 +849,7 @@ async function decideReplies(parsed, deps) {
   // ici une seule fois : tous les appels findProduct() en aval héritent du contexte.
   const demoContext = isDemoBotNumber(botNumber);
   const findProduct = (code) => baseFindProduct(code, { allowDemo: demoContext || DEMO_PRODUCT_PUBLIC });
+  const findShop = (shopCode) => baseFindShop(shopCode, { allowDemo: demoContext || DEMO_PRODUCT_PUBLIC });
 
   // 1) Réponse à un bouton interactif
   if (parsed.buttonId) {
@@ -742,6 +878,11 @@ async function decideReplies(parsed, deps) {
         displayText: 'Payer maintenant',
         url: paymentLink(code),
       }];
+    }
+
+    // Produit choisi dans la liste du catalogue d'une boutique : cat:CODE.
+    if (kindId === 'cat') {
+      return repliesFicheProduit(parts[1], { phone, findProduct, setConvState });
     }
 
     // Étapes du checkout pilotées par un bouton ou la liste des quartiers :
@@ -813,17 +954,15 @@ async function decideReplies(parsed, deps) {
   // 2) Message texte
   const code = extractProductCode(parsed.text);
   if (code) {
-    const produit = await findProduct(code);
-    if (!produit) return [{ kind: 'text', body: TXT_CODE_INTROUVABLE(code) }];
-    // Nouveau produit consulté -> repart avec un quota IA frais.
-    // Nouveau code produit -> quota IA frais ET abandon d'un checkout en cours :
-    // le client change d'article, on ne garde pas le nom/adresse de l'ancien.
-    if (phone) await setConvState(phone, { productCode: code, aiCount: 0, aiWindowStart: null, checkout: null });
-    return [{
-      kind: 'buttons',
-      body: ficheProduitText(produit),
-      buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)],
-    }];
+    return repliesFicheProduit(code, { phone, findProduct, setConvState });
+  }
+
+  // Code de boutique (« Catalogue BQ12345 », lien de catalogue du vendeur) :
+  // testé APRÈS le code produit, car un message contenant les deux vise d'abord
+  // un article précis.
+  const shopCode = extractShopCode(parsed.text);
+  if (shopCode) {
+    return repliesCatalogue(shopCode, findShop);
   }
 
   // Pas de code dans le message : si un produit est "actif" pour ce numéro
@@ -1335,6 +1474,7 @@ async function executeAction(action, to, senders, from) {
 // ---------------------------------------------------------------------------
 function createBot(deps = {}) {
   const findProduct = deps.findProduct || trouverProduit;
+  const findShop = deps.findShop || trouverBoutique;
   const isDuplicate = deps.isDuplicate || defaultIsDuplicate;
   const getConversationState = deps.getConversationState || defaultGetConversationState;
   const setConversationState = deps.setConversationState || defaultSetConversationState;
@@ -1381,6 +1521,7 @@ function createBot(deps = {}) {
     }
     const actions = await decideReplies(parsed, {
       findProduct,
+      findShop,
       getConversationState,
       setConversationState,
       askProductQuestion,
@@ -1434,6 +1575,7 @@ module.exports = {
   parseD7Message,
   parseD7StatusEvent,
   extractProductCode,
+  extractShopCode,
   extractButtonId,
   decideReplies,
   verifyWalletBanner,
@@ -1443,7 +1585,9 @@ module.exports = {
   paiementCtaText,
   safeEqual,
   trouverProduit,
+  trouverBoutique,
   paymentLink,
+  catalogLink,
   markDeliveryNotificationRead,
   sendFallbackSmsNow,
   runDeliveryReadFallbackCheck,

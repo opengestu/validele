@@ -117,6 +117,7 @@ export type Database = {
           id: string
           image_url: string | null
           is_available: boolean | null
+          is_demo: boolean | null
           name: string
           price: number
           stock_quantity: number | null
@@ -131,6 +132,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_available?: boolean | null
+          is_demo?: boolean | null
           name: string
           price: number
           stock_quantity?: number | null
@@ -145,6 +147,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_available?: boolean | null
+          is_demo?: boolean | null
           name?: string
           price?: number
           stock_quantity?: number | null
@@ -173,6 +176,7 @@ export type Database = {
           phone: string | null
           push_token: string | null
           role: string
+          shop_code: string | null
           updated_at: string
           vehicle_info: string | null
           wallet_type: string | null
@@ -187,6 +191,7 @@ export type Database = {
           phone?: string | null
           push_token?: string | null
           role?: string
+          shop_code?: string | null
           updated_at?: string
           vehicle_info?: string | null
           wallet_type?: string | null
@@ -201,6 +206,7 @@ export type Database = {
           phone?: string | null
           push_token?: string | null
           role?: string
+          shop_code?: string | null
           updated_at?: string
           vehicle_info?: string | null
           wallet_type?: string | null

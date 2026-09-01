@@ -49,6 +49,9 @@ import {
   Image as ImageIcon,
   Upload,
   PlayCircle,
+  Store,
+  Copy,
+  Check,
   X
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,6 +77,7 @@ import useNetwork from '@/hooks/useNetwork';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
+import { buildShopCatalogWebLink } from '@/lib/whatsappBot';
 type ProfileRow = {
   full_name: string | null;
   phone: string | null;
@@ -488,6 +492,11 @@ const VendorDashboard = () => {
   // walletTypeLabel supprimé
   // Ajout d'un état pour le feedback de copie
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  // Code public de la boutique (profiles.shop_code, migration 010). Chargé à part
+  // du profil : celui-ci est reconstruit depuis plusieurs sources (cache auth,
+  // raccourci dev, API) et n'a pas à connaître cette colonne.
+  const [shopCode, setShopCode] = useState<string | null>(null);
+  const [catalogLinkCopied, setCatalogLinkCopied] = useState(false);
   // Network status
   // Détection de l'état en ligne/hors-ligne (corrige l'erreur isOnline)
   const [isOnline, setIsOnline] = useState(
@@ -1112,6 +1121,44 @@ const VendorDashboard = () => {
       setEditProfile({ full_name: '', phone: '', wallet_type: '' });
     }
   }, [user, authUserProfile]);
+
+  // Code public de la boutique. Requête isolée et volontairement minimale : elle
+  // ne demande que shop_code, la seule colonne dont la vitrine a besoin. Elle
+  // aboutit aussi bien pour une session Supabase que pour une session SMS (la
+  // policy anon de la migration 010 autorise la lecture de shop_code).
+  useEffect(() => {
+    const vendorId = effectiveUser?.id;
+    if (!vendorId) {
+      setShopCode(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('shop_code')
+          .eq('id', vendorId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error) {
+          console.error('[VendorDashboard] lecture shop_code échouée', error);
+          setShopCode(null);
+          return;
+        }
+        setShopCode(String(data?.shop_code || '').trim() || null);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[VendorDashboard] lecture shop_code exception', err);
+          setShopCode(null);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [effectiveUser?.id]);
+
   // Profile auto-creation logic (like BuyerDashboard)
   useEffect(() => {
     if (!user) return;
@@ -1945,20 +1992,74 @@ const VendorDashboard = () => {
     return `${getPublicWebBaseUrl()}/acheter/${encodeURIComponent(shareCode)}`;
   };
 
-  const handleShareProduct = async (product: Product) => {
-    const shareLink = getProductShareLink(product);
-    if (!shareLink) {
-      toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
+
+  // ── Lien de catalogue de la boutique ─────────────────────────────────────
+  // Une seule adresse pour TOUS les produits, là où /acheter/{code} ne vaut que
+  // pour un article. Le vendeur la met dans sa bio, son statut, ses affiches.
+  const shopCatalogLink = shopCode ? buildShopCatalogWebLink(getPublicWebBaseUrl(), shopCode) : '';
+  // Version affichée : on retire « https://www. », pur bruit sur un écran étroit.
+  // Le lien copié/partagé, lui, reste évidemment complet.
+  const shopCatalogDisplayLink = React.useMemo(() => {
+    if (!shopCatalogLink) return '';
+    try {
+      const parsed = new URL(shopCatalogLink);
+      const host = parsed.host.startsWith('www.') ? parsed.host.slice(4) : parsed.host;
+      return `${host}${parsed.pathname}`;
+    } catch {
+      return shopCatalogLink;
+    }
+  }, [shopCatalogLink]);
+
+  const handleCopyCatalogLink = async () => {
+    if (!shopCatalogLink) return;
+    try {
+      await navigator.clipboard.writeText(shopCatalogLink);
+      setCatalogLinkCopied(true);
+      setTimeout(() => setCatalogLinkCopied(false), 1500);
+    } catch (error) {
+      console.error('[VendorDashboard] handleCopyCatalogLink error', error);
+      toast({ title: 'Erreur', description: 'Impossible de copier le lien', variant: 'destructive' });
+    }
+  };
+
+  const handleShareCatalog = async () => {
+    if (!shopCatalogLink) {
+      toast({ title: 'Erreur', description: 'Lien de boutique indisponible', variant: 'destructive' });
       return;
     }
+    await shareLink(
+      { title: 'Ma boutique sur Validèl', url: shopCatalogLink, dialogTitle: 'Partager ma boutique' },
+      { copied: 'Lien de votre boutique copié en presse-papiers.', error: 'Impossible de partager la boutique' }
+    );
+  };
 
+  const handleWhatsAppCatalog = () => {
+    if (!shopCatalogLink) {
+      toast({ title: 'Erreur', description: 'Lien de boutique indisponible', variant: 'destructive' });
+      return;
+    }
     try {
-      const payload = {
-        title: product.name,
-        url: shareLink,
-        dialogTitle: 'Partager le produit'
-      };
+      // On envoie UNIQUEMENT le lien, comme pour un produit : WhatsApp affiche
+      // sa carte d'aperçu au lieu d'une URL encodée noyée dans du texte.
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shopCatalogLink)}`;
+      const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) {
+        window.location.href = whatsappUrl;
+      }
+    } catch (error) {
+      console.error('[VendorDashboard] handleWhatsAppCatalog error', error);
+      toast({ title: 'Erreur', description: 'Impossible d\'ouvrir WhatsApp', variant: 'destructive' });
+    }
+  };
 
+  // Partage générique d'un lien : feuille native sur mobile, Web Share sinon,
+  // presse-papiers en dernier recours. Mutualisé entre le lien produit et le lien
+  // de catalogue — un seul comportement à maintenir, y compris l'annulation.
+  const shareLink = async (
+    payload: { title: string; url: string; dialogTitle: string },
+    messages: { copied: string; error: string }
+  ) => {
+    try {
       // Sur Android/iOS Capacitor, utiliser la feuille de partage native.
       if (Capacitor.isNativePlatform()) {
         await Share.share(payload);
@@ -1971,8 +2072,8 @@ const VendorDashboard = () => {
       } else {
         // Fallback: copier le lien
         if (navigator.clipboard) {
-          await navigator.clipboard.writeText(shareLink);
-          toast({ title: 'Lien copié', description: 'Lien produit copié en presse-papiers.' });
+          await navigator.clipboard.writeText(payload.url);
+          toast({ title: 'Lien copié', description: messages.copied });
         } else {
           throw new Error('Share API et clipboard non disponibles');
         }
@@ -1982,15 +2083,27 @@ const VendorDashboard = () => {
       const errorMessage = String(error?.message || '');
       const isCancelled = error?.name === 'AbortError' || /cancel/i.test(errorMessage);
       if (!isCancelled) {
-        console.error('[VendorDashboard] handleShareProduct error', error);
-        toast({ title: 'Erreur', description: 'Impossible de partager le produit', variant: 'destructive' });
+        console.error('[VendorDashboard] shareLink error', error);
+        toast({ title: 'Erreur', description: messages.error, variant: 'destructive' });
       }
     }
   };
 
+  const handleShareProduct = async (product: Product) => {
+    const link = getProductShareLink(product);
+    if (!link) {
+      toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
+      return;
+    }
+    await shareLink(
+      { title: product.name, url: link, dialogTitle: 'Partager le produit' },
+      { copied: 'Lien produit copié en presse-papiers.', error: 'Impossible de partager le produit' }
+    );
+  };
+
   const handleWhatsAppProduct = (product: Product) => {
-    const shareLink = getProductShareLink(product);
-    if (!shareLink) {
+    const link = getProductShareLink(product);
+    if (!link) {
       toast({ title: 'Erreur', description: 'Lien produit indisponible', variant: 'destructive' });
       return;
     }
@@ -1999,7 +2112,7 @@ const VendorDashboard = () => {
       // On envoie UNIQUEMENT le lien : WhatsApp affiche la carte d'aperçu propre,
       // sans URL encodée ni texte en trop. Le clic ouvre le bot avec le texte
       // d'explication complet pré-rempli (via la redirection 302 serveur).
-      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareLink)}`;
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(link)}`;
       const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       if (!popup) {
         window.location.href = whatsappUrl;
@@ -2229,6 +2342,51 @@ const VendorDashboard = () => {
               >
                 Regarder la démo
               </Button>
+            </div>
+          )}
+          {/* Lien de catalogue : une seule adresse à partager pour toute la
+              boutique, là où le lien produit ne vaut que pour un article. */}
+          {shopCode && (
+            <div className="rounded-2xl border border-border p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                  <Store className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground">Lien de ma boutique</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Un seul lien pour tout votre catalogue : vos clients voient tous vos produits et achètent sur WhatsApp.
+                  </p>
+
+                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2">
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
+                      style={{ userSelect: 'all' }}
+                    >
+                      {shopCatalogDisplayLink}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyCatalogLink}
+                      aria-label="Copier le lien de ma boutique"
+                      className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                    >
+                      {catalogLinkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleWhatsAppCatalog}>
+                      <WhatsAppIcon className="mr-1" size={16} />
+                      WhatsApp
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleShareCatalog}>
+                      <Share2 className="mr-1 h-3.5 w-3.5" />
+                      Partager
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
           <div className="flex justify-between items-center gap-2">
@@ -2760,6 +2918,63 @@ const VendorDashboard = () => {
                     >
                       Voir
                     </Button>
+                  </div>
+                )}
+                {/* Carte « boutique » : volontairement en inverse (encre pleine)
+                    pour être l'ancre visuelle de l'onglet, au-dessus des fiches
+                    produit blanches. C'est l'outil de vente du vendeur, pas une
+                    ligne d'information parmi d'autres.
+                    ⚠️ Rendu mobile : l'onglet Produits existe en DEUX arbres
+                    séparés (hidden md:block / md:hidden), tout ajout ici doit
+                    être répercuté dans l'autre. */}
+                {shopCode && (
+                  <div className="rounded-2xl bg-primary p-4 text-primary-foreground shadow-premium">
+                    <div className="flex items-center gap-2">
+                      <Store className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                      <p className="text-sm font-semibold leading-none">Ma boutique en ligne</p>
+                    </div>
+
+                    <p className="mt-2 text-xs leading-relaxed text-primary-foreground/60">
+                      Un seul lien pour tous vos produits. Partagez-le, vos clients commandent sur WhatsApp.
+                    </p>
+
+                    {/* Toute la ligne est cliquable : sur mobile, une icône de
+                        16 px seule est une cible trop petite pour le pouce. */}
+                    <button
+                      type="button"
+                      onClick={handleCopyCatalogLink}
+                      aria-label="Copier le lien de ma boutique"
+                      className="mt-3 flex w-full items-center gap-2 rounded-xl bg-primary-foreground/10 px-3 py-2.5 text-left transition-colors active:bg-primary-foreground/20"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-primary-foreground/90">
+                        {shopCatalogDisplayLink}
+                      </span>
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-primary-foreground/60">
+                        {catalogLinkCopied ? 'Copié' : 'Copier'}
+                      </span>
+                      {catalogLinkCopied
+                        ? <Check className="h-4 w-4 shrink-0" />
+                        : <Copy className="h-4 w-4 shrink-0 text-primary-foreground/60" />}
+                    </button>
+
+                    <div className="mt-2.5 grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        onClick={handleWhatsAppCatalog}
+                        className="h-10 w-full rounded-xl bg-primary-foreground text-xs font-semibold text-primary hover:bg-primary-foreground/90"
+                      >
+                        <WhatsAppIcon className="mr-1.5" size={15} />
+                        WhatsApp
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handleShareCatalog}
+                        className="h-10 w-full rounded-xl border border-primary-foreground/25 bg-transparent text-xs font-semibold text-primary-foreground hover:bg-primary-foreground/10"
+                      >
+                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                        Partager
+                      </Button>
+                    </div>
                   </div>
                 )}
                 <div className="flex justify-between items-center gap-2">
