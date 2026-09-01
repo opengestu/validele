@@ -43,7 +43,11 @@ const SessionTimeoutManager: React.FC = () => {
       || path === '/admin-login'
       || path.startsWith('/admin/')
       || path === '/product'
-      || path.startsWith('/product/');
+      || path.startsWith('/product/')
+      // Catalogue public d'une boutique : page partagée, au même titre que
+      // /product/. Un visiteur qui a par ailleurs une session ne doit pas se
+      // voir réclamer un PIN en pleine consultation d'une vitrine.
+      || path.startsWith('/boutique/');
   }, []);
 
   const getCurrentPathWithQuery = useCallback(() => {
@@ -234,6 +238,21 @@ const SessionTimeoutManager: React.FC = () => {
         if (!response.ok) {
           console.warn('[HEARTBEAT] Reponse non OK:', response.status);
         }
+
+        // Un 401 ICI est sans ambiguïté : le heartbeat ne fait que présenter le
+        // jeton, il n'y a aucune règle métier qui puisse le refuser. C'est donc
+        // le signal le plus fiable d'une session expirée — et le seul qui arrive
+        // tout seul, toutes les 30 s.
+        //
+        // L'intercepteur 401 global (plus haut) ne couvre pas ce cas : il ne
+        // déclenche que sur les URL contenant session/verify/profile/user-me, ce
+        // que « /api/me/heartbeat » ne fait pas. Sans ça, un vendeur dont le
+        // jeton a expiré restait bloqué sur un tableau de bord qui répond 401
+        // partout, sans jamais se voir proposer son PIN.
+        if (response.status === 401 && !cancelled && isAuthenticatedRef.current) {
+          console.warn('[HEARTBEAT] 401 : session expirée, demande du PIN');
+          redirectToPinReauth();
+        }
       } catch {
         // Silent best-effort heartbeat
       }
@@ -251,7 +270,9 @@ const SessionTimeoutManager: React.FC = () => {
       cancelled = true;
       window.clearInterval(heartbeatTimer);
     };
-  }, []);
+    // redirectToPinReauth est un useCallback aux dépendances stables : la boucle
+    // n'est pas relancée en pratique, mais l'omettre figerait une closure obsolète.
+  }, [redirectToPinReauth]);
 
   return null;
 };

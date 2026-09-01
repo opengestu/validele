@@ -18,6 +18,7 @@ const PinReauth: React.FC = () => {
   const FORGOT_PIN_CLICKS_KEY = 'pin_forgot_clicks_v1';
   const MAX_FORGOT_PIN_CLICKS = 1;
   const SUPPORT_PHONE = '777804136';
+  const PIN_HASH_KEY = 'pin_hash_v1';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lockRemainingSeconds, setLockRemainingSeconds] = useState<number>(0);
@@ -27,6 +28,16 @@ const PinReauth: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { signOut } = useAuth();
+
+  // Fonction pour hasher le PIN avec SHA-256
+  const hashPin = async (pin: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(pin);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hash));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex;
+  };
 
   const getPhoneKey = useCallback((rawPhone: string | null) => String(rawPhone || '').replace(/\D/g, ''), []);
 
@@ -110,6 +121,58 @@ const PinReauth: React.FC = () => {
     }
   }, [navigate, readForgotPinClicks]);
 
+  // Renouvellement du jeton auprès du serveur. C'est la raison d'être de cet
+  // écran : sans NOUVEAU JWT, l'utilisateur retrouve une interface déverrouillée
+  // alors que chaque appel backend continue de répondre 401, d'où le bandeau
+  // « Session invalide ou expirée » juste après un PIN pourtant accepté.
+  type TokenRenewal =
+    | { status: 'ok' }
+    | { status: 'invalid-pin' }
+    | { status: 'locked'; retryAfterSeconds: number }
+    | { status: 'offline' };
+
+  const renewSessionToken = async (pinValue: string): Promise<TokenRenewal> => {
+    let res: Response;
+    try {
+      res = await fetch(apiUrl('/auth/login-pin'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, pin: pinValue }),
+      });
+    } catch {
+      return { status: 'offline' };
+    }
+
+    const data = (await res.json().catch(() => ({}))) as {
+      token?: string;
+      retry_after_seconds?: number;
+    };
+
+    if (res.status === 429) {
+      return { status: 'locked', retryAfterSeconds: Math.max(1, Number(data.retry_after_seconds) || 60) };
+    }
+    if (!res.ok || !data.token) {
+      return { status: 'invalid-pin' };
+    }
+
+    localStorage.setItem('auth_token', data.token);
+    // resolveAuthToken() lit `sms_auth_session` EN PREMIER (src/lib/api.ts) :
+    // n'écrire que `auth_token` laisserait l'ancien JWT expiré prioritaire, et
+    // le problème resterait entier.
+    try {
+      const raw = localStorage.getItem('sms_auth_session');
+      if (raw) {
+        const smsSession = JSON.parse(raw);
+        smsSession.access_token = data.token;
+        smsSession.loginTime = new Date().toISOString();
+        localStorage.setItem('sms_auth_session', JSON.stringify(smsSession));
+      }
+    } catch {
+      // ignore
+    }
+    return { status: 'ok' };
+  };
+
   const handlePinComplete = async (pin: string) => {
     if (!phone) return;
     if (lockRemainingSeconds > 0) {
@@ -119,104 +182,113 @@ const PinReauth: React.FC = () => {
     setLoading(true);
     setError(null);
 
+    const fail = (message: string) => {
+      setError(message);
+      setLoading(false);
+    };
+
     try {
-      const res = await fetch(apiUrl('/auth/login-pin'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, pin }),
-      });
-      const data = await res.json();
+      const phoneKey = getPhoneKey(phone);
+      const storedHash = localStorage.getItem(`${PIN_HASH_KEY}_${phoneKey}`);
+      const inputHash = await hashPin(pin);
 
-      if (res.ok && data.success) {
-        // Mettre à jour le token
-        if (data.token) {
-          localStorage.setItem('auth_token', data.token);
-        }
+      // Le hash local est un filet HORS LIGNE, jamais un raccourci : il évite un
+      // aller-retour réseau sur un PIN manifestement faux, mais dès qu'il y a du
+      // réseau c'est le serveur qui tranche ET qui délivre le jeton.
+      if (storedHash && inputHash !== storedHash) {
+        fail('Code PIN incorrect. Veuillez réessayer.');
+        return;
+      }
 
-        // Mettre à jour la session SMS avec le nouveau token si nécessaire
-        const smsSessionStr = localStorage.getItem('sms_auth_session');
-        if (smsSessionStr) {
-          try {
-            const smsSession = JSON.parse(smsSessionStr);
-            if (data.token) {
-              smsSession.access_token = data.token;
-            }
-            smsSession.loginTime = new Date().toISOString();
-            localStorage.setItem('sms_auth_session', JSON.stringify(smsSession));
-          } catch {
-            // ignore
-          }
-        }
+      const renewal = await renewSessionToken(pin);
 
-        // Réinitialiser les compteurs d'activité
-        localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
-        localStorage.removeItem('app_backgrounded_at');
-        localStorage.removeItem(REAUTH_REQUIRED_KEY);
+      if (renewal.status === 'locked') {
+        setLockRemainingSeconds(renewal.retryAfterSeconds);
+        fail(`Trop de tentatives PIN. Réessayez dans ${formatLockDuration(renewal.retryAfterSeconds)}.`);
+        return;
+      }
 
-        toast({
-          title: 'Session renouvelée',
-          description: 'Vous êtes reconnecté.',
-        });
+      if (renewal.status === 'invalid-pin') {
+        // Le hash local correspondait mais pas le serveur : le PIN a été changé
+        // ailleurs. On jette le hash périmé pour que la prochaine tentative
+        // reparte de la source de vérité.
+        localStorage.removeItem(`${PIN_HASH_KEY}_${phoneKey}`);
+        fail('Code PIN incorrect. Veuillez réessayer.');
+        return;
+      }
 
-        // Rediriger vers la page précédente
-        const returnPath = localStorage.getItem(REAUTH_RETURN_PATH_KEY);
-        localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
-
-        const resolveSafeReturnPath = (rawPath: string | null) => {
-          if (!rawPath) return null;
-          try {
-            const parsed = new URL(rawPath, window.location.origin);
-            const pathname = parsed.pathname;
-            if (pathname === '/pin-reauth' || pathname === '/auth') return null;
-            return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-          } catch {
-            if (rawPath.startsWith('/pin-reauth') || rawPath.startsWith('/auth')) return null;
-            return rawPath;
-          }
-        };
-
-        const safeReturnPath = resolveSafeReturnPath(returnPath);
-
-        if (safeReturnPath) {
-          navigate(safeReturnPath, { replace: true });
-        } else {
-          // Redirection par défaut selon le rôle
-          const smsStr = localStorage.getItem('sms_auth_session');
-          if (smsStr) {
-            try {
-              const sess = JSON.parse(smsStr);
-              const role = sess.role || 'buyer';
-              const path = role === 'vendor' ? '/vendor' : role === 'delivery' ? '/delivery' : '/buyer';
-              navigate(path, { replace: true });
-            } catch {
-              navigate('/buyer', { replace: true });
-            }
-          } else {
-            navigate('/', { replace: true });
-          }
-        }
-      } else {
-        const retryAfterSeconds = Number.parseInt(String(data?.retry_after_seconds ?? ''), 10);
-        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-          setLockRemainingSeconds(retryAfterSeconds);
-          setError(`Trop de tentatives PIN. Réessayez dans ${formatLockDuration(retryAfterSeconds)}.`);
-          setLoading(false);
+      if (renewal.status === 'offline') {
+        // Sans hash local, rien ne permet de vérifier le PIN hors ligne.
+        if (!storedHash) {
+          fail('Pas de connexion internet. Veuillez vous connecter pour la première vérification.');
           return;
         }
-        const backendError = (data && typeof data.error === 'string' && data.error.trim().length > 0)
-          ? data.error
-          : null;
-        const normalizedError = backendError && /invalid\s*pin/i.test(backendError)
-          ? 'Code PIN incorrect. Veuillez réessayer.'
-          : backendError;
-        setError(normalizedError || 'Code PIN incorrect. Veuillez réessayer.');
-        setLoading(false);
+        // Tolérance hors ligne volontaire : on déverrouille l'interface, mais le
+        // jeton n'a PAS pu être renouvelé — les appels backend resteront refusés
+        // tant que le réseau n'est pas revenu.
+        console.warn('[PinReauth] hors ligne : session déverrouillée sans renouvellement du jeton');
+        completeReauth();
+        return;
       }
+
+      // Jeton renouvelé : on (re)mémorise le hash pour les vérifications hors ligne.
+      localStorage.setItem(`${PIN_HASH_KEY}_${phoneKey}`, inputHash);
+      completeReauth();
     } catch (e) {
       console.error('PinReauth error:', e);
-      setError('Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.');
-      setLoading(false);
+      fail('Code PIN incorrect. Veuillez réessayer.');
     }
+  };
+
+  const completeReauth = () => {
+    // Réinitialiser les compteurs d'activité
+    localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
+    localStorage.removeItem('app_backgrounded_at');
+    localStorage.removeItem(REAUTH_REQUIRED_KEY);
+
+    toast({
+      title: 'Session renouvelée',
+      description: 'Vous êtes reconnecté.',
+    });
+
+    // Rediriger vers la page précédente
+    const returnPath = localStorage.getItem(REAUTH_RETURN_PATH_KEY);
+    localStorage.removeItem(REAUTH_RETURN_PATH_KEY);
+
+    const resolveSafeReturnPath = (rawPath: string | null) => {
+      if (!rawPath) return null;
+      try {
+        const parsed = new URL(rawPath, window.location.origin);
+        const pathname = parsed.pathname;
+        if (pathname === '/pin-reauth' || pathname === '/auth') return null;
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      } catch {
+        if (rawPath.startsWith('/pin-reauth') || rawPath.startsWith('/auth')) return null;
+        return rawPath;
+      }
+    };
+
+    const safeReturnPath = resolveSafeReturnPath(returnPath);
+
+    if (safeReturnPath) {
+      navigate(safeReturnPath, { replace: true });
+    } else {
+      // Redirection par défaut selon le rôle
+      const smsStr = localStorage.getItem('sms_auth_session');
+      if (smsStr) {
+        try {
+          const sess = JSON.parse(smsStr);
+          const role = sess.role || 'buyer';
+          const path = role === 'vendor' ? '/vendor' : role === 'delivery' ? '/delivery' : '/buyer';
+          navigate(path, { replace: true });
+        } catch {
+          navigate('/buyer', { replace: true });
+        }
+      } else {
+        navigate('/', { replace: true });
+      }
+    }
+    setLoading(false);
   };
 
   const handleLogout = async () => {
@@ -284,11 +356,11 @@ const PinReauth: React.FC = () => {
         >
         <div className="relative z-20 -translate-y-24 sm:-translate-y-28">
           <div className="mb-3 mt-0 flex flex-col items-center text-center">
-            <div className="relative z-30 mb-2 flex h-20 w-20 items-center justify-center rounded-[24px] border border-slate-200 bg-white shadow-none">
+            <div className="relative z-30 mb-2 flex h-20 w-20 items-center justify-center">
               <img
                 src={validelLogo}
                 alt="Validèl"
-                className="h-12 w-12 object-contain"
+                className="h-20 w-20 object-contain"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
