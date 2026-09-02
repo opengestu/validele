@@ -184,10 +184,26 @@ function extractShopCode(text) {
   return m ? m[1].toUpperCase() : null;
 }
 
-function computeFees(price) {
+// Frais de protection appliqués au total de la LIGNE (prix × quantité), pour
+// rester aligné avec le calcul serveur (/api/guest/order). `qty` par défaut 1
+// laisse tout le code d'origine (fiche, CTA) inchangé.
+function computeFees(price, qty = 1) {
   const p = Number(price) || 0;
-  const frais = Math.round((p * COMMISSION_PCT) / 100);
-  return { prix: p, frais, total: p + frais };
+  const q = Math.min(999, Math.max(1, Math.floor(Number(qty) || 1)));
+  const ligne = p * q;
+  const frais = Math.round((ligne * COMMISSION_PCT) / 100);
+  return { prix: p, quantite: q, ligne, frais, total: ligne + frais };
+}
+
+// Quantité tapée par l'acheteur : accepte « 3 », « x3 », « 3 pieces »… Renvoie un
+// entier dans [1, 99] ou null si rien d'exploitable (99 = garde-fou conversationnel ;
+// le serveur plafonne de son côté à 999).
+function quantityFromText(text) {
+  const m = String(text || '').match(/\d{1,3}/);
+  if (!m) return null;
+  const n = Math.floor(Number(m[0]));
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(99, n);
 }
 
 function formatFcfa(n) {
@@ -550,34 +566,52 @@ const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Autres questi
 // ---------------------------------------------------------------------------
 // Checkout conversationnel : nom -> adresse -> wallet -> commande + lien de paiement
 // ---------------------------------------------------------------------------
-// Le téléphone n'est jamais demandé : c'est celui du compte WhatsApp qui écrit.
-const txtDemandeNom = (produit) => [
-  `📦 *${produit.nom}* — ${formatFcfa(computeFees(produit.prix).total)} FCFA`,
+// Première étape : la quantité. Demandée avant tout le reste car elle détermine
+// le montant que l'acheteur verra ensuite.
+const txtDemandeQuantite = (produit) => [
+  `📦 *${produit.nom}* — ${formatFcfa(computeFees(produit.prix).total)} FCFA l'unité`,
   '',
-  'Pour préparer votre commande, j\'ai besoin de 2 informations.',
+  'Pour préparer votre commande :',
   '',
-  '1️⃣ *Votre prénom et nom ?*',
+  '1️⃣ *Combien en voulez-vous ?*',
   '',
-  '_Tapez « annuler » à tout moment pour arrêter._',
+  '_Envoyez un nombre (ex : 1, 2, 3…). Tapez « annuler » à tout moment pour arrêter._',
 ].join('\n');
+
+// Le téléphone n'est jamais demandé : c'est celui du compte WhatsApp qui écrit.
+// La quantité est déjà connue à ce stade : on rappelle le total correspondant.
+const txtDemandeNom = (produit, quantite = 1) => {
+  const { total } = computeFees(produit.prix, quantite);
+  const ligneQte = quantite > 1
+    ? `${quantite} × *${produit.nom}* — total *${formatFcfa(total)} FCFA*`
+    : `📦 *${produit.nom}* — ${formatFcfa(total)} FCFA`;
+  return [
+    ligneQte,
+    '',
+    '2️⃣ *Votre prénom et nom ?*',
+    '',
+    '_Tapez « annuler » à tout moment pour arrêter._',
+  ].join('\n');
+};
 
 // Utilisé uniquement quand l'acheteur choisit « Autre quartier », ou s'il tape au
 // lieu de sélectionner. Le quartier seul suffit : les livreurs appellent avant de
 // livrer, et le numéro de l'acheteur est déjà sur la commande (compte WhatsApp).
 const TXT_DEMANDE_ADRESSE = [
-  '2️⃣ *Votre quartier de livraison ?*',
+  '3️⃣ *Votre quartier de livraison ?*',
   '',
   '_Ex : Mbour, quartier Golf._',
 ].join('\n');
 
 const TXT_DEMANDE_ZONE = [
-  '2️⃣ *Où faut-il livrer ?*',
+  '3️⃣ *Où faut-il livrer ?*',
   '',
   'Choisissez votre quartier dans la liste.',
 ].join('\n');
 const TXT_ZONE_BOUTON = 'Choisir le quartier';
 
-const TXT_DEMANDE_WALLET = '3️⃣ *Comment souhaitez-vous payer ?*';
+const TXT_DEMANDE_WALLET = '4️⃣ *Comment souhaitez-vous payer ?*';
+const TXT_QUANTITE_INVALIDE = 'Merci d\'indiquer un nombre d\'articles (ex : 1, 2, 3…).';
 const TXT_NOM_INVALIDE = 'Merci d\'indiquer votre prénom et nom (entre 2 et 60 caractères).';
 const TXT_ADRESSE_INVALIDE = 'Merci d\'indiquer votre quartier de livraison (au moins 5 caractères).';
 const TXT_WALLET_INVALIDE = 'Choisissez *Wave* ou *Orange Money* avec les boutons ci-dessous.';
@@ -589,10 +623,13 @@ const TXT_CHECKOUT_ECHEC = [
   'Utilisez le lien ci-dessous pour terminer votre paiement en sécurité.',
 ].join('\n');
 
-function txtRecapCommande(produit, order, walletLabel) {
+function txtRecapCommande(produit, order, walletLabel, quantite = 1) {
+  const ligneProduit = quantite > 1
+    ? `📦 ${quantite} × ${produit.nom}`
+    : `📦 ${produit.nom}`;
   return [
     `✅ *Commande ${order.orderCode}*`,
-    `📦 ${produit.nom}`,
+    ligneProduit,
     `💰 *${formatFcfa(order.totalAmount)} FCFA* (frais de protection inclus)`,
     `💳 ${walletLabel}`,
     '',
@@ -727,13 +764,17 @@ async function finalizeCheckout(ctx) {
   // il tombera sur l'étape 'creating' et recevra une simple attente.
   await setConvState(phone, { checkout: { ...checkout, step: 'creating', walletKey } });
 
+  // Quantité choisie dans le chat (défaut 1 : ancien parcours, ou état d'une
+  // version antérieure sans l'étape quantité).
+  const quantite = Math.min(999, Math.max(1, Math.floor(Number(checkout.quantity) || 1)));
+
   try {
     const order = await createGuestOrder({
       productCode: checkout.code,
       buyerName: checkout.buyerName,
       buyerPhone: phone,
       deliveryAddress: checkout.address,
-      quantity: 1,
+      quantity: quantite,
       // Numéro business qui a reçu la conversation (prod OU démo). Figé sur la
       // commande pour que les notifications ultérieures repartent du MÊME numéro,
       // dans la même conversation. Absent -> le serveur laisse la colonne NULL.
@@ -758,7 +799,7 @@ async function finalizeCheckout(ctx) {
     console.log('[WABOT] checkout terminé:', { orderCode: order.orderCode, wallet: WALLETS[walletKey].id });
     return [{
       kind: 'cta',
-      body: txtRecapCommande(produit, order, WALLETS[walletKey].label),
+      body: txtRecapCommande(produit, order, WALLETS[walletKey].label, quantite),
       // 20 caractères max côté WhatsApp : « Payer avec Orange Money » serait tronqué.
       displayText: 'Payer maintenant',
       url: pay.url,
@@ -793,6 +834,15 @@ async function handleCheckoutMessage(ctx) {
   }
 
   const value = String(text || '').trim();
+
+  if (checkout.step === 'quantity') {
+    const quantite = quantityFromText(value);
+    if (!quantite) return [{ kind: 'text', body: TXT_QUANTITE_INVALIDE }];
+    await setConvState(phone, { checkout: { ...checkout, step: 'name', quantity: quantite } });
+    const produit = await findProduct(checkout.code);
+    // Produit disparu entre-temps : on ne bloque pas, on redemande le nom sans total.
+    return [{ kind: 'text', body: produit ? txtDemandeNom(produit, quantite) : TXT_NOM_INVALIDE }];
+  }
 
   if (checkout.step === 'name') {
     if (value.length < 2 || value.length > 60) return [{ kind: 'text', body: TXT_NOM_INVALIDE }];
@@ -867,9 +917,9 @@ async function decideReplies(parsed, deps) {
       if (CHAT_CHECKOUT && phone) {
         await setConvState(phone, {
           productCode: code,
-          checkout: { step: 'name', code, startedAt: Date.now() },
+          checkout: { step: 'quantity', code, startedAt: Date.now() },
         });
-        return [{ kind: 'text', body: txtDemandeNom(produit) }];
+        return [{ kind: 'text', body: txtDemandeQuantite(produit) }];
       }
       if (produit.isDemo) return [{ kind: 'text', body: txtDemoStop(produit, null) }];
       return [{
@@ -1576,6 +1626,7 @@ module.exports = {
   parseD7StatusEvent,
   extractProductCode,
   extractShopCode,
+  quantityFromText,
   extractButtonId,
   decideReplies,
   verifyWalletBanner,

@@ -70,7 +70,9 @@ function makeBot(extra = {}) {
       success: true,
       orderId: 'ord-1',
       orderCode: 'VLD-0001',
-      totalAmount: bot.computeFees(FAKE.prix).total,
+      // Sensible à la quantité, comme le vrai endpoint : permet de vérifier que
+      // le montant du récap reflète bien le nombre d'articles commandés.
+      totalAmount: bot.computeFees(FAKE.prix, payload.quantity).total,
       productName: FAKE.nom,
       buyerPhone: payload.buyerPhone,
     };
@@ -128,7 +130,19 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
 
   // Unit : calcul des frais
   await test('computeFees(15000) @3% -> frais 450, total 15450', () => {
-    assert.deepStrictEqual(bot.computeFees(15000), { prix: 15000, frais: 450, total: 15450 });
+    assert.deepStrictEqual(bot.computeFees(15000), { prix: 15000, quantite: 1, ligne: 15000, frais: 450, total: 15450 });
+  });
+  // Quantité : les frais de protection portent sur le total de la ligne (prix × qté).
+  await test('computeFees(15000, 3) @3% -> ligne 45000, frais 1350, total 46350', () => {
+    assert.deepStrictEqual(bot.computeFees(15000, 3), { prix: 15000, quantite: 3, ligne: 45000, frais: 1350, total: 46350 });
+  });
+  await test('quantityFromText tolérant (« x3 », « 2 pieces »…) borné à [1,99]', () => {
+    assert.strictEqual(bot.quantityFromText('3'), 3);
+    assert.strictEqual(bot.quantityFromText('x3'), 3);
+    assert.strictEqual(bot.quantityFromText('je veux 2 pieces'), 2);
+    assert.strictEqual(bot.quantityFromText('999'), 99);
+    assert.strictEqual(bot.quantityFromText('0'), null);
+    assert.strictEqual(bot.quantityFromText('bonjour'), null);
   });
 
   // Unit : extraction de code (crit. 6/7)
@@ -220,12 +234,15 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
 
   // Crit. 12 (révisé) : le bouton « Payer » ouvre désormais le checkout dans le chat.
   // L'ancien envoi direct du lien web reste accessible via WHATSAPP_CHAT_CHECKOUT=false.
-  await test('crit.12 pay:PD3431 -> démarre le checkout et demande le nom', async () => {
+  await test('crit.12 pay:PD3431 -> démarre le checkout et demande la quantité', async () => {
     const { b, rec } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
     assert.strictEqual(rec.sends.length, 1);
     assert.strictEqual(rec.sends[0].kind, 'text');
-    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[0].body), 'doit demander le nom');
+    assert.ok(/combien/i.test(rec.sends[0].body), 'doit demander la quantité');
+    // Puis, après un nombre, on demande le nom.
+    await b.processWebhook(inboundText('1'));
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[1].body), 'doit ensuite demander le nom');
   });
   // Crit. 13 : bouton faq -> menu à 3 boutons
   await test('crit.13 faq:PD3431 -> menu 3 boutons', async () => {
@@ -424,6 +441,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const { b, orders } = makeBot();
     const DEMO = '15554677146';
     await b.processWebhook(inboundButton('pay:PD3431', 'm-bn1', '221771112233', DEMO));
+    await b.processWebhook(inboundText('1', 'm-bn1b', '221771112233', DEMO));
     await b.processWebhook(inboundText('Awa Diop', 'm-bn2', '221771112233', DEMO));
     await b.processWebhook(inboundListReply('co:z:0:PD3431', 'm-bn3', '221771112233', DEMO));
     await b.processWebhook(inboundButton('co:w:PD3431', 'm-bn4', '221771112233', DEMO));
@@ -434,6 +452,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout sans recipient -> botNumber null (commande historique)', async () => {
     const { b, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431', 'm-bn5'));
+    await b.processWebhook(inboundText('1', 'm-bn5b'));
     await b.processWebhook(inboundText('Awa Diop', 'm-bn6'));
     await b.processWebhook(inboundListReply('co:z:0:PD3431', 'm-bn7'));
     await b.processWebhook(inboundButton('co:w:PD3431', 'm-bn8'));
@@ -447,6 +466,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const { b, orders } = makeBot();
     const DEMO = '15554677146';
     await b.processWebhook(inboundButton('pay:PD3431', 'm-bn9', '221771112233', DEMO));
+    await b.processWebhook(inboundText('1', 'm-bn9b', '221771112233', DEMO));
     await b.processWebhook(inboundText('Awa Diop', 'm-bn10', '221771112233', DEMO));
     await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45', 'm-bn11', '221771112233', DEMO));
     await b.processWebhook(inboundText('wave', 'm-bn12', '221771112233', DEMO));
@@ -547,6 +567,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout démo -> initiatePayment n\'est JAMAIS appelé', async () => {
     const { b, rec, payments } = makeDemoProductBot();
     await b.processWebhook(inboundButton('pay:PD0000'));
+    await b.processWebhook(inboundText('1'));
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundListReply('co:z:2:PD0000'));
     await b.processWebhook(inboundButton('co:w:PD0000'));
@@ -559,6 +580,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('parcours démo -> aucun message ne porte d\'URL', async () => {
     const { b, rec } = makeDemoProductBot();
     await b.processWebhook(inboundButton('pay:PD0000'));
+    await b.processWebhook(inboundText('1'));
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundListReply('co:z:2:PD0000'));
     await b.processWebhook(inboundButton('co:w:PD0000'));
@@ -568,6 +590,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('non-régression : un produit réel émet toujours son lien de paiement', async () => {
     const { b, rec, payments } = makeDemoProductBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundListReply('co:z:2:PD3431'));
     await b.processWebhook(inboundButton('co:w:PD3431'));
@@ -583,10 +606,11 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout complet : nom -> quartier (liste) -> Wave -> lien de paiement', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('2')); // quantité
     await b.processWebhook(inboundText('Awa Diop'));
 
     // Étape quartier : une liste, pas une question ouverte.
-    const liste = rec.sends[1];
+    const liste = rec.sends[2];
     assert.strictEqual(liste.kind, 'list');
     assert.ok(liste.rows.length <= 10, 'WhatsApp plafonne une liste à 10 lignes');
     assert.strictEqual(liste.rows[0].id, 'co:z:0:PD3431');
@@ -597,7 +621,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     // Quartier connu -> on passe DIRECTEMENT au paiement : ni rue ni point de repère.
     // Le livreur appelle avant de livrer, et le numéro est déjà sur la commande.
     await b.processWebhook(inboundListReply('co:z:2:PD3431')); // Sacré-Cœur
-    const wallets = rec.sends[2];
+    const wallets = rec.sends[3];
     assert.strictEqual(wallets.kind, 'buttons');
     assert.deepStrictEqual(wallets.buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
     // Les boutons ne peuvent pas porter d'image : l'emoji dans le titre est le seul repère.
@@ -608,10 +632,12 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(wallets.headerImageUrl, 'https://www.validel.shop/images/wallets-wave-orange.png');
 
     await b.processWebhook(inboundButton('co:w:PD3431'));
-    const final = rec.sends[3];
+    const final = rec.sends[4];
     assert.strictEqual(final.kind, 'cta');
     assert.strictEqual(final.url, 'https://pay.test/abc');
     assert.ok(final.displayText.length <= 20, 'display_text WhatsApp limité à 20 caractères');
+    // Le récap reflète la quantité : 2 × 15450 = 30900 FCFA.
+    assert.ok(/30\D?900/.test(final.body), `le récap doit montrer le total pour 2 articles: ${final.body}`);
 
     // Le téléphone n'est jamais demandé : il vient du compte WhatsApp émetteur.
     assert.strictEqual(orders.length, 1);
@@ -622,7 +648,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
         buyerName: 'Awa Diop',
         buyerPhone: '221771112233',
         deliveryAddress: 'Sacré-Cœur',
-        quantity: 1,
+        quantity: 2,
         // Webhook de test sans `recipient` -> null : le serveur laissera la
         // colonne bot_number vide et les notifs retomberont sur le numéro par défaut.
         botNumber: null,
@@ -632,6 +658,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout : « Autre quartier » -> adresse entièrement libre', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Moussa Fall'));
     await b.processWebhook(inboundListReply('co:z:autre:PD3431'));
     await b.processWebhook(inboundText('Mbour, quartier Golf, face station'));
@@ -645,9 +672,10 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout : adresse tapée au lieu de choisir dans la liste', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Fatou Sow'));
     await b.processWebhook(inboundText('Pikine, rue 12, face école'));
-    assert.strictEqual(rec.sends[2].kind, 'buttons', 'doit sauter directement au choix du wallet');
+    assert.strictEqual(rec.sends[3].kind, 'buttons', 'doit sauter directement au choix du wallet');
     await b.processWebhook(inboundText('orange'));
     assert.strictEqual(orders.length, 1);
     assert.strictEqual(orders[0].deliveryAddress, 'Pikine, rue 12, face école');
@@ -656,6 +684,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout : « annuler » arrête le parcours et repropose les boutons', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    // « annuler » doit stopper dès l'étape quantité, sans commande.
     await b.processWebhook(inboundText('annuler'));
     assert.strictEqual(rec.sends[1].kind, 'buttons');
     assert.ok(/annul/i.test(rec.sends[1].body));
@@ -665,25 +694,27 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
   await test('checkout : nom trop court -> redemande sans avancer', async () => {
     const { b, rec } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('A'));
-    assert.strictEqual(rec.sends[1].kind, 'text');
-    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[1].body));
+    assert.strictEqual(rec.sends[2].kind, 'text');
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[2].body));
     // L'étape n'a pas avancé : le message suivant est toujours interprété comme un nom.
     await b.processWebhook(inboundText('Awa Diop'));
-    assert.strictEqual(rec.sends[2].kind, 'list');
+    assert.strictEqual(rec.sends[3].kind, 'list');
   });
 
   await test('checkout : un nouveau code produit annule le parcours en cours', async () => {
     const { b, rec, orders } = makeBot();
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundText('PD3431'));
     // Retour à la fiche produit, pas à l'étape quartier.
-    assert.strictEqual(rec.sends[2].kind, 'buttons');
-    assert.ok(/Caisse de Yaourt/.test(rec.sends[2].body));
-    // Et le parcours repart de zéro : le message suivant redemande le nom.
+    assert.strictEqual(rec.sends[3].kind, 'buttons');
+    assert.ok(/Caisse de Yaourt/.test(rec.sends[3].body));
+    // Et le parcours repart de zéro : le message suivant redemande la quantité.
     await b.processWebhook(inboundButton('pay:PD3431'));
-    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[3].body));
+    assert.ok(/combien/i.test(rec.sends[4].body));
     assert.strictEqual(orders.length, 0);
   });
 
@@ -693,10 +724,11 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
       createGuestOrder: async () => { throw new Error('guest/order indisponible'); },
     });
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45'));
     await b.processWebhook(inboundButton('co:w:PD3431'));
-    const final = rec.sends[3];
+    const final = rec.sends[4];
     assert.strictEqual(final.kind, 'cta');
     assert.strictEqual(final.url, 'https://www.validel.shop/product/PD3431');
   });
@@ -706,11 +738,12 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
       initiatePayment: async () => { throw new Error('pixpay indisponible'); },
     });
     await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
     await b.processWebhook(inboundText('Awa Diop'));
     await b.processWebhook(inboundText('Sacré-Cœur 3, villa 45'));
     await b.processWebhook(inboundText('wave'));
-    assert.strictEqual(rec.sends[3].kind, 'cta');
-    assert.strictEqual(rec.sends[3].url, 'https://www.validel.shop/product/PD3431');
+    assert.strictEqual(rec.sends[4].kind, 'cta');
+    assert.strictEqual(rec.sends[4].url, 'https://www.validel.shop/product/PD3431');
   });
 
   // Bouton wallet reçu alors qu'aucun parcours n'est en cours (parcours expiré,
@@ -817,6 +850,36 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundText('vu sur BQ12345 : PD3431'));
     assert.strictEqual(rec.sends[0].kind, 'buttons');
     assert.ok(rec.sends[0].body.includes('Caisse de Yaourt'));
+  });
+
+
+  // Quantité : le nombre choisi doit remonter jusqu'à la commande et au montant.
+  await test('checkout : quantité 3 -> commande à quantity 3 et récap au bon total', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    // Le bot demande d'abord la quantité.
+    assert.ok(/combien/i.test(rec.sends[0].body), 'doit commencer par demander la quantité');
+    await b.processWebhook(inboundText('3'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundListReply('co:z:0:PD3431'));
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].quantity, 3, 'la quantité choisie doit être transmise');
+    // 3 × 15450 = 46350 FCFA.
+    const final = rec.sends[rec.sends.length - 1];
+    assert.ok(/46\D?350/.test(final.body), `récap au total pour 3 articles: ${final.body}`);
+  });
+
+  // Une saisie non numérique à l'étape quantité ne fait pas avancer le parcours.
+  await test('checkout : quantité invalide -> redemande sans avancer', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('beaucoup'));
+    assert.ok(/nombre/i.test(rec.sends[1].body), 'doit redemander un nombre');
+    // L'étape n'a pas avancé : un nombre est encore accepté juste après.
+    await b.processWebhook(inboundText('2'));
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[2].body), 'doit ensuite demander le nom');
+    assert.strictEqual(orders.length, 0);
   });
 
   // --- Vérification de la bannière de paiement au démarrage ---------------
