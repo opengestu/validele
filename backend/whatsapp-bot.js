@@ -29,7 +29,9 @@ const {
 // Template Meta approuvé pour la notification "en cours de livraison". Si le nom
 // est défini, on l'utilise (livraison fiable hors fenêtre 24h) ; sinon repli sur
 // le message libre (ne part que si le client a écrit dans les 24h).
-const DELIVERY_TEMPLATE_NAME = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_NAME || '').trim();
+const DELIVERY_TEMPLATE_NAME = String(
+  process.env.WHATSAPP_TEMPLATE_DELIVERY_NAME || 'commande_en_livraison_validel'
+).trim();
 const DELIVERY_TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_LANG || 'fr').trim();
 // Le bouton URL du template est-il dynamique (URL de base + suffixe {{1}}) ?
 // Défaut false : le template approuvé a un bouton URL STATIQUE, et lui envoyer un

@@ -2955,14 +2955,32 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
       if (prod?.name) productName = prod.name;
     }
 
-    const { sendWhatsAppCtaUrl } = require('./direct7');
+    const { sendWhatsAppCtaUrl, sendWhatsAppTemplate } = require('./direct7');
     const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
     const trackingUrl = `${webBase}/order/${orderId}`;
     const amount = Number(order.total_amount || 0).toLocaleString('fr-FR');
     const body = `✅ Paiement confirmé pour *${productName}* (${amount} FCFA).\n\nVotre argent est protégé jusqu'à la réception. Suivez votre commande à tout moment.`;
+    const paymentTemplateName = String(
+      process.env.WHATSAPP_TEMPLATE_PAYMENT_CONFIRMED_NAME || 'paiement_confirme_validel'
+    ).trim();
+    const paymentTemplateLang = String(
+      process.env.WHATSAPP_TEMPLATE_PAYMENT_CONFIRMED_LANG || 'fr'
+    ).trim();
     // Répondre depuis le numéro de bot où la commande a été passée (prod ou démo) ;
     // NULL (commande web/app) -> repli sur WHATSAPP_BOT_NUMBER.
-    await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Suivre ma commande', trackingUrl, order.bot_number || undefined);
+    try {
+      await sendWhatsAppTemplate(order.buyer_phone, {
+        templateId: paymentTemplateName,
+        language: paymentTemplateLang,
+        bodyParams: [productName, amount],
+        from: order.bot_number || undefined,
+      });
+    } catch (templateError) {
+      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
+      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
+      console.warn('[WHATSAPP] Template paiement confirmé refusé, repli message libre:', templateError?.message || templateError);
+      await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Suivre ma commande', trackingUrl, order.bot_number || undefined);
+    }
     console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
   } catch (waErr) {
     console.warn('[WHATSAPP] Echec notification paiement confirmé (non bloquant):', waErr?.message || waErr);

@@ -29,15 +29,25 @@ const direct7 = require('../direct7');
       'Suivre',
       'https://www.validel.shop/order/test'
     );
+    await direct7.sendWhatsAppTemplate('221771112233', {
+      templateId: 'paiement_confirme_validel',
+      language: 'fr',
+      bodyParams: ['Peignoir', '10 000'],
+    });
 
-    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(calls.length, 3);
     for (const call of calls) {
       assert.strictEqual(
         call.payload.messages[0].report_url,
         'https://api.validel.test/api/whatsapp/webhook/secret%20test'
       );
     }
+    assert.deepStrictEqual(
+      calls[2].payload.messages[0].content.template.body_parameter_values,
+      { 0: 'Peignoir', 1: '10 000' }
+    );
     console.log('  ✓ chaque envoi WhatsApp D7 contient son URL de rapport read');
+    console.log('  ✓ le template paiement transmet ses deux variables approuvées');
   } finally {
     axios.post = originalPost;
   }
