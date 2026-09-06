@@ -25,6 +25,9 @@ const getStatusBadgeColor = (status: string): string => {
   }
 };
 
+import './vendor-dashboard.css';
+import { CircleHelp, MoreHorizontal } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
@@ -826,6 +829,7 @@ const VendorDashboard = () => {
   }, [user, smsUser, toast, products]);
 
   const handleToggleProductAvailability = async (product: Product) => {
+    if (togglingProductId !== null) return;
     const caller = smsUser || user;
     if (!caller?.id) return;
 
@@ -1513,7 +1517,7 @@ const VendorDashboard = () => {
     );
   };
 
-  // Toggle Actif/Inactif — extrait pour être réutilisé (desktop + mobile) en overlay sur l'image
+  // Contrôle direct et partagé entre les cartes mobile et ordinateur.
   const renderAvailabilityToggle = (product: Product) => (
     <Button
       type="button"
@@ -1523,7 +1527,8 @@ const VendorDashboard = () => {
           ? 'bg-success hover:bg-success/90'
           : 'bg-destructive hover:bg-destructive/90'
       }`}
-      disabled={togglingProductId === product.id}
+      disabled={togglingProductId !== null}
+      aria-busy={togglingProductId === product.id}
       onClick={() => handleToggleProductAvailability(product)}
       aria-label={product.is_available ? 'Marquer inactif' : 'Marquer actif'}
       aria-pressed={product.is_available}
@@ -2288,25 +2293,63 @@ const VendorDashboard = () => {
   };
 
   // (Global overlay spinner removed)
+  const sellerShopCard = shopCode && (
+    <section className="seller-shop" aria-label="Votre boutique publique">
+      <p>Votre boutique publique</p>
+      <a href={shopCatalogLink} target="_blank" rel="noopener noreferrer" className="seller-shop-link">{shopCatalogDisplayLink}</a>
+      <div className="seller-shop-actions">
+        <Button onClick={handleWhatsAppCatalog} className="seller-whatsapp"><WhatsAppIcon size={21} />Partager sur WhatsApp</Button>
+        <Button onClick={handleCopyCatalogLink} className="seller-secondary" aria-label="Copier le lien de ma boutique">
+          {catalogLinkCopied ? <Check size={20} /> : <Copy size={20} />}{catalogLinkCopied ? 'Copié' : 'Copier'}
+        </Button>
+      </div>
+    </section>
+  );
+  const renderSellerProduct = (product: Product) => (
+    <article key={product.id} className="seller-product">
+      <div className="seller-product-info">
+        <div className="seller-product-image">
+          {product.image_url ? <img src={product.image_url} alt={product.name} loading="lazy" /> : <Package size={26} strokeWidth={1.5} />}
+        </div>
+        <div className="seller-product-details">
+          <div className="seller-product-title">
+            <h3>{product.name}</h3>
+            {renderAvailabilityToggle(product)}
+          </div>
+          <p className="seller-price">{Number(product.price || 0).toLocaleString('fr-FR')} CFA</p>
+          <p className="seller-description">{product.description}</p>
+          <p className="seller-code">{product.code || ('PROD-' + product.id)}</p>
+        </div>
+      </div>
+      {renderProductDemoVideo(product, true)}
+      <div className="seller-product-actions">
+        <Button onClick={() => handleWhatsAppProduct(product)} className="seller-whatsapp"><WhatsAppIcon size={20} />WhatsApp</Button>
+        <Button onClick={() => handleShareProduct(product)} className="seller-secondary"><Share2 size={18} />Partager</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button className="seller-secondary seller-more" aria-label={'Actions pour ' + product.name}><MoreHorizontal size={22} /></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => { setEditProduct(product); setEditModalOpen(true); }}><Edit className="mr-2 h-4 w-4" />Modifier</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onSelect={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }}><Trash2 className="mr-2 h-4 w-4" />Supprimer</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </article>
+  );
+
   // Suppression du rendu conditionnel de chargement (plus d'overlay, plus de texte 'Chargement...')
   return (
-    <div className="min-h-screen bg-muted pb-20 md:pb-0 relative">
-      {/* Header Moderne - Style similaire à BuyerDashboard */}
-      <header className="bg-primary rounded-b-2xl shadow-lg mb-2 md:mb-6 sticky top-0 z-40 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
-          <h1 className="text-3xl md:text-4xl font-extrabold text-white drop-shadow-lg text-center tracking-tight">
-            Validèl
-          </h1>
-          <p className="text-white/90 text-sm mt-1">Espace Vendeur(se)</p>
-        </div>
+    <div className="seller-dashboard min-h-screen relative">
+      <header className="seller-header">
+        <div><h1>Validèl</h1><p>Espace vendeur</p></div>
+        <Button type="button" onClick={handleSellDemoClick} className="seller-help" aria-label="Aide pour vendre avec Validèl"><CircleHelp size={16} strokeWidth={1.75} />Aide</Button>
       </header>
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1 md:py-8">
+      <main className="seller-main">
       {/* ...section stats supprimée... */}
       {/* Navigation - Desktop Tabs */}
       <div className="hidden md:block">
         <Tabs defaultValue="products" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="products" className="flex items-center space-x-2">
               <Package className="h-4 w-4" />
               <span>Mes Produits</span>
@@ -2322,75 +2365,9 @@ const VendorDashboard = () => {
           </TabsList>
         {/* Products Tab */}
         <TabsContent value="products" className="space-y-6">
-          {!allSellDemoVideosWatched && (
-            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/50 p-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                  <PlayCircle className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">Comment vendre avec Validel ?</p>
-                  <p className="text-xs text-muted-foreground">Un guide rapide en vidéo pour bien démarrer.</p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleSellDemoClick}
-                className="shrink-0"
-              >
-                Regarder la démo
-              </Button>
-            </div>
-          )}
-          {/* Lien de catalogue : une seule adresse à partager pour toute la
-              boutique, là où le lien produit ne vaut que pour un article. */}
-          {shopCode && (
-            <div className="rounded-2xl border border-border p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                  <Store className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-foreground">Lien de ma boutique</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Un seul lien pour tout votre catalogue : vos clients voient tous vos produits et achètent sur WhatsApp.
-                  </p>
-
-                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2">
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
-                      style={{ userSelect: 'all' }}
-                    >
-                      {shopCatalogDisplayLink}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleCopyCatalogLink}
-                      aria-label="Copier le lien de ma boutique"
-                      className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-                    >
-                      {catalogLinkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleWhatsAppCatalog}>
-                      <WhatsAppIcon className="mr-1" size={16} />
-                      WhatsApp
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleShareCatalog}>
-                      <Share2 className="mr-1 h-3.5 w-3.5" />
-                      Partager
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="flex justify-between items-center gap-2">
-            <h2 className="text-lg md:text-xl font-bold text-foreground flex-shrink-0">Mes Produits ({products.length})</h2>
+              {sellerShopCard}
+                <div className="flex justify-between items-center gap-2">
+            <h2 className="text-lg md:text-xl font-bold text-foreground flex-shrink-0">Mes produits <span className="seller-count">{products.length}</span></h2>
             {products.length > 0 && (
               <Button
                 onClick={() => setAddModalOpen(true)}
@@ -2402,94 +2379,9 @@ const VendorDashboard = () => {
             )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-            {products.map((product) => (
-              <Card
-                key={product.id}
-                className={`group h-fit overflow-hidden transition-shadow hover:shadow-premium ${!product.is_available ? 'opacity-70' : ''}`}
-                style={{ maxWidth: "100%", boxSizing: "border-box" }} // Empêche le débordement
-              >
-                <CardContent className="p-4">
-                  {renderProductImage(product, false, renderAvailabilityToggle(product))}
-                  {renderProductDemoVideo(product)}
-
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base font-semibold leading-snug">{product.name}</CardTitle>
-                    <div className="whitespace-nowrap font-heading text-base font-bold text-foreground">
-                      {product.price?.toLocaleString()} <span className="text-xs font-medium text-muted-foreground">CFA</span>
-                    </div>
-                  </div>
-
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                    {product.description}
-                  </p>
-
-                  {/* Code Produit */}
-                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Code produit</div>
-                      <div className="truncate font-mono text-base font-semibold tracking-wide text-foreground" style={{ userSelect: 'all' }}>
-                        {product.code || `PROD-${product.id}`}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => handleWhatsAppProduct(product)}
-                    >
-                      <WhatsAppIcon className="mr-1" size={16} />
-                      WhatsApp
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => handleShareProduct(product)}
-                    >
-                      <Share2 className="h-3.5 w-3.5 mr-1" />
-                      Partager
-                    </Button>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => {
-                        setEditProduct({
-                          ...product,
-                          price: product.price || 0
-                        });
-                        setEditModalOpen(true);
-                      }}
-                    >
-                      <Edit className="h-4 w-4 mr-1" />
-                      Modifier
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setDeleteProductId(product.id);
-                        setDeleteDialogOpen(true);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Supprimer
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-          {pageLoading && products.length === 0 && (
+            {products.map(renderSellerProduct)}
+                </div>
+                {pageLoading && products.length === 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {[1, 2, 3].map(i => (
                 <Card key={i}>
@@ -2899,86 +2791,13 @@ const VendorDashboard = () => {
       </div>
       {/* Navigation Mobile - Bottom Navigation Bar */}
       <div className="md:hidden">
-        <Tabs defaultValue="products" className="pb-20 px-4 -mt-1">
+        <Tabs defaultValue="products" className="seller-mobile-tabs">
           <div className="space-y-6">
             <TabsContent value="products" className="mt-0">
               <div className="space-y-6">
-                {!allSellDemoVideosWatched && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/50 p-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                      <PlayCircle className="h-4 w-4" />
-                    </div>
-                    <p className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">Comment vendre avec Validel ?</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleSellDemoClick}
-                      className="h-8 shrink-0 px-3 text-xs"
-                    >
-                      Voir
-                    </Button>
-                  </div>
-                )}
-                {/* Carte « boutique » : volontairement en inverse (encre pleine)
-                    pour être l'ancre visuelle de l'onglet, au-dessus des fiches
-                    produit blanches. C'est l'outil de vente du vendeur, pas une
-                    ligne d'information parmi d'autres.
-                    ⚠️ Rendu mobile : l'onglet Produits existe en DEUX arbres
-                    séparés (hidden md:block / md:hidden), tout ajout ici doit
-                    être répercuté dans l'autre. */}
-                {shopCode && (
-                  <div className="rounded-2xl bg-primary p-4 text-primary-foreground shadow-premium">
-                    <div className="flex items-center gap-2">
-                      <Store className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                      <p className="text-sm font-semibold leading-none">Ma boutique en ligne</p>
-                    </div>
-
-                    <p className="mt-2 text-xs leading-relaxed text-primary-foreground/60">
-                      Un seul lien pour tous vos produits. Partagez-le, vos clients commandent sur WhatsApp.
-                    </p>
-
-                    {/* Toute la ligne est cliquable : sur mobile, une icône de
-                        16 px seule est une cible trop petite pour le pouce. */}
-                    <button
-                      type="button"
-                      onClick={handleCopyCatalogLink}
-                      aria-label="Copier le lien de ma boutique"
-                      className="mt-3 flex w-full items-center gap-2 rounded-xl bg-primary-foreground/10 px-3 py-2.5 text-left transition-colors active:bg-primary-foreground/20"
-                    >
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-primary-foreground/90">
-                        {shopCatalogDisplayLink}
-                      </span>
-                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-primary-foreground/60">
-                        {catalogLinkCopied ? 'Copié' : 'Copier'}
-                      </span>
-                      {catalogLinkCopied
-                        ? <Check className="h-4 w-4 shrink-0" />
-                        : <Copy className="h-4 w-4 shrink-0 text-primary-foreground/60" />}
-                    </button>
-
-                    <div className="mt-2.5 grid grid-cols-2 gap-2">
-                      <Button
-                        type="button"
-                        onClick={handleWhatsAppCatalog}
-                        className="h-10 w-full rounded-xl bg-primary-foreground text-xs font-semibold text-primary hover:bg-primary-foreground/90"
-                      >
-                        <WhatsAppIcon className="mr-1.5" size={15} />
-                        WhatsApp
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={handleShareCatalog}
-                        className="h-10 w-full rounded-xl border border-primary-foreground/25 bg-transparent text-xs font-semibold text-primary-foreground hover:bg-primary-foreground/10"
-                      >
-                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                        Partager
-                      </Button>
-                    </div>
-                  </div>
-                )}
+              {sellerShopCard}
                 <div className="flex justify-between items-center gap-2">
-                  <h2 className="text-base font-semibold flex-shrink-0">Mes Produits ({products.length})</h2>
+                  <h2 className="text-base font-semibold flex-shrink-0">Mes produits <span className="seller-count">{products.length}</span></h2>
                   {products.length > 0 && (
                     <Button
                       onClick={() => setAddModalOpen(true)}
@@ -2990,71 +2809,7 @@ const VendorDashboard = () => {
                   )}
                 </div>
                 <div className="grid gap-4">
-                  {products.map((product) => (
-                    <Card
-                      key={product.id}
-                      className="relative overflow-hidden border border-border"
-                      style={{
-                        width: "100%",
-                        maxWidth: "calc(100vw - 32px)",
-                        boxSizing: "border-box",
-                        marginRight: 'auto',
-                        marginLeft: 'auto',
-                      }}
-                    >
-                      <CardContent className="p-3">
-                        {renderProductImage(product, true, renderAvailabilityToggle(product))}
-                        {renderProductDemoVideo(product, true)}
-
-                        <div className="flex items-start justify-between gap-2">
-                          <h3
-                            className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-snug"
-                            title={product.name}
-                          >
-                            {product.name}
-                          </h3>
-                          <span className="whitespace-nowrap text-sm font-bold text-foreground">
-                            {product.price?.toLocaleString()} <span className="text-[10px] font-medium text-muted-foreground">CFA</span>
-                          </span>
-                        </div>
-
-                        <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
-                          {product.description}
-                        </p>
-
-                        <div className="mt-2 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5">
-                          <div className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Code</div>
-                          <div
-                            className="truncate font-mono text-[13px] font-semibold text-foreground"
-                            title={product.code || `PROD-${product.id}`}
-                            style={{ userSelect: 'all' }}
-                          >
-                            {product.code || `PROD-${product.id}`}
-                          </div>
-                        </div>
-
-                        <div className="mt-2 grid grid-cols-2 gap-1.5">
-                          <Button onClick={() => handleWhatsAppProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
-                            <WhatsAppIcon className="mr-1" size={14} />
-                            WhatsApp
-                          </Button>
-                          <Button onClick={() => handleShareProduct(product)} variant="outline" size="sm" className="h-8 px-2 text-[11px]">
-                            <Share2 className="h-3.5 w-3.5 mr-1" />
-                            Partager
-                          </Button>
-                        </div>
-
-                        <div className="mt-1.5 grid grid-cols-2 gap-2">
-                          <Button onClick={() => { setEditProduct(product); setEditModalOpen(true); }} className="h-9 bg-primary text-primary-foreground hover:bg-primary/90 text-xs">
-                            Modifier
-                          </Button>
-                          <Button onClick={() => { setDeleteProductId(product.id); setDeleteDialogOpen(true); }} variant="outline" className="h-9 text-xs text-destructive hover:text-destructive">
-                            Supprimer
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {products.map(renderSellerProduct)}
                 </div>
                 {pageLoading && products.length === 0 && (
                   <div className="space-y-3">
@@ -3392,26 +3147,26 @@ const VendorDashboard = () => {
             </TabsContent>
           </div>
           {/* Bottom Navigation Bar - Fixed */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-50 shadow-lg">
-            <TabsList className="w-full h-16 bg-white rounded-none border-0">
-              <div className="flex w-full h-16 bg-white justify-around items-center px-2">
+          <div className="seller-bottom-nav">
+            <TabsList className="seller-nav-list">
+              <div className="seller-nav-items">
                 <TabsTrigger
                   value="products"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
+                  className="seller-nav-tab"
                 >
                   <Package className="h-5 w-5" />
                   <span className="text-xs font-medium">Produits</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="orders"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
+                  className="seller-nav-tab"
                 >
                   <ShoppingCart className="h-5 w-5" />
                   <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="profile"
-                  className="flex flex-col items-center justify-center space-y-1 h-14 w-20 data-[state=active]:bg-black/5 data-[state=active]:text-black rounded-xl transition-all"
+                  className="seller-nav-tab"
                 >
                   <User className="h-5 w-5" />
                   <span className="text-xs font-medium">Compte</span>

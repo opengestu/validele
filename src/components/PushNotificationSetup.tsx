@@ -54,6 +54,17 @@ const PushNotificationSetup = () => {
   useEffect(() => {
     const platform = Capacitor.getPlatform();
 
+    const getCurrentUserId = () => {
+      try {
+        const raw = localStorage.getItem('sms_auth_session');
+        const smsId = raw ? JSON.parse(raw)?.profileId : null;
+        if (smsId) return String(smsId);
+      } catch {
+        // La session Supabase reste le repli.
+      }
+      return user?.id || null;
+    };
+
     // Ne rien faire sur web
     if (platform === 'web' || initialized) {
       return;
@@ -82,6 +93,12 @@ const PushNotificationSetup = () => {
         // tenter l'envoi sans attendre un nouvel événement 'registration'.
         try {
           const cachedToken = localStorage.getItem(LAST_TOKEN_KEY);
+          const currentUserId = getCurrentUserId();
+          // Une reconnexion doit rattacher le jeton existant au profil courant,
+          // même si Firebase ne déclenche pas immédiatement un nouvel événement.
+          if (cachedToken && currentUserId) {
+            await saveTokenToSupabase(cachedToken, currentUserId);
+          }
           if (cachedToken && !localStorage.getItem(WELCOME_SENT_KEY)) {
             const res = await notifyWelcome(cachedToken);
             if (res?.success) {
@@ -103,10 +120,8 @@ const PushNotificationSetup = () => {
           }
         }
 
-        // S'enregistrer auprès de FCM
-        await PushNotifications.register();
-
-        // Écouter le token
+        // Installer les écouteurs AVANT register : Firebase peut répondre très vite
+        // et l'ancien ordre pouvait manquer l'événement contenant le token.
         PushNotifications.addListener('registration', async (token) => {
           
 
@@ -118,8 +133,9 @@ const PushNotificationSetup = () => {
           }
 
           // Sauvegarder le token dans Supabase
-          if (user?.id) {
-            await saveTokenToSupabase(token.value, user.id);
+          const currentUserId = getCurrentUserId();
+          if (currentUserId) {
+            await saveTokenToSupabase(token.value, currentUserId);
           }
 
           // Envoyer une notification de bienvenue une seule fois (par appareil)
@@ -151,6 +167,9 @@ const PushNotificationSetup = () => {
         PushNotifications.addListener('pushNotificationActionPerformed', (event) => {
           
         });
+
+        // S'enregistrer auprès de FCM après installation des écouteurs.
+        await PushNotifications.register();
 
         setInitialized(true);
       } catch (err) {

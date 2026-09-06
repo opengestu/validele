@@ -1,0 +1,61 @@
+.seller-dashboard {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  padding-top: calc(90px + env(safe-area-inset-top));
+  padding-bottom: calc(100px + env(safe-area-inset-bottom));
+}
+.seller-header { position: fixed; inset: 0 0 auto; z-index: 60; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: calc(90px + env(safe-area-inset-top)); padding: calc(20px + env(safe-area-inset-top)) 24px 20px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.seller-header h1 { color: hsl(var(--primary-foreground)); font-size: 26px; line-height: 1.15; font-weight: 500; letter-spacing: -.7px; }
+.seller-header p { color: hsl(var(--primary-foreground) / .75); margin-top: 3px; font-size: 13px; line-height: 1.3; }
+.seller-dashboard .seller-help { flex-shrink: 0; border: 0; border-radius: 8px; background: transparent; color: hsl(var(--primary-foreground)); padding: 0 4px; min-height: 44px; height: auto; gap: 7px; font-size: 12px; font-weight: 400; box-shadow: none; }
+.seller-dashboard .seller-help:hover { background: hsl(var(--primary-foreground) / .08); }
+.seller-dashboard .seller-help:focus-visible { outline-color: hsl(var(--primary-foreground)); }
+.seller-main { max-width: 1200px; margin: 0 auto; padding: 0 20px 24px; }
+.seller-shop { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 24px; padding: 20px; margin-bottom: 28px; }
+.seller-shop > p { font-size: 15px; color: hsl(var(--muted-foreground)); }
+.seller-shop-link { display: block; margin-top: 8px; font-size: 17px; overflow-wrap: anywhere; line-height: 1.4; }
+.seller-shop-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 20px; }
+.seller-dashboard .seller-whatsapp, .seller-dashboard .seller-secondary { display: inline-flex; gap: 9px; height: 48px; border-radius: 16px; font-size: 14px; font-weight: 500; padding: 0 14px; box-shadow: none; }
+.seller-dashboard .seller-whatsapp { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.seller-dashboard .seller-whatsapp:hover { background: hsl(var(--primary) / .9); }
+.seller-dashboard .seller-secondary { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); }
+.seller-dashboard .seller-secondary:hover { background: hsl(var(--muted)); }
+.seller-shop .seller-secondary { background: hsl(var(--background)); }
+.seller-count { color: hsl(var(--muted-foreground)); font-weight: 400; font-size: .75em; margin-left: 4px; }
+.seller-product { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 23px; padding: 15px; min-width: 0; align-self: start; }
+.seller-product-info { display: flow-root; margin-bottom: 20px; }
+.seller-product-image { float: left; width: 76px; height: 80px; margin: 0 14px 8px 0; border-radius: 18px; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.seller-product-image img { width: 100%; height: 100%; object-fit: cover; }
+.seller-product-details { min-width: 0; }
+.seller-product-title { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: start; gap: 8px; }
+.seller-product-title > button { justify-self: end; flex-shrink: 0; }
+.seller-product-title h3 { font-size: 18px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.seller-price { font-size: 20px; margin-top: 4px; }
+.seller-description { font-size: 14px; line-height: 1.5; color: hsl(var(--muted-foreground)); margin-top: 6px; overflow-wrap: anywhere; }
+.seller-code { color: hsl(var(--muted-foreground)); font-size: 13px; margin-top: 10px; overflow-wrap: anywhere; }
+.seller-product-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; gap: 8px; }
+.seller-dashboard .seller-more { padding: 0; }
+.seller-bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50; border-top: 1px solid hsl(var(--border)); background: hsl(var(--background)); padding: 9px 14px calc(9px + env(safe-area-inset-bottom)); }
+.seller-dashboard .seller-nav-list { display: block; width: 100%; height: auto; padding: 0; background: transparent; }
+.seller-nav-items { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.seller-dashboard .seller-nav-tab { display: flex; flex-direction: column; gap: 6px; height: 62px; border-radius: 17px; color: hsl(var(--muted-foreground)); background: transparent; }
+.seller-dashboard .seller-nav-tab[data-state=active] { background: hsl(var(--muted)); color: hsl(var(--foreground)); box-shadow: none; }
+.seller-dashboard button:focus-visible, .seller-dashboard a:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; }
+@media (min-width: 768px) {
+  .seller-dashboard { padding-bottom: 24px; }
+  .seller-header { padding-inline: max(32px, calc((100vw - 1160px) / 2)); }
+  .seller-main { padding: 0 24px 24px; }
+  .seller-shop { max-width: 680px; }
+  .seller-main [data-state=active][role=tabpanel] > .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 374px) {
+  .seller-dashboard { padding-top: calc(78px + env(safe-area-inset-top)); }
+  .seller-header { min-height: calc(78px + env(safe-area-inset-top)); padding: calc(16px + env(safe-area-inset-top)) 20px 16px; }
+  .seller-header h1 { font-size: 24px; }
+  .seller-dashboard .seller-help { font-size: 11px; }
+  .seller-main { padding-inline: 12px; }
+  .seller-shop { padding: 16px; }
+  .seller-dashboard .seller-whatsapp, .seller-dashboard .seller-secondary { font-size: 12px; gap: 5px; padding-inline: 10px; }
+  .seller-product-image { width: 58px; height: 64px; margin-right: 10px; }
+  .seller-product-title h3 { font-size: 16px; }
+}
