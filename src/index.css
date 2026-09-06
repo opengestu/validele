@@ -6,11 +6,11 @@
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translate3d(0, 12px, 0) scale(0.992);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 
@@ -23,8 +23,17 @@
 }
 
 .animate-page-in {
-  animation: page-in 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
-  will-change: opacity, transform;
+  /* fill-mode "backwards" (et non "both") : n'applique la keyframe qu'AVANT/pendant
+     l'animation, sans conserver de transform après. Un transform résiduel (ou
+     will-change: transform) ferait de cet élément un bloc conteneur pour les
+     descendants position: fixed (modals/overlays), les décalant du viewport. */
+  animation: page-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-page-in {
+    animation: none;
+  }
 }
 
 @keyframes app-loading-fade {
@@ -133,114 +142,122 @@
 
 @layer base {
   :root {
-    /* Palette Validèl (desktop) — basée sur votre validel-palette.html */
-    --background: 0 0% 100%;            /* #FFFFFF */
-    --foreground: 222 39% 11%;          /* #111827 */
+    /* Palette Validèl — Minimal Premium (noir & blanc) */
+    --background: 0 0% 100%;            /* #FFFFFF page */
+    --foreground: 0 0% 9%;             /* encre #171717 */
 
     --card: 0 0% 100%;
-    --card-foreground: 222 39% 11%;
+    --card-foreground: 0 0% 9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 39% 11%;
+    --popover-foreground: 0 0% 9%;
 
-    /* Couleurs principales */
-    --primary: 0 0% 16%;                /* Noir adouci (moins intense) — augmenté pour réduire l'intensité */
+    /* Couleurs principales — encre monochrome */
+    --primary: 0 0% 4%;                 /* encre #0A0A0A */
     --primary-foreground: 0 0% 100%;
 
-    --accent: 0 0% 16%;                /* Noir Doux (ajusté) */
-    --accent-foreground: 0 0% 100%;
+    /* Secondary / accent = surfaces grises neutres (convention shadcn : hover discret) */
+    --secondary: 0 0% 96%;              /* #F5F5F5 */
+    --secondary-foreground: 0 0% 9%;
 
-    /* Statuts / fonctionnels */
-    --success: 0 0% 0%;                  /* Noir remplace le vert */
+    --accent: 0 0% 96%;                 /* #F5F5F5 */
+    --accent-foreground: 0 0% 9%;
+
+    /* Statuts / fonctionnels — la seule couleur de l'app */
+    --success: 142 71% 45%;             /* vert #16A34A (payé / livré) */
     --success-foreground: 0 0% 100%;
 
-    --warning: 39 96% 50%;              /* #F59E0B */
+    --warning: 38 92% 50%;              /* #F59E0B (en attente) */
     --warning-foreground: 0 0% 100%;
 
-    --danger: 0 72% 51%;                /* #DC2626 */
+    --danger: 0 72% 51%;                /* #DC2626 (annulé / remboursé) */
     --danger-foreground: 0 0% 100%;
 
-    --info: 223 86% 53%;                /* #2563EB */
+    --info: 217 91% 60%;                /* #3B82F6 (liens / info) */
     --info-foreground: 0 0% 100%;
 
     /* Nuances UI */
-    --muted: 0 0% 98%;                  /* #F9FAFB */
-    --muted-foreground: 215 16% 47%;     /* proche de #6B7280 */
+    --muted: 0 0% 96%;                  /* #F5F5F5 */
+    --muted-foreground: 0 0% 45%;       /* #737373 */
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 214 18% 92%;              /* #E5E7EB */
-    --input: 214 18% 92%;
-    --ring: 223 86% 53%;                /* bleu info as ring */
+    --border: 220 13% 91%;             /* #E5E7EB hairline */
+    --input: 220 13% 91%;
+    --ring: 0 0% 4%;                    /* focus ring monochrome */
 
-    --radius: 0.75rem;
+    --radius: 0.875rem;                /* 14px — coins doux premium */
 
     /* Roles (kept for component utilities) */
-    --validel-vendor: 39 96% 50%;        /* orange #F59E0B */
+    --validel-vendor: 38 92% 50%;        /* orange #F59E0B */
     --validel-vendor-foreground: 0 0% 100%;
-    --validel-buyer: 0 0% 0%;            /* noir (remplace vert) */
+    --validel-buyer: 0 0% 4%;            /* encre */
     --validel-buyer-foreground: 0 0% 100%;
     --validel-delivery: 262 83% 58%;     /* violet accent */
     --validel-delivery-foreground: 0 0% 100%;
 
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 39% 11%;
-    --sidebar-primary: 0 0% 16%;
+    --sidebar-foreground: 0 0% 9%;
+    --sidebar-primary: 0 0% 4%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 16%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 214 18% 92%;
-    --sidebar-ring: 223 86% 53%;
+    --sidebar-accent: 0 0% 96%;
+    --sidebar-accent-foreground: 0 0% 9%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 0 0% 4%;
   }
 
   .dark {
-    /* Mode sombre (simple inversion/contrast) */
-    --background: 222 39% 11%;          /* sombre */
-    --foreground: 0 0% 100%;
+    /* Mode sombre — surfaces étagées (minimal premium) */
+    --background: 0 0% 7%;              /* page #121212 */
+    --foreground: 0 0% 98%;
 
-    --card: 222 39% 11%;
-    --card-foreground: 0 0% 100%;
+    --card: 0 0% 10%;                   /* surface au-dessus du fond #1A1A1A */
+    --card-foreground: 0 0% 98%;
 
-    --popover: 222 39% 11%;
-    --popover-foreground: 0 0% 100%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 98%;
 
-    --primary: 0 0% 16%;
-    --primary-foreground: 0 0% 100%;
+    /* En dark, l'encre s'inverse : primary = blanc (bouton clair, texte sombre) */
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
 
     --accent: 0 0% 16%;
-    --accent-foreground: 0 0% 100%;
+    --accent-foreground: 0 0% 98%;
 
-    --success: 142 76% 36%;
+    --success: 142 65% 45%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 39 96% 50%;
+    --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
 
-    --danger: 0 72% 51%;
+    --danger: 0 72% 55%;
     --danger-foreground: 0 0% 100%;
 
-    --info: 223 86% 53%;
+    --info: 217 91% 65%;
     --info-foreground: 0 0% 100%;
 
-    --muted: 222 39% 11%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 64%;
 
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 62% 46%;
+    --destructive-foreground: 0 0% 98%;
 
-    --border: 222 39% 11%;
-    --input: 222 39% 11%;
-    --ring: 223 86% 53%;
+    --border: 0 0% 18%;                 /* bordure visible sur fond sombre */
+    --input: 0 0% 18%;
+    --ring: 0 0% 83%;
 
-    --sidebar-background: 222 39% 11%;
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 16%;
-    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-background: 0 0% 10%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 0 0% 98%;
+    --sidebar-primary-foreground: 0 0% 9%;
     --sidebar-accent: 0 0% 16%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 222 39% 11%;
-    --sidebar-ring: 223 86% 53%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 0 0% 18%;
+    --sidebar-ring: 0 0% 83%;
   }
 }
 
@@ -345,7 +362,7 @@
   
   /* Status badges */
   .status-success {
-    @apply bg-black/5 text-black dark:bg-black/20 dark:text-black;
+    @apply bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300;
   }
   
   .status-warning {

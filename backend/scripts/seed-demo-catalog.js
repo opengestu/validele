@@ -1,18 +1,19 @@
 // backend/scripts/seed-demo-catalog.js
-// Crée (ou remet à jour) le VENDEUR et le PRODUIT de démonstration.
+// Crée (ou remet à jour) le VENDEUR et les PRODUITS de démonstration.
 //
 // Lancer : node backend/scripts/seed-demo-catalog.js
 // Nécessite SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (backend/.env).
 //
 // IDEMPOTENT : relançable autant de fois que voulu. Le vendeur est retrouvé par
-// son email, le produit par son code -> aucun doublon, aucune écriture destructive
-// sur des données réelles (le script refuse d'écraser une ligne non marquée démo).
+// son email, chaque produit par son code -> aucun doublon, aucune écriture
+// destructive sur des données réelles (le script refuse d'écraser une ligne non
+// marquée démo).
 //
 // Ce que ça crée :
 //   - un compte auth + profil vendeur `is_demo = true`, connectable (pour montrer
 //     le côté vendeur pendant une démo : commande reçue, QR scanné) ;
-//   - un produit `is_demo = true` au code FIXE (backend/demo.js -> DEMO_PRODUCT_CODE),
-//     visible UNIQUEMENT depuis un numéro de bot démo.
+//   - des produits `is_demo = true` aux codes FIXES (cf. DEMO_PRODUCTS plus bas),
+//     visibles UNIQUEMENT depuis un numéro de bot démo.
 //
 // Prérequis : migrations 008 et 009 appliquées.
 const path = require('path');
@@ -40,14 +41,33 @@ const DEMO_VENDOR = {
   phone: process.env.DEMO_VENDOR_PHONE || '+221770000000',
   role: 'vendor',
 };
-const DEMO_PRODUCT = {
-  name: 'Caisse de yaourt (démonstration)',
-  description: 'Produit de démonstration Validèl. Caisse de 12 pots de yaourt nature, fabrication locale.',
-  price: Number(process.env.DEMO_PRODUCT_PRICE || 15000),
-  warranty: null,
-  is_available: true,
-  stock_quantity: 999,
-};
+// Catalogue de démonstration. Pour en ajouter un : une entrée de plus ici, puis
+// relancer le script — rien d'autre à toucher.
+//
+// Les codes sont FIXES et hors de la plage générée par l'app (`PD` + 1000-9999,
+// cf. VendorDashboard) : aucune collision possible avec un vrai produit vendeur.
+// Le premier garde le code historique (backend/demo.js -> DEMO_PRODUCT_CODE) car
+// c'est celui que citent le bot, les runbooks et le lien /demo/<code>.
+const DEMO_PRODUCTS = [
+  {
+    code: DEMO_PRODUCT_CODE,
+    name: 'Caisse de yaourt (démonstration)',
+    description: 'Produit de démonstration Validèl. Caisse de 12 pots de yaourt nature, fabrication locale.',
+    price: Number(process.env.DEMO_PRODUCT_PRICE || 15000),
+    warranty: null,
+    is_available: true,
+    stock_quantity: 999,
+  },
+  {
+    code: 'PD0001',
+    name: 'Sac à dos (démonstration)',
+    description: 'Produit de démonstration Validèl. Sac à dos scolaire, toile renforcée, compartiment ordinateur 15 pouces.',
+    price: Number(process.env.DEMO_BACKPACK_PRICE || 12000),
+    warranty: null,
+    is_available: true,
+    stock_quantity: 999,
+  },
+];
 
 function fail(msg) {
   console.error(`\n❌ ${msg}\n`);
@@ -122,36 +142,46 @@ async function main() {
     .upsert({ id: vendorId, ...DEMO_VENDOR, is_demo: true }, { onConflict: 'id' });
   if (profileErr) fail(`Upsert du profil vendeur échoué: ${profileErr.message}`);
 
-  // --- 3) Produit démo ------------------------------------------------------
-  const { data: existing, error: lookupErr } = await db
-    .from('products')
-    .select('id, is_demo, vendor_id')
-    .ilike('code', DEMO_PRODUCT_CODE)
-    .maybeSingle();
-  if (lookupErr) fail(`Lecture du produit démo échouée: ${lookupErr.message}`);
+  // --- 3) Produits démo -----------------------------------------------------
+  // Séquentiel plutôt qu'en parallèle : à cette taille le gain serait nul, et on
+  // veut qu'un échec s'arrête sur le produit fautif, pas au milieu de N écritures.
+  for (const produit of DEMO_PRODUCTS) {
+    const { code, ...champs } = produit;
 
-  // Sécurité : si un VRAI produit occupe déjà ce code, on s'arrête net plutôt que
-  // de transformer le produit d'un vendeur en décor de démonstration.
-  if (existing && existing.is_demo !== true) {
-    fail(`Le code ${DEMO_PRODUCT_CODE} appartient déjà à un produit réel (id ${existing.id}).\n   Change DEMO_PRODUCT_CODE dans l'environnement, puis relance.`);
+    const { data: existing, error: lookupErr } = await db
+      .from('products')
+      .select('id, is_demo, vendor_id')
+      .ilike('code', code)
+      .maybeSingle();
+    if (lookupErr) fail(`Lecture du produit démo ${code} échouée: ${lookupErr.message}`);
+
+    // Sécurité : si un VRAI produit occupe déjà ce code, on s'arrête net plutôt que
+    // de transformer le produit d'un vendeur en décor de démonstration.
+    if (existing && existing.is_demo !== true) {
+      fail(`Le code ${code} appartient déjà à un produit réel (id ${existing.id}).\n   Change ce code dans DEMO_PRODUCTS (ou DEMO_PRODUCT_CODE), puis relance.`);
+    }
+
+    const productRow = { ...champs, vendor_id: vendorId, code, is_demo: true };
+    const { error: productErr } = existing
+      ? await db.from('products').update(productRow).eq('id', existing.id)
+      : await db.from('products').insert(productRow);
+    if (productErr) fail(`Écriture du produit démo ${code} échouée: ${productErr.message}`);
   }
-
-  const productRow = { ...DEMO_PRODUCT, vendor_id: vendorId, code: DEMO_PRODUCT_CODE, is_demo: true };
-  const { error: productErr } = existing
-    ? await db.from('products').update(productRow).eq('id', existing.id)
-    : await db.from('products').insert(productRow);
-  if (productErr) fail(`Écriture du produit démo échouée: ${productErr.message}`);
 
   // --- Récapitulatif --------------------------------------------------------
   const demoNumber = DEMO_BOT_NUMBERS[0];
+  const catalogue = DEMO_PRODUCTS
+    .map((p) => `   ${p.code}   ${p.name} — ${p.price.toLocaleString('fr-FR')} FCFA`)
+    .join('\n');
   console.log(`
 ✅ Catalogue de démonstration prêt.
 
    Vendeur   ${DEMO_VENDOR.company_name}
    Email     ${DEMO_VENDOR_EMAIL}
    Mot de passe  ${passwordIsNew ? password : '(inchangé — défini lors d\'un passage précédent)'}
-   Produit   ${DEMO_PRODUCT.name} — ${DEMO_PRODUCT.price.toLocaleString('fr-FR')} FCFA
-   Code      ${DEMO_PRODUCT_CODE}   (invisible depuis le numéro de prod)
+
+   Produits (invisibles depuis le numéro de prod) :
+${catalogue}
 
    Pour lancer une démo : écrire « ${DEMO_PRODUCT_CODE} » au ${demoNumber ? `+${demoNumber}` : 'numéro démo'}
    ou partager  https://www.validel.shop/demo/${DEMO_PRODUCT_CODE}

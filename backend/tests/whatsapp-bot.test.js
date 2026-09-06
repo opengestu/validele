@@ -80,7 +80,8 @@ function makeBot(extra = {}) {
   const initiatePayment = async () => ({ url: 'https://pay.test/abc' });
   const b = bot.createBot({
     findProduct, isDuplicate, getConversationState, setConversationState, askProductQuestion,
-    markDeliveryNotificationRead, sendFallbackSmsNow, createGuestOrder, initiatePayment, ...rec, ...extra,
+    markDeliveryNotificationRead, sendFallbackSmsNow, createGuestOrder, initiatePayment,
+    readPaymentStatus: async () => null, ...rec, ...extra,
   });
   return { b, rec, orders };
 }
@@ -110,6 +111,11 @@ function inboundButton(id, msgId, from = '221771112233', recipient = undefined) 
   const message = { msg_id: msgId || nextMid(), originator: from, message_type: 'INTERACTIVE', interactive: { button_reply: { id } } };
   if (recipient !== undefined) message.recipient = recipient;
   return { event_content: { message } };
+}
+// Message sans texte : vocal, image, sticker… D7 remplit `message_type` mais pas
+// `text.body`. Le vocal est le cas réel le plus fréquent.
+function inboundMedia(type = 'AUDIO', msgId, from = '221771112233') {
+  return { event_content: { message: { msg_id: msgId || nextMid(), originator: from, message_type: type } } };
 }
 function mockReq(secret, body) { return { params: { secret }, body }; }
 function mockRes() {
@@ -270,11 +276,39 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundText("j'ai payé"));
     assert.strictEqual(rec.sends.length, 1);
     assert.strictEqual(rec.sends[0].kind, 'text');
-    assert.ok(rec.sends[0].body.includes('code produit'));
+    assert.ok(rec.sends[0].body.includes('code de votre commande'));
     // Le module n'expose et n'appelle aucune fonction de mutation de statut : garantie structurelle.
   });
 
   // Question libre APRÈS avoir consulté un produit -> réponse IA + 2 boutons
+  for (const text of ["J'ai payé", 'Paiement effectué YXA6797', 'Mon compte a été débité', 'Confirme que mon argent est sécurisé']) {
+    await test(`paiement sans IA : ${text}`, async () => {
+      let calls = 0;
+      const { b, rec } = makeBot({
+        askProductQuestion: async () => { throw new Error('IA interdite'); },
+        readPaymentStatus: async (context) => {
+          calls++;
+          assert.strictEqual(context.phone, '221771112233');
+          return { code: 'YXA6797', failed: true };
+        },
+      });
+      await b.processWebhook(inboundText('PD3431'));
+      await b.processWebhook(inboundText(text));
+      assert.strictEqual(calls, 1);
+      assert.match(rec.sends.at(-1).body, /en échec/);
+    });
+  }
+  await test('réponse IA financière bloquée même pour une entrée indirecte', async () => {
+    const { b, rec } = makeBot({
+      askProductQuestion: async () => 'Super ! Ton paiement a bien été reçu.',
+      readPaymentStatus: async () => { throw new Error('DB indisponible'); },
+    });
+    await b.processWebhook(inboundText('PD3431'));
+    await b.processWebhook(inboundText("C'est fait !"));
+    assert.match(rec.sends.at(-1).body, /ne peux pas confirmer/);
+    assert.doesNotMatch(rec.sends.at(-1).body, /Super/);
+  });
+
   await test('question libre après code produit -> réponse IA + boutons Payer/Autres', async () => {
     const { b, rec } = makeBot();
     await b.processWebhook(inboundText('PD3431')); // consulte le produit -> contexte actif
@@ -761,6 +795,108 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundListReply('co:z:0:PD3431'));
     assert.strictEqual(rec.sends[0].kind, 'cta');
     assert.strictEqual(rec.sends[0].url, 'https://www.validel.shop/product/PD3431');
+  });
+
+
+  // --- Messages sans texte : vocal, image, sticker --------------------------
+  // Sur WhatsApp l'acheteur répond souvent à l'oral. Le bot ne sait pas écouter :
+  // il doit le dire ET redire l'étape en cours, jamais laisser un silence.
+
+  await test('vocal pendant le parcours -> le dit et re-pose la question du nom', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1')); // quantité
+    await b.processWebhook(inboundMedia('AUDIO'));
+    assert.strictEqual(rec.sends[2].kind, 'text');
+    assert.ok(/vocaux/i.test(rec.sends[2].body), `doit nommer le vocal: ${rec.sends[2].body}`);
+    // Surtout PAS « Merci d'indiquer votre prénom et nom » comme si l'acheteur
+    // avait envoyé un texte trop court : on re-pose la question d'origine.
+    assert.ok(/pr[ée]nom et nom/i.test(rec.sends[3].body), 'doit redemander le nom');
+    // L'étape ne bouge pas : le nom envoyé ensuite est bien pris.
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundListReply('co:z:2:PD3431'));
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].buyerName, 'Awa Diop');
+  });
+
+  await test('vocal à l\'étape quartier -> renvoie la liste des quartiers', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundMedia('VOICE'));
+    assert.strictEqual(rec.sends[4].kind, 'list', 'la liste doit être renvoyée, pas juste un texte');
+    assert.strictEqual(rec.sends[4].rows[0].id, 'co:z:0:PD3431');
+  });
+
+  await test('vocal hors parcours, produit consulté -> boutons, aucun appel IA', async () => {
+    const questions = [];
+    const { b, rec } = makeBot({
+      askProductQuestion: async (_p, q) => { questions.push(q); return 'réponse IA'; },
+    });
+    await b.processWebhook(inboundText('PD3431')); // fiche produit
+    await b.processWebhook(inboundMedia('AUDIO'));
+    // Un vocal partait à l'IA sous forme de question VIDE : quota brûlé, réponse absurde.
+    assert.deepStrictEqual(questions, [], 'un vocal ne doit jamais atteindre l\'IA');
+    assert.strictEqual(rec.sends[1].kind, 'buttons');
+    assert.ok(/vocaux/i.test(rec.sends[1].body));
+    assert.deepStrictEqual(rec.sends[1].buttons.map((x) => x.id), ['pay:PD3431', 'faq:PD3431']);
+  });
+
+  await test('vocal sans contexte -> avis + invite à envoyer un code, en un message', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundMedia('AUDIO'));
+    assert.strictEqual(rec.sends.length, 1, 'un seul message : rien à rappeler ici');
+    assert.ok(/vocaux/i.test(rec.sends[0].body));
+    assert.ok(/PD3431/.test(rec.sends[0].body), 'doit rappeler comment démarrer');
+  });
+
+  await test('image reçue -> message adapté au type, pas « vocal »', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundMedia('IMAGE'));
+    assert.ok(/images/i.test(rec.sends[0].body), rec.sends[0].body);
+    assert.ok(!/vocaux/i.test(rec.sends[0].body));
+  });
+
+  await test('type inconnu -> formulation générique, jamais de silence', async () => {
+    const { b, rec } = makeBot();
+    await b.processWebhook(inboundMedia('REACTION'));
+    assert.strictEqual(rec.sends.length, 1);
+    assert.ok(/ce type de message/i.test(rec.sends[0].body), rec.sends[0].body);
+  });
+
+
+  // --- Boutons périmés : le fil WhatsApp reste tapable indéfiniment ---------
+
+  await test('« Autre quartier » retapé après l\'adresse -> ne revient pas en arrière', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundText('Keur Massar, cité Sonatel')); // adresse tapée -> étape wallet
+    assert.strictEqual(rec.sends[3].kind, 'buttons', 'on doit être à la question du paiement');
+
+    // Appui sur une ligne de la liste des quartiers restée plus haut dans le fil.
+    await b.processWebhook(inboundListReply('co:z:autre:PD3431'));
+    assert.strictEqual(rec.sends[4].kind, 'buttons', 'doit redire le paiement, pas redemander l\'adresse');
+    assert.deepStrictEqual(rec.sends[4].buttons.map((x) => x.id), ['co:w:PD3431', 'co:o:PD3431']);
+
+    await b.processWebhook(inboundButton('co:w:PD3431'));
+    assert.strictEqual(orders.length, 1);
+    assert.strictEqual(orders[0].deliveryAddress, 'Keur Massar, cité Sonatel', 'l\'adresse déjà donnée est conservée');
+  });
+
+  await test('bouton wallet périmé après redémarrage -> aucune commande incomplète', async () => {
+    const { b, rec, orders } = makeBot();
+    await b.processWebhook(inboundButton('pay:PD3431'));
+    await b.processWebhook(inboundText('1'));
+    await b.processWebhook(inboundText('Awa Diop'));
+    await b.processWebhook(inboundText('Keur Massar, cité Sonatel'));
+    await b.processWebhook(inboundButton('pay:PD3431')); // reprend tout depuis la quantité
+    await b.processWebhook(inboundButton('co:w:PD3431')); // vieux bouton Wave
+    assert.strictEqual(orders.length, 0, 'une commande sans nom ni adresse ne doit jamais partir');
+    assert.ok(/combien/i.test(rec.sends[5].body), `doit redemander la quantité: ${rec.sends[5].body}`);
   });
 
 

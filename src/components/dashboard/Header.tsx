@@ -46,7 +46,7 @@ const Header: React.FC<HeaderProps> = ({ user, onSignOut, onMenuClick, config })
   const userInitial = userName.charAt(0).toUpperCase();
 
   return (
-    <header className="bg-white border-b border-gray-200 px-4 lg:px-6 py-4">
+    <header className="bg-card border-b border-border px-4 lg:px-6 py-4">
       <div className="flex items-center justify-between">
         {/* Left Side - Menu Button */}
         <div className="flex items-center space-x-4">
@@ -61,7 +61,7 @@ const Header: React.FC<HeaderProps> = ({ user, onSignOut, onMenuClick, config })
           
           {/* Desktop Title */}
           <div className="hidden lg:block">
-            <h1 className="text-xl font-semibold text-gray-900">
+            <h1 className="text-xl font-semibold text-foreground">
               {config.title}
             </h1>
           </div>
@@ -85,22 +85,19 @@ const Header: React.FC<HeaderProps> = ({ user, onSignOut, onMenuClick, config })
           {/* Profile Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center space-x-2 hover:bg-gray-50">
-                <div className={cn(
-                  "h-8 w-8 rounded-full flex items-center justify-center text-white text-sm font-medium bg-gradient-to-br",
-                  config.gradient
-                )}>
+              <Button variant="ghost" className="flex items-center space-x-2 hover:bg-muted">
+                <div className="h-8 w-8 rounded-full flex items-center justify-center bg-primary text-primary-foreground text-sm font-medium">
                   {userInitial}
                 </div>
                 <div className="hidden md:flex flex-col items-start">
-                  <span className="text-sm font-medium text-gray-900">
+                  <span className="text-sm font-medium text-foreground">
                     {userName}
                   </span>
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-muted-foreground">
                     {user?.email}
                   </span>
                 </div>
-                <ChevronDown className="h-4 w-4 text-gray-500" />
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             

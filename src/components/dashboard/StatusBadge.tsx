@@ -15,44 +15,44 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
   const statusConfig = {
     pending: {
       label: 'En attente',
-      color: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      dot: 'bg-yellow-400'
+      color: 'bg-amber-50 text-amber-700 border-amber-200',
+      dot: 'bg-amber-500'
     },
     confirmed: {
-      label: 'Confiré',
-      color: 'bg-blue-100 text-blue-800 border-blue-200', 
-      dot: 'bg-blue-400'
+      label: 'Confirmé',
+      color: 'bg-muted text-foreground border-border',
+      dot: 'bg-foreground'
     },
     delivered: {
       label: 'Livrée',
-      color: 'bg-black text-white border-black',
-      dot: 'bg-black'
+      color: 'bg-green-50 text-green-700 border-green-200',
+      dot: 'bg-green-600'
     },
 
     cancelled: {
       label: 'Annulé',
-      color: 'bg-red-100 text-red-800 border-red-200',
-      dot: 'bg-red-400'
+      color: 'bg-red-50 text-red-700 border-red-200',
+      dot: 'bg-red-500'
     },
     paid: {
       label: 'Payé',
-      color: 'bg-purple-100 text-purple-800 border-purple-200',
-      dot: 'bg-purple-400'
+      color: 'bg-green-50 text-green-700 border-green-200',
+      dot: 'bg-green-600'
     },
     in_delivery: {
       label: 'En cours de livraison',
-      color: 'bg-blue-100 text-blue-800 border-blue-200',
-      dot: 'bg-blue-400'
+      color: 'bg-blue-50 text-blue-700 border-blue-200',
+      dot: 'bg-blue-500'
     },
     active: {
       label: 'Actif',
-      color: 'bg-black text-white border-black',
-      dot: 'bg-black'
+      color: 'bg-green-50 text-green-700 border-green-200',
+      dot: 'bg-green-600'
     },
     inactive: {
       label: 'Inactif',
-      color: 'bg-gray-100 text-gray-800 border-gray-200',
-      dot: 'bg-gray-400'
+      color: 'bg-muted text-muted-foreground border-border',
+      dot: 'bg-muted-foreground'
     }
   };
 

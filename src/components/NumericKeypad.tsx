@@ -17,24 +17,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-/* ── Inject keyframe animation once ── */
-const STYLE_ID = 'nkp-styles';
-if (!document.getElementById(STYLE_ID)) {
-  const s = document.createElement('style');
-  s.id = STYLE_ID;
-  s.textContent = `
-    @keyframes nkp-pop {
-      0%   { transform: scale(1);    }
-      40%  { transform: scale(0.88); }
-      70%  { transform: scale(1.06); }
-      100% { transform: scale(1);    }
-    }
-    .nkp-btn { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
-    .nkp-btn:active { animation: nkp-pop 0.22s ease forwards; }
-  `;
-  document.head.appendChild(s);
-}
-
 /* ── Digit key ── */
 function DigitButton({ digit, onClick, size }: { digit: string; onClick: () => void; size: number }) {
   const [pressed, setPressed] = useState(false);
@@ -52,31 +34,29 @@ function DigitButton({ digit, onClick, size }: { digit: string; onClick: () => v
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
+      onMouseLeave={() => setPressed(false)}
       style={{
         width: size,
         height: size,
-        borderRadius: 20,
+        borderRadius: 18,
         border: 'none',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         fontSize: size * 0.38,
-        fontWeight: '600',
+        fontWeight: 600,
         letterSpacing: '-0.5px',
         cursor: 'pointer',
         userSelect: 'none',
-        background: pressed
-          ? 'linear-gradient(160deg, #e5e7eb 0%, #d1d5db 100%)'
-          : 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
-        color: 'hsl(var(--primary))',
-        boxShadow: pressed
-          ? '0 1px 4px rgba(34,197,94,0.18), inset 0 2px 6px rgba(34,197,94,0.12)'
-          : 'none',
-        transform: pressed ? 'scale(0.93)' : 'scale(1)',
-        transition: 'transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease',
+        background: pressed ? 'hsl(var(--muted))' : 'transparent',
+        color: 'hsl(var(--foreground))',
+        boxShadow: 'none',
+        transform: pressed ? 'scale(0.94)' : 'scale(1)',
+        transition: 'transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), background 0.15s ease',
         outline: 'none',
         WebkitAppearance: 'none',
+        WebkitTapHighlightColor: 'transparent',
+        touchAction: 'manipulation',
       }}
     >
       {digit}
@@ -101,34 +81,33 @@ function DeleteButton({ onClick, size }: { onClick?: () => void; size: number })
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
+      onMouseLeave={() => setPressed(false)}
       style={{
         width: size,
         height: size,
-        borderRadius: 20,
+        borderRadius: 18,
         border: 'none',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
         userSelect: 'none',
-        background: pressed
-          ? 'linear-gradient(160deg, #fee2e2 0%, #fecaca 100%)'
-          : 'linear-gradient(160deg, #fff1f2 0%, #ffe4e6 100%)',
-        color: pressed ? '#b91c1c' : '#ef4444',
-        boxShadow: pressed
-          ? '0 1px 4px rgba(239,68,68,0.15), inset 0 2px 6px rgba(239,68,68,0.1)'
-          : 'none',
-        transform: pressed ? 'scale(0.93)' : 'scale(1)',
-        transition: 'transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease',
+        background: pressed ? 'hsl(var(--muted))' : 'transparent',
+        color: 'hsl(var(--muted-foreground))',
+        boxShadow: 'none',
+        transform: pressed ? 'scale(0.94)' : 'scale(1)',
+        transition: 'transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), background 0.15s ease',
         outline: 'none',
         WebkitAppearance: 'none',
+        WebkitTapHighlightColor: 'transparent',
+        touchAction: 'manipulation',
       }}
     >
       {/* Backspace SVG icon */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        width={size * 0.42}
-        height={size * 0.42}
+        width={size * 0.4}
+        height={size * 0.4}
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -160,8 +139,6 @@ export default function NumericKeypad({ onDigit, onBack, onSubmit, showSubmit }:
         gap: isMobile ? 28 : 22,
         padding: isMobile ? '24px 20px 28px' : '18px 16px 22px',
         background: 'transparent',
-        backdropFilter: 'none',
-        WebkitBackdropFilter: 'none',
         borderRadius: 28,
         boxShadow: 'none',
         border: 'none',
@@ -191,22 +168,22 @@ export default function NumericKeypad({ onDigit, onBack, onSubmit, showSubmit }:
           style={{
             width: `${size * 3 + gap * 2}px`,
             padding: isMobile ? '16px 0' : '13px 0',
-            borderRadius: 18,
+            borderRadius: 16,
             border: 'none',
             background: 'hsl(var(--primary))',
             color: 'hsl(var(--primary-foreground))',
-            fontSize: isMobile ? 20 : 17,
-            fontWeight: '700',
-            letterSpacing: '0.3px',
+            fontSize: isMobile ? 18 : 16,
+            fontWeight: 500,
+            letterSpacing: '0.2px',
             cursor: 'pointer',
-            boxShadow: '0 6px 20px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)',
-            transition: 'transform 0.12s ease, box-shadow 0.12s ease',
+            boxShadow: '0 2px 8px -2px rgb(0 0 0 / 0.10), 0 4px 16px -4px rgb(0 0 0 / 0.10)',
+            transition: 'transform 0.15s cubic-bezier(0.22, 1, 0.36, 1)',
             outline: 'none',
             WebkitAppearance: 'none',
           }}
-          onMouseDown={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'; }}
+          onMouseDown={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)'; }}
           onMouseUp={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-          onTouchStart={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'; }}
+          onTouchStart={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)'; }}
           onTouchEnd={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; onSubmit?.(); }}
         >
           Suivant →

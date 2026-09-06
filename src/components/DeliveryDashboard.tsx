@@ -718,7 +718,7 @@ const DeliveryDashboard = () => {
       case 'cancelled':
         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Annulée</span>;
       default:
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{status}</span>;
+        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground">{status}</span>;
     }
   };
 
@@ -757,20 +757,20 @@ const DeliveryDashboard = () => {
             </span>
             {getStatusBadge(delivery.status)}
           </div>
-          <h3 className="text-base font-semibold text-gray-900 mb-2 flex items-center gap-2">
+          <h3 className="text-base font-semibold text-foreground mb-2 flex items-center gap-2">
             <Package className="h-4 w-4 text-primary" />
             {delivery.products?.name}
           </h3>
-          <div className="space-y-1 text-sm text-gray-600">
+          <div className="space-y-1 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Client:</span>
-              <span className="text-xs text-gray-700">
+              <span className="font-medium text-muted-foreground text-xs whitespace-nowrap">Client:</span>
+              <span className="text-xs text-muted-foreground">
                 {delivery.buyer_profile?.full_name || 'Client'}
               </span>
             </div>
             {delivery.buyer_profile?.phone && (
               <div className="flex items-center gap-3">
-                <span className="font-medium text-gray-700 text-xs whitespace-nowrap">Téléphone:</span>
+                <span className="font-medium text-muted-foreground text-xs whitespace-nowrap">Téléphone:</span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -846,7 +846,7 @@ const DeliveryDashboard = () => {
   // Suppression de l'overlay et du spinner de chargement (plus d'affichage pendant le chargement)
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 relative">
+    <div className="min-h-screen bg-muted pb-20 md:pb-0 relative">
       {/* Dev diagnostics banner (only in development) */}
 
       {/* Header Moderne - Style similaire à VendorDashboard */}
@@ -882,7 +882,7 @@ const DeliveryDashboard = () => {
 
             {/* En cours Tab */}
             <TabsContent value="in_progress" className="space-y-6">
-              <h2 className="text-xl font-bold text-gray-900">Livraisons en cours</h2>
+              <h2 className="text-xl font-bold text-foreground">Livraisons en cours</h2>
               <div className="flex justify-center">
                 <Link to="/scanner">
                   <Button className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 text-sm rounded-md">
@@ -896,8 +896,8 @@ const DeliveryDashboard = () => {
                 <Card className="border border-orange-100">
                   <CardContent className="p-8 text-center">
                     <Truck className="h-12 w-12 text-orange-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Aucune livraison en cours</h3>
-                    <p className="text-gray-500 mb-4">Scannez un QR code pour prendre en charge une commande</p>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Aucune livraison en cours</h3>
+                    <p className="text-muted-foreground mb-4">Scannez un QR code pour prendre en charge une commande</p>
 
                   </CardContent>
                 </Card>
@@ -910,14 +910,14 @@ const DeliveryDashboard = () => {
 
             {/* Terminées Tab */}
             <TabsContent value="completed" className="space-y-6">
-              <h2 className="text-xl font-bold text-gray-900">Livraisons terminées</h2>
+              <h2 className="text-xl font-bold text-foreground">Livraisons terminées</h2>
 
               {deliveriesCompleted.length === 0 ? (
                 <Card className="border border-green-100">
                   <CardContent className="p-8 text-center">
                     <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Aucune livraison terminée</h3>
-                    <p className="text-gray-500">Vos livraisons terminées apparaîtront ici</p>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Aucune livraison terminée</h3>
+                    <p className="text-muted-foreground">Vos livraisons terminées apparaîtront ici</p>
                   </CardContent>
                 </Card>
               ) : (
@@ -929,23 +929,23 @@ const DeliveryDashboard = () => {
 
             {/* Profile Tab */}
             <TabsContent value="profile" className="space-y-6">
-              <h2 className="text-xl font-bold text-gray-900">Mon Compte</h2>
+              <h2 className="text-xl font-bold text-foreground">Mon Compte</h2>
               
               <Card>
                 <CardContent className="p-6 space-y-4">
                   {!isEditingProfile ? (
                     <>
                       <div>
-                        <label className="text-sm font-medium text-gray-500">Nom complet</label>
+                        <label className="text-sm font-medium text-muted-foreground">Nom complet</label>
                         <p className="text-lg">{userProfile?.full_name || 'Non renseigné'}</p>
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-500">Téléphone</label>
+                        <label className="text-sm font-medium text-muted-foreground">Téléphone</label>
                         <p className="text-lg">{userProfile?.phone || 'Non renseigné'}</p>
                       </div>
                       <div>
-                        <label className="text-sm font-medium text-gray-500">Statistiques</label>
+                        <label className="text-sm font-medium text-muted-foreground">Statistiques</label>
                         <div className="grid grid-cols-2 gap-4 mt-2">
                           <div className="bg-primary/10 p-3 rounded-lg">
                             <p className="text-2xl font-bold text-primary">{inProgressDeliveries}</p>
@@ -964,10 +964,10 @@ const DeliveryDashboard = () => {
                         <Edit className="h-4 w-4 mr-2" />
                         Modifier le profil
                       </Button>
-                      <Button 
+                      <Button
                         variant="outline"
                         onClick={handleSignOut}
-                        className="w-full mt-2"
+                        className="w-full mt-2 flex items-center justify-center"
                       >
                         <LogOut className="h-4 w-4 mr-2" />
                         Déconnexion
@@ -1037,8 +1037,8 @@ const DeliveryDashboard = () => {
                     <Card className="border border-orange-100">
                       <CardContent className="p-6 text-center">
                         <Truck className="h-10 w-10 text-orange-400 mx-auto mb-3" />
-                        <h3 className="font-semibold text-gray-900 mb-2">Aucune livraison</h3>
-                        <p className="text-sm text-gray-500 mb-4">Scannez pour prendre une commande</p>
+                        <h3 className="font-semibold text-foreground mb-2">Aucune livraison</h3>
+                        <p className="text-sm text-muted-foreground mb-4">Scannez pour prendre une commande</p>
 
                       </CardContent>
                     </Card>
@@ -1058,8 +1058,8 @@ const DeliveryDashboard = () => {
                     <Card className="border border-green-100">
                       <CardContent className="p-6 text-center">
                         <CheckCircle className="h-10 w-10 text-green-400 mx-auto mb-3" />
-                        <h3 className="font-semibold text-gray-900 mb-2">Aucune livraison terminée</h3>
-                        <p className="text-sm text-gray-500">Vos livraisons terminées apparaîtront ici</p>
+                        <h3 className="font-semibold text-foreground mb-2">Aucune livraison terminée</h3>
+                        <p className="text-sm text-muted-foreground">Vos livraisons terminées apparaîtront ici</p>
                       </CardContent>
                     </Card>
                   ) : (
@@ -1078,16 +1078,16 @@ const DeliveryDashboard = () => {
                       {!isEditingProfile ? (
                         <div className="space-y-3">
                           <div>
-                            <label className="text-sm font-medium text-gray-500">Nom complet</label>
+                            <label className="text-sm font-medium text-muted-foreground">Nom complet</label>
                             <p className="text-lg">{userProfile?.full_name || 'Non défini'}</p>
                           </div>
 
                           <div>
-                            <label className="text-sm font-medium text-gray-500">Téléphone</label>
+                            <label className="text-sm font-medium text-muted-foreground">Téléphone</label>
                             <p className="text-lg">{userProfile?.phone || 'Non défini'}</p>
                           </div>
                           <div>
-                            <label className="text-sm font-medium text-gray-500">Statistiques</label>
+                            <label className="text-sm font-medium text-muted-foreground">Statistiques</label>
                             <div className="grid grid-cols-2 gap-3 mt-2">
                               <div className="bg-primary/10 p-3 rounded-lg text-center">
                                 <p className="text-xl font-bold text-primary">{inProgressDeliveries}</p>
@@ -1106,9 +1106,9 @@ const DeliveryDashboard = () => {
                             <Edit className="h-4 w-4 mr-2" />
                             Modifier le profil
                           </Button>
-                          <Button 
+                          <Button
                             onClick={handleSignOut}
-                            variant="destructive"
+                            variant="outline"
                             className="w-full mt-2 flex items-center justify-center"
                           >
                             <LogOut className="h-4 w-4 mr-2" />
@@ -1160,7 +1160,7 @@ const DeliveryDashboard = () => {
             </div>
 
             {/* Bottom Navigation Bar - Fixed */}
-            <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 shadow-lg">
+            <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-50 shadow-lg">
               <TabsList className="w-full h-16 bg-white rounded-none border-0">
                 <div className="flex w-full h-16 bg-white justify-around items-center px-2">
                   <TabsTrigger 
@@ -1194,7 +1194,7 @@ const DeliveryDashboard = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Appeler ce client ?</DialogTitle>
-            <p className="text-sm text-gray-600 mt-2">Numéro: {callTarget}</p>
+            <p className="text-sm text-muted-foreground mt-2">Numéro: {callTarget}</p>
           </DialogHeader>
           <DialogFooter>
             <div className="flex justify-end gap-2">

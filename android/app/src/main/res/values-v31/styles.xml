@@ -2,7 +2,10 @@
 <resources>
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar" />
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
-        <item name="android:windowSplashScreenBackground">#f7fafa</item>
+        <!-- Disabled Android 12+ splash screen to avoid white background issue -->
+        <!-- <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item> -->
+        <!-- <item name="android:windowSplashScreenBackground">#ffffff</item> -->
+        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
+        <item name="android:windowSplashScreenBackground">#ffffff</item>
     </style>
 </resources>

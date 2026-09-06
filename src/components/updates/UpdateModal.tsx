@@ -1,14 +1,7 @@
 import React from 'react';
-import { RefreshCw, ShieldAlert, ArrowUpRight } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
+import validelLogo from '@/assets/validel-logo.png';
 
 type UpdateModalProps = {
   open: boolean;
@@ -17,7 +10,7 @@ type UpdateModalProps = {
   message: string;
   forceUpdate: boolean;
   isOpeningStore: boolean;
-  onUpdateNow: () => void;
+  onUpdateNow: () => void | Promise<void>;
   onLater: () => void;
 };
 
@@ -31,70 +24,80 @@ const UpdateModal: React.FC<UpdateModalProps> = ({
   onUpdateNow,
   onLater,
 }) => {
-  return (
-    <Drawer
-      open={open}
-      dismissible
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onLater();
-      }}
-    >
-      <DrawerContent className="z-[12000] border-none bg-slate-950 text-white rounded-t-[28px]">
-        <div className="mx-auto mt-3 h-1.5 w-14 rounded-full bg-white/25" />
+  if (!open) return null;
 
-        <DrawerHeader className="px-5 pb-2 pt-4 text-left">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 via-blue-400 to-indigo-500 shadow-lg shadow-cyan-900/40">
-              <RefreshCw className={`h-6 w-6 text-slate-950 ${isOpeningStore ? 'animate-spin' : ''}`} />
-            </div>
-            <div>
-              <DrawerTitle className="text-xl font-bold leading-tight text-white">
-                Nouvelle version disponible
-              </DrawerTitle>
-              <p className="mt-1 text-xs text-slate-300">
-                Version actuelle {currentVersion} {'->'} Version {latestVersion}
-              </p>
-            </div>
+  const handleUpdateClick = () => {
+    void Promise.resolve(onUpdateNow());
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[200000] flex flex-col justify-end bg-black/45"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="update-dialog-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default"
+        aria-label="Fermer"
+        onClick={() => {
+          if (!forceUpdate && !isOpeningStore) onLater();
+        }}
+      />
+
+      <div
+        className="relative z-[200001] mx-auto w-full max-w-lg rounded-t-[28px] bg-white px-6 pb-8 pt-6 shadow-[0_-12px_40px_rgba(15,23,42,0.18)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-5 flex items-start gap-4">
+          <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden">
+            <img src={validelLogo} alt="Validel" className="h-14 w-14 object-contain" />
+            <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-rose-500 text-white shadow">
+              <Download className="h-3.5 w-3.5" />
+            </span>
           </div>
 
-          <DrawerDescription className="text-sm leading-relaxed text-slate-100/90">
-            {message}
-          </DrawerDescription>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <h2 id="update-dialog-title" className="text-xl font-semibold text-slate-900">
+              Mise à jour disponible
+            </h2>
+            <p className="mt-1 text-sm font-medium text-slate-600">
+              Validel {currentVersion} → {latestVersion}
+            </p>
+          </div>
+        </div>
 
-          {forceUpdate && (
-            <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span className="text-xs">
-                Cette mise a jour est obligatoire pour continuer a utiliser l'application.
-              </span>
-            </div>
-          )}
-        </DrawerHeader>
+        <p className="mb-6 text-sm leading-relaxed text-slate-700">{message}</p>
 
-        <DrawerFooter className="px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-2">
+        {forceUpdate && (
+          <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Cette mise à jour est obligatoire pour continuer à utiliser l&apos;application.
+          </p>
+        )}
+
+        <div className="flex flex-col gap-3">
           <Button
             type="button"
-            onClick={onUpdateNow}
+            onClick={handleUpdateClick}
             disabled={isOpeningStore}
-            className="h-12 w-full rounded-xl bg-white text-slate-950 hover:bg-slate-100 font-semibold"
+            className="h-12 w-full rounded-full bg-[#1a73e8] text-base font-semibold text-white hover:bg-[#1558b0] disabled:opacity-70"
           >
-            <span className="flex items-center gap-2">
-              <span>{isOpeningStore ? 'Ouverture du Store...' : 'Mettre a jour maintenant'}</span>
-              <ArrowUpRight className="h-4 w-4" />
-            </span>
+            {isOpeningStore ? 'Ouverture du Play Store...' : 'Mettre à jour'}
           </Button>
 
           <Button
             type="button"
             variant="outline"
-            onClick={onLater}
-            className="h-11 w-full rounded-xl border-slate-600 bg-transparent text-slate-200 hover:bg-slate-900 hover:text-white"
+            onClick={() => onLater()}
+            disabled={forceUpdate || isOpeningStore}
+            className="h-12 w-full rounded-full border-[#1a73e8] bg-white text-base font-semibold text-[#1a73e8] hover:bg-blue-50 disabled:opacity-50"
           >
-            {forceUpdate ? 'Continuer sans mettre a jour' : 'Plus tard'}
+            Plus tard
           </Button>
-        </DrawerFooter>
-      </DrawerContent>
-    </Drawer>
+        </div>
+      </div>
+    </div>
   );
 };
 

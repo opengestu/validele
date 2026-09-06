@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('./supabase');
+const { concernsPayment, readPaymentStatus, paymentReply } = require('./bot-payment-status');
 // Test mode : reconnaissance des numéros de bot démo (source unique, cf. backend/demo.js).
 const { isDemoBotNumber } = require('./demo');
 const {
@@ -466,6 +467,27 @@ const TXT_CODE_INTROUVABLE = (code) =>
 const TXT_AUCUN_CODE =
   'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.\nPour voir tout le catalogue d\'une boutique, envoyez son code (ex : BQ12345).';
 
+// ── Messages sans texte (vocal, image, sticker…) ────────────────────────────
+// Le vocal est le cas courant : sur WhatsApp l'acheteur répond naturellement à
+// l'oral, surtout quand il n'écrit pas facilement. Le bot ne sait pas l'écouter
+// (aucune transcription branchée) — il doit le DIRE, sinon le message tombe dans
+// le parcours avec un texte vide : « Merci d'indiquer un nombre d'articles » sur
+// un vocal est incompréhensible, et hors checkout ça consommait un appel IA sur
+// une question vide.
+const MEDIA_PHRASE = {
+  AUDIO: 'écouter les messages vocaux',
+  VOICE: 'écouter les messages vocaux',
+  PTT: 'écouter les messages vocaux',
+  VIDEO: 'regarder les vidéos',
+  IMAGE: 'lire les images',
+  STICKER: 'lire les stickers',
+  DOCUMENT: 'lire les documents',
+  LOCATION: 'lire les positions partagées',
+  CONTACTS: 'lire les contacts partagés',
+};
+const txtMediaNonLu = (type) =>
+  `🙏 Désolé, je ne peux pas encore ${MEDIA_PHRASE[String(type || '').toUpperCase()] || 'lire ce type de message'}.\n\n_Écrivez-moi votre réponse en texte et je continue tout de suite._`;
+
 // ── Catalogue de boutique ──────────────────────────────────────────────────
 const TXT_BOUTIQUE_INTROUVABLE = (shopCode) =>
   `⚠️ Le code boutique ${shopCode} n'existe pas sur Validèl.\nVérifiez le lien reçu du vendeur.`;
@@ -661,6 +683,26 @@ const zoneRows = (code) => [
   ...DELIVERY_ZONES.map((zone, i) => ({ id: `co:z:${i}:${code}`, title: zone })),
   { id: `co:z:${ZONE_AUTRE}:${code}`, title: 'Autre quartier', description: 'Je précise moi-même' },
 ];
+
+// Re-pose la question de l'étape en cours, à l'identique. Utilisé quand un message
+// n'apporte rien d'exploitable (vocal, image) ou quand un vieux bouton est retapé :
+// dans les deux cas la dernière question est remontée loin dans le fil, et sans ce
+// rappel l'acheteur reste bloqué devant un parcours muet.
+async function replyRappelEtape(checkout, findProduct) {
+  if (checkout.step === 'zone') {
+    return { kind: 'list', body: TXT_DEMANDE_ZONE, buttonLabel: TXT_ZONE_BOUTON, rows: zoneRows(checkout.code) };
+  }
+  if (checkout.step === 'address') return { kind: 'text', body: TXT_DEMANDE_ADRESSE };
+  if (checkout.step === 'wallet') return replyDemandeWallet(checkout.code);
+  if (checkout.step === 'creating') return { kind: 'text', body: TXT_CHECKOUT_EN_COURS };
+  // Les deux premières étapes citent le produit (nom, prix, total) : sans lui on
+  // ne peut pas reconstruire la question, on laisse l'appelant décider.
+  const produit = await findProduct(checkout.code);
+  if (!produit) return null;
+  if (checkout.step === 'quantity') return { kind: 'text', body: txtDemandeQuantite(produit) };
+  if (checkout.step === 'name') return { kind: 'text', body: txtDemandeNom(produit, checkout.quantity || 1) };
+  return null;
+}
 
 // Parcours perdu (expiré, ou état effacé par un redémarrage) : on ne bloque jamais
 // l'acheteur, on lui redonne le lien de paiement web.
@@ -891,6 +933,7 @@ async function decideReplies(parsed, deps) {
   const askProductQuestion = (deps && deps.askProductQuestion) || askProductQuestionAI;
   const createGuestOrder = (deps && deps.createGuestOrder) || defaultCreateGuestOrder;
   const initiatePayment = (deps && deps.initiatePayment) || defaultInitiatePayment;
+  const readPayment = (deps && deps.readPaymentStatus) || ((context) => readPaymentStatus(supabase, context));
   const phone = parsed.from;
   // Numéro business qui a reçu le message (prod ou démo) : sert à répondre depuis
   // ce numéro ET à le figer sur la commande créée dans le chat.
@@ -900,6 +943,45 @@ async function decideReplies(parsed, deps) {
   const demoContext = isDemoBotNumber(botNumber);
   const findProduct = (code) => baseFindProduct(code, { allowDemo: demoContext || DEMO_PRODUCT_PUBLIC });
   const findShop = (shopCode) => baseFindShop(shopCode, { allowDemo: demoContext || DEMO_PRODUCT_PUBLIC });
+
+  // Prioritaire sur les codes produit et l'IA, même sans contexte ou après expiration.
+  // Les boutons de checkout restent gérés par leur parcours déterministe.
+  if (!parsed.buttonId && concernsPayment(parsed.text)) {
+    const state = phone ? await getConvState(phone) : null;
+    const choosingWallet = CHAT_CHECKOUT && checkoutActive(state)
+      && state.checkout.step === 'wallet' && walletFromText(parsed.text);
+    if (!choosingWallet) {
+      return [{ kind: 'text', body: await paymentReply(readPayment, {
+        phone, text: parsed.text, productCode: state?.productCode,
+      }) }];
+    }
+  }
+
+  // 0) Message sans rien de lisible : vocal, image, sticker, position…
+  // Traité AVANT tout le reste. Sinon le message descendait dans le parcours avec
+  // un texte vide et récoltait une réponse absurde (« Merci d'indiquer un nombre
+  // d'articles » sur un vocal), ou brûlait un appel IA sur une question vide.
+  if (!parsed.buttonId && !String(parsed.text || '').trim()) {
+    const avis = txtMediaNonLu(parsed.type);
+    const state = phone ? await getConvState(phone) : null;
+
+    // Parcours en cours -> on redit où on en est, sinon l'acheteur reste bloqué.
+    if (CHAT_CHECKOUT && checkoutActive(state)) {
+      const rappel = await replyRappelEtape(state.checkout, findProduct);
+      // Le rappel est souvent une liste ou des boutons : impossible de le fusionner
+      // avec l'avis, WhatsApp n'accepte qu'un seul corps par message interactif.
+      return rappel ? [{ kind: 'text', body: avis }, rappel] : [{ kind: 'text', body: avis }];
+    }
+
+    const produitActif = state && state.productCode
+      && (Date.now() - (state.updatedAt || 0)) < PRODUCT_CONTEXT_TTL_MS
+      ? state.productCode
+      : null;
+    if (produitActif) {
+      return [{ kind: 'buttons', body: avis, buttons: [btnPayer(produitActif), btnAutresQuestions(produitActif)] }];
+    }
+    return [{ kind: 'text', body: `${avis}\n\n${TXT_AUCUN_CODE}` }];
+  }
 
   // 1) Réponse à un bouton interactif
   if (parsed.buttonId) {
@@ -946,6 +1028,16 @@ async function decideReplies(parsed, deps) {
 
       if (kind === 'z') {
         if (perdu) return repliesCheckoutPerdu(code, findProduct);
+        // Bouton PÉRIMÉ : une liste WhatsApp reste tapable indéfiniment dans le fil.
+        // Un appui sur « Autre quartier » alors que l'adresse était déjà donnée
+        // ramenait le parcours à l'étape 3 — l'acheteur repartait en arrière sans
+        // comprendre pourquoi. On ne recule JAMAIS : on redit l'étape en cours.
+        // 'address' reste accepté : c'est une correction légitime (on a tapé
+        // « Autre quartier » par erreur et on choisit finalement un quartier listé).
+        if (state.checkout.step !== 'zone' && state.checkout.step !== 'address') {
+          const rappel = await replyRappelEtape(state.checkout, findProduct);
+          return rappel ? [rappel] : repliesCheckoutPerdu(code, findProduct);
+        }
         const zoneKey = parts[2];
         // « Autre quartier » : le seul cas où l'on demande encore une saisie libre.
         if (zoneKey === ZONE_AUTRE) {
@@ -961,8 +1053,14 @@ async function decideReplies(parsed, deps) {
       }
 
       if (!WALLETS[kind] || perdu) return repliesCheckoutPerdu(code, findProduct);
-      if (state.checkout.step === 'creating') {
-        return [{ kind: 'text', body: TXT_CHECKOUT_EN_COURS }];
+      // Même garde de péremption que pour les quartiers. Un vieux bouton wallet
+      // retapé après un redémarrage du parcours (« Payer en sécurité » de nouveau
+      // -> retour à l'étape quantité) aurait créé une commande sans nom ni adresse.
+      // Couvre aussi l'étape 'creating' : replyRappelEtape renvoie « un instant… »,
+      // ce qui garde le verrou anti double-commande.
+      if (state.checkout.step !== 'wallet') {
+        const rappel = await replyRappelEtape(state.checkout, findProduct);
+        return rappel ? [rappel] : repliesCheckoutPerdu(code, findProduct);
       }
       return finalizeCheckout({
         phone, checkout: state.checkout, walletKey: kind,
@@ -1073,6 +1171,13 @@ async function decideReplies(parsed, deps) {
           console.error('[WABOT] Erreur réponse IA:', e && e.message);
         }
         if (answer) {
+          // Défense supplémentaire : une réponse produit parlant d'argent ne part
+          // jamais telle quelle, même si la formulation entrante a échappé au filtre.
+          if (concernsPayment(answer)) {
+            return [{ kind: 'text', body: await paymentReply(readPayment, {
+              phone, text: parsed.text, productCode: state.productCode,
+            }) }];
+          }
           return [{
             kind: 'buttons',
             body: answer.slice(0, 1024),
@@ -1083,7 +1188,7 @@ async function decideReplies(parsed, deps) {
     }
   }
 
-  // Note : « j'ai payé », « bonjour » sans produit actif, etc. tombent ici. On NE
+  // Les messages sans produit actif et sans demande de paiement tombent ici. On NE
   // change aucun statut, on invite simplement à envoyer un code. (Règle centrale.)
   return [{ kind: 'text', body: TXT_AUCUN_CODE }];
 }
@@ -1232,6 +1337,8 @@ async function askProductQuestionAI(produit, question) {
     'qu\'il faut TOUJOURS payer via Validèl — payer le vendeur en dehors de Validèl fait perdre',
     'toute protection et Validèl ne pourra rien faire en cas de problème.',
     'Ne demande et ne discute JAMAIS de code secret, mot de passe ou code PIN Wave/Orange Money.',
+    'Tu ne connais AUCUN statut de commande ou de paiement. Une déclaration du client ne prouve rien.',
+    'Ne confirme JAMAIS un paiement, un débit, un remboursement ni la réception ou la sécurisation de fonds.',
     'Réponds en français, 2 à 3 phrases maximum, ton chaleureux et direct, texte simple (pas de #).',
     'Termine TOUJOURS par une affirmation complète et autonome. Ne pose JAMAIS de question de',
     'relance en fin de réponse (pas de "c\'est bon pour toi ?", "voulez-vous que...", "avez-vous',
@@ -1577,6 +1684,7 @@ function createBot(deps = {}) {
       askProductQuestion,
       createGuestOrder,
       initiatePayment,
+      readPaymentStatus: deps.readPaymentStatus,
     });
     for (const action of actions) {
       // Répondre DEPUIS le numéro qui a reçu le message (parsed.to) -> routage

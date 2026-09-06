@@ -49,14 +49,14 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
           // Dispatch a synthetic online event to allow listeners to update
           if (typeof window !== 'undefined') window.dispatchEvent(new Event('online'));
         } else {
-          toast({ title: 'Problème serveur', description: 'Impossible d\'atteindre le serveur. Réessayez plus tard.', variant: 'destructive' });
+          toast({ title: 'Problème serveur', description: 'Veuillez vérifier votre connexion et réessayer.', variant: 'destructive' });
         }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         if (err && err.name === 'AbortError') {
-          toast({ title: 'Délai dépassé', description: 'La vérification a pris trop de temps. Vérifiez votre connexion et réessayez.', variant: 'destructive' });
+          toast({ title: 'Délai dépassé', description: 'La vérification a pris trop de temps. Veuillez vérifier votre connexion et réessayer.', variant: 'destructive' });
         } else {
-          toast({ title: 'Échec', description: `Impossible de contacter le serveur (${String(err?.message || err)}).`, variant: 'destructive' });
+          toast({ title: 'Échec', description: 'Veuillez vérifier votre connexion et réessayer.', variant: 'destructive' });
         }
       }
     } finally {

@@ -24,35 +24,19 @@ const StatsCard: React.FC<StatsCardProps> = ({
   className
 }) => {
   const colorConfig = {
-    vendor: {
-      bg: 'from-black to-neutral-800',
-      text: 'text-black',
-      bgLight: 'bg-black/5'
-    },
-    buyer: {
-      bg: 'from-black to-neutral-800', 
-      text: 'text-black',
-      bgLight: 'bg-black/5'
-    },
-    delivery: {
-      bg: 'from-black to-neutral-800',
-      text: 'text-black', 
-      bgLight: 'bg-black/5'
-    },
-    default: {
-      bg: 'from-gray-500 to-gray-600',
-      text: 'text-gray-600',
-      bgLight: 'bg-gray-50'
-    }
+    vendor: { bg: 'bg-primary', text: 'text-foreground', bgLight: 'bg-muted' },
+    buyer: { bg: 'bg-primary', text: 'text-foreground', bgLight: 'bg-muted' },
+    delivery: { bg: 'bg-primary', text: 'text-foreground', bgLight: 'bg-muted' },
+    default: { bg: 'bg-primary', text: 'text-muted-foreground', bgLight: 'bg-muted' }
   };
 
   const config = colorConfig[color];
 
   const getTrendColor = (trend: 'up' | 'down' | 'neutral') => {
     switch (trend) {
-      case 'up': return 'text-black';
-      case 'down': return 'text-red-600';
-      case 'neutral': return 'text-gray-600';
+      case 'up': return 'text-success';
+      case 'down': return 'text-destructive';
+      case 'neutral': return 'text-muted-foreground';
     }
   };
 
@@ -65,22 +49,22 @@ const StatsCard: React.FC<StatsCardProps> = ({
   };
 
   return (
-    <Card className={cn("hover:shadow-lg transition-all duration-300", className)}>
+    <Card className={cn("hover:shadow-premium transition-all duration-300", className)}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-gray-600">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
         </CardTitle>
         <div className={cn(
-          "h-10 w-10 rounded-lg flex items-center justify-center bg-gradient-to-br shadow-sm",
+          "h-10 w-10 rounded-xl flex items-center justify-center shadow-premium-sm",
           config.bg
         )}>
-          <Icon className="h-5 w-5 text-white" />
+          <Icon className="h-5 w-5 text-primary-foreground" />
         </div>
       </CardHeader>
-      
+
       <CardContent>
         <div className="flex items-baseline justify-between">
-          <div className="text-2xl font-bold text-gray-900">
+          <div className="text-2xl font-bold text-foreground">
             {value}
           </div>
           

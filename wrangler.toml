@@ -1,0 +1,12 @@
+name = "validele-shop"
+compatibility_date = "2024-01-01"
+
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+[env.preview]
+vars = { ENVIRONMENT = "preview" }
+
+[[env.production.routes]]
+pattern = "validel.shop/*"
+zone_name = "validel.shop"

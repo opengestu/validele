@@ -18,7 +18,7 @@ interface UserProfile {
   email: string;
   full_name: string | null;
   phone?: string | null;
-  role: 'buyer' | 'vendor' | 'delivery';
+  role: 'buyer' | 'vendor' | 'delivery' | 'admin';
   company_name?: string | null;
   address?: string | null;
   vehicle_info?: string | null;
