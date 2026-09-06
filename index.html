@@ -22,7 +22,7 @@
             // Même texte que src/lib/whatsappBot.ts (buildBotPrefillText) — sans
             // emoji (source du mojibake) ; accents latins OK via encodeURIComponent.
             var text = 'Bonjour ! Pour acheter ce produit (code ' + code +
-              ') en toute securite avec Validèl, appuyez sur Envoyer pour commencer.';
+              ') en toute sécurité avec Validèl, appuyez sur « Envoyer » pour commencer.';
             location.replace('https://wa.me/' + bot + '?text=' + encodeURIComponent(text));
           }
         } catch (e) { /* en cas de souci, on laisse ProductGoRedirect (React) gérer */ }

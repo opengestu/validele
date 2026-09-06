@@ -14,7 +14,7 @@ export const WHATSAPP_BOT_NUMBER =
   String(import.meta.env.VITE_WHATSAPP_BOT_NUMBER || '').replace(/\D/g, '') || '221768171175';
 
 export const buildBotPrefillText = (productCode: string) =>
-  `Bonjour ! Pour acheter ce produit (code ${productCode}) en toute securite avec Validèl, appuyez sur Envoyer pour commencer.`;
+  `Bonjour ! Pour acheter ce produit (code ${productCode}) en toute sécurité avec Validèl, appuyez sur « Envoyer » pour commencer.`;
 
 // Lien wa.me direct vers le bot, phrase complète pré-remplie : intercepté
 // nativement par WhatsApp, aucun passage par le web. Long à l'affichage ->

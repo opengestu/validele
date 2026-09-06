@@ -33,6 +33,6 @@ export async function onRequestGet(context) {
   // Texte volontairement sans emoji (source du mojibake « � ») ; les accents
   // latins sont sûrs (encodeURIComponent -> %XX ASCII). Même texte que
   // buildBotPrefillText (src/lib/whatsappBot.ts) — à garder alignés.
-  const text = `Bonjour ! Pour acheter ce produit (code ${code}) en toute securite avec Validèl, appuyez sur Envoyer pour commencer.`;
+  const text = `Bonjour ! Pour acheter ce produit (code ${code}) en toute sécurité avec Validèl, appuyez sur « Envoyer » pour commencer.`;
   return Response.redirect(`https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent(text)}`, 302);
 }
