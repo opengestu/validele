@@ -7404,18 +7404,45 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
         amount: order.total_amount,
       };
 
+      // Compatibilité avec les deux stockages actuellement utilisés :
+      // l'application écrit surtout `profiles.push_token`, tandis que certaines
+      // anciennes routes écrivent dans `push_tokens`. La table déployée ne possède
+      // pas toujours `is_active`, donc on lit les lignes puis on filtre si le champ existe.
+      const getDeliveryPushTokens = async (userId) => {
+        if (!userId) return [];
+        const tokens = [];
+        const { data: tokenRows, error: tokenRowsError } = await dbClient
+          .from('push_tokens')
+          .select('*')
+          .eq('user_id', userId);
+        if (tokenRowsError) {
+          console.warn('[MARK-DELIVERED] Lecture push_tokens impossible:', tokenRowsError.message);
+        } else {
+          for (const row of tokenRows || []) {
+            if (row?.is_active !== false && typeof row?.token === 'string' && row.token) tokens.push(row.token);
+          }
+        }
+        const { data: profile, error: profileError } = await dbClient
+          .from('profiles')
+          .select('push_token')
+          .eq('id', userId)
+          .maybeSingle();
+        if (profileError) {
+          console.warn('[MARK-DELIVERED] Lecture profiles.push_token impossible:', profileError.message);
+        } else if (typeof profile?.push_token === 'string' && profile.push_token) {
+          tokens.push(profile.push_token);
+        }
+        return [...new Set(tokens)];
+      };
+
       // Notification à l'acheteur
       if (order.buyer_id) {
-        const { data: buyerTokens } = await dbClient
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', order.buyer_id)
-          .eq('is_active', true);
+        const buyerTokens = await getDeliveryPushTokens(order.buyer_id);
 
-        if (buyerTokens && buyerTokens.length > 0) {
+        if (buyerTokens.length > 0) {
           const notif = getNotificationTemplate('ORDER_DELIVERED', notifData);
 
-          for (const { token } of buyerTokens) {
+          for (const token of buyerTokens) {
             await sendPushNotification(token, notif.title, notif.body, notif.data);
           }
           console.log('[MARK-DELIVERED] Notification acheteur envoyée');
@@ -7426,16 +7453,12 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
       // Auparavant il recevait PAYOUT_REQUESTED, qui ne mentionnait pas la livraison
       // et affichait « Montant: undefined FCFA » faute de `amount`.
       if (order.vendor_id) {
-        const { data: vendorTokens } = await dbClient
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', order.vendor_id)
-          .eq('is_active', true);
+        const vendorTokens = await getDeliveryPushTokens(order.vendor_id);
 
-        if (vendorTokens && vendorTokens.length > 0) {
+        if (vendorTokens.length > 0) {
           const notif = getNotificationTemplate('ORDER_DELIVERED_VENDOR', notifData);
 
-          for (const { token } of vendorTokens) {
+          for (const token of vendorTokens) {
             await sendPushNotification(token, notif.title, notif.body, notif.data);
           }
           console.log('[MARK-DELIVERED] Notification vendeur envoyée');

@@ -9,7 +9,7 @@
     "dev": "nodemon server.js",
     "test:wabot": "node tests/whatsapp-bot.test.js",
     "test:meta": "node tests/meta-whatsapp.test.js",
-    "test:wabot:all": "node tests/whatsapp-bot.test.js && node tests/meta-whatsapp.test.js && node --test tests/bot-payment-status.test.js && node tests/pixpay-redirect.test.js"
+    "test:wabot:all": "node tests/whatsapp-bot.test.js && node tests/meta-whatsapp.test.js && node tests/direct7-whatsapp-report.test.js && node --test tests/bot-payment-status.test.js && node tests/pixpay-redirect.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",

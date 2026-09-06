@@ -11,6 +11,9 @@ const DIRECT7_API_URL = process.env.D7_SMS_URL || 'https://api.d7networks.com/me
 // ✅ Confirmé le 2026-07-20 sur le compte réel (numéro 221768171175) : l'envoi interactif passe bien
 // par cette v2 (réponse status: 'accepted'). Reste surchargeable via env par sécurité.
 const D7_WHATSAPP_URL = process.env.D7_WHATSAPP_URL || 'https://api.d7networks.com/whatsapp/v2/send';
+const D7_WHATSAPP_REPORT_URL = String(
+  process.env.D7_WHATSAPP_REPORT_URL || 'https://api.d7networks.com/whatsapp/v2/report'
+).replace(/\/+$/, '');
 // Originator WhatsApp = le NUMÉRO WhatsApp Business enregistré (format international sans +),
 // distinct du sender ID SMS alphanumérique (D7_OTP_ORIGINATOR = 'VALIDEL').
 const WHATSAPP_BOT_ORIGINATOR = process.env.WHATSAPP_BOT_NUMBER || process.env.D7_WHATSAPP_ORIGINATOR || '';
@@ -23,6 +26,25 @@ const WHATSAPP_BOT_ORIGINATOR = process.env.WHATSAPP_BOT_NUMBER || process.env.D
 function resolveWhatsAppOriginator(from) {
   const explicit = String(from || '').replace(/\D/g, '');
   return explicit || WHATSAPP_BOT_ORIGINATOR;
+}
+
+// Une URL de rapport explicite garantit que les accusés delivered/read arrivent
+// sur ce backend même si le callback global du compte D7 est absent ou a changé.
+function resolveWhatsAppReportUrl() {
+  const explicit = String(process.env.D7_WHATSAPP_CALLBACK_URL || '').trim();
+  if (explicit) return explicit;
+
+  const base = String(
+    process.env.PUBLIC_API_BASE_URL || process.env.PIXPAY_IPN_BASE_URL || ''
+  ).trim().replace(/\/+$/, '');
+  const secret = String(process.env.WHATSAPP_WEBHOOK_SECRET || '').trim();
+  if (!base || !secret) return null;
+  return `${base}/api/whatsapp/webhook/${encodeURIComponent(secret)}`;
+}
+
+function withWhatsAppReportUrl(messagePayload) {
+  const reportUrl = resolveWhatsAppReportUrl();
+  return reportUrl ? { ...messagePayload, report_url: reportUrl } : messagePayload;
 }
 
 const D7_OTP_PROVIDER_ENABLED = String(process.env.D7_OTP_PROVIDER_ENABLED || 'true').toLowerCase() === 'true';
@@ -314,7 +336,7 @@ async function sendWhatsApp(phone, message, from) {
       D7_WHATSAPP_URL,
       {
         messages: [
-          {
+          withWhatsAppReportUrl({
             originator,
             recipients: [
               { recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' },
@@ -323,7 +345,7 @@ async function sendWhatsApp(phone, message, from) {
               message_type: 'TEXT',
               text: { preview_url: false, body: String(message || '') },
             },
-          },
+          }),
         ],
       },
       {
@@ -372,7 +394,7 @@ async function postD7Whatsapp(messagePayload) {
   try {
     const response = await axios.post(
       D7_WHATSAPP_URL,
-      { messages: [messagePayload] },
+      { messages: [withWhatsAppReportUrl(messagePayload)] },
       { headers: { ...getAuthHeaders() } }
     );
     console.log('[DIRECT7] WhatsApp interactif envoyé:', response.data);
@@ -382,6 +404,18 @@ async function postD7Whatsapp(messagePayload) {
     console.error('[DIRECT7] Erreur envoi WhatsApp interactif:', apiData || error?.message || error);
     throw new Error(apiData?.message || error?.message || "Erreur lors de l'envoi WhatsApp interactif");
   }
+}
+
+// Vérification de secours côté API D7. Elle protège contre un webhook DLR perdu :
+// avant de facturer un SMS, le reconciler relit le statut réel du WhatsApp.
+async function getWhatsAppReport(requestId) {
+  if (!DIRECT7_API_KEY) throw new Error('DIRECT7_API_KEY non configurée');
+  if (!requestId) throw new Error('requestId WhatsApp requis');
+  const response = await axios.get(
+    `${D7_WHATSAPP_REPORT_URL}/${encodeURIComponent(String(requestId))}`,
+    { headers: { ...getAuthHeaders() } }
+  );
+  return response.data;
 }
 
 // Envoi d'un message avec 1 à 3 boutons de réponse rapide.
@@ -716,5 +750,7 @@ module.exports = {
   sendWhatsAppButtons,
   sendWhatsAppCtaUrl,
   sendWhatsAppList,
-  sendWhatsAppTemplate
+  sendWhatsAppTemplate,
+  getWhatsAppReport,
+  resolveWhatsAppReportUrl
 };

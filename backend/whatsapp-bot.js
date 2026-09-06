@@ -272,7 +272,28 @@ function parseD7StatusEvent(body) {
 // Statuts D7 signifiant "ce WhatsApp n'arrivera jamais" (rejet opérateur/Meta,
 // échec de remise). Différent d'un simple "non lu" : il n'y a rien à attendre,
 // donc on n'observe pas les 10 min de délai avant le SMS de secours.
-const D7_FAILED_STATUSES = new Set(['rejected', 'failed', 'undelivered']);
+const D7_FAILED_STATUSES = new Set([
+  'rejected', 'failed', 'undelivered', 'un_delivered', 'dropped', 'insufficient_credit',
+]);
+
+function collectD7ReportStatuses(report) {
+  const candidates = [
+    report && report.status,
+    report && report.data && report.data.status,
+    ...((report && Array.isArray(report.messages)) ? report.messages.map((m) => m && m.status) : []),
+    ...((report && report.data && Array.isArray(report.data.messages))
+      ? report.data.messages.map((m) => m && m.status)
+      : []),
+  ];
+  return candidates
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function d7ReportConfirmsDelivery(report) {
+  const statuses = collectD7ReportStatuses(report);
+  return statuses.includes('delivered') || statuses.includes('read');
+}
 
 // ⚠️ À CONFIRMER sur un vrai payload D7 : la structure exacte d'une réponse de bouton
 // interactif n'est pas entièrement documentée. On teste plusieurs chemins connus.
@@ -1376,12 +1397,12 @@ async function askProductQuestionAI(produit, question) {
 }
 
 // ---------------------------------------------------------------------------
-// Notifications acheteur : WhatsApp d'abord, SMS de secours si non lu (10 min)
+// Notifications acheteur : WhatsApp d'abord, SMS si non remis au client (10 min)
 // ---------------------------------------------------------------------------
 // Règle commune (livraison, remboursement…) : WhatsApp d'abord, JAMAIS WhatsApp
 // + SMS en même temps. On envoie le WhatsApp, on trace le request_id renvoyé par
-// D7 + le SMS de secours à envoyer. Si D7 confirme "read" (parseD7StatusEvent) ->
-// pas de SMS. Sinon, le reconciler périodique envoie le SMS après 10 min, une
+// D7 + le SMS de secours à envoyer. Si D7 confirme "delivered" ou "read" -> pas
+// de SMS. Sinon, le reconciler périodique envoie le SMS après 10 min, une
 // seule fois (sms_sent). Le texte SMS est stocké par notif -> mécanisme réutilisable.
 const DELIVERY_READ_FALLBACK_DELAY_MS = 10 * 60 * 1000;
 
@@ -1469,7 +1490,7 @@ async function markDeliveryNotificationRead(requestId) {
       .eq('request_id', requestId)
       .is('read_at', null);
     if (error) console.warn('[WABOT] markDeliveryNotificationRead erreur:', error.message);
-    else console.log('[WABOT] WhatsApp lu, SMS de secours annulé pour request_id:', requestId);
+    else console.log('[WABOT] WhatsApp remis au client, SMS de secours annulé pour request_id:', requestId);
   } catch (e) {
     console.warn('[WABOT] markDeliveryNotificationRead exception:', e && e.message);
   }
@@ -1499,7 +1520,7 @@ async function resolveOrderBotNumber(orderId) {
 }
 
 // Notification "en cours de livraison" : WhatsApp d'abord (template approuvé si
-// configuré, sinon message libre), SMS de secours si non lu après 10 min.
+// configuré, sinon message libre), SMS de secours si non remis après 10 min.
 // Appelée depuis server.js (mark-in-delivery). `botNumber` explicite prioritaire
 // (tests / appelant qui a déjà la commande en main) ; sinon relu sur la commande.
 async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, botNumber }) {
@@ -1542,7 +1563,7 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
 }
 
 // Notification "remboursement effectué" : WhatsApp d'abord (message libre, pas de
-// template dédié), SMS de secours si non lu après 10 min. Appelée depuis server.js
+// template dédié), SMS de secours si non remis après 10 min. Appelée depuis server.js
 // (approbation admin d'un remboursement). walletLabel = 'Wave' / 'Orange Money'.
 async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, walletLabel, botNumber }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
@@ -1560,8 +1581,9 @@ async function notifyRefundProcessedWithFallback({ orderId, buyerPhone, amount, 
 }
 
 // Reconciler : envoie un SMS de secours pour tout WhatsApp "en cours de livraison"
-// non lu après 10 minutes. Ne renvoie JAMAIS 2 fois (sms_sent) et respecte la
-// lecture confirmée par D7 entre-temps (read_at renseigné par le webhook).
+// non remis après 10 minutes. Ne renvoie JAMAIS 2 fois (sms_sent) et respecte la
+// remise confirmée par D7 entre-temps. `read_at` est conservé comme nom historique
+// de la colonne, mais signifie désormais « livré ou lu, donc aucun SMS requis ».
 async function runDeliveryReadFallbackCheck() {
   if (!supabase) return;
   try {
@@ -1579,7 +1601,36 @@ async function runDeliveryReadFallbackCheck() {
     }
     for (const row of rows || []) {
       try {
-        await sendFallbackSmsForRow(row, 'WhatsApp non lu après 10 min');
+        // Le webhook D7 peut être perdu ou mal configuré. L'API de rapport reste
+        // la source de vérité : si elle dit "delivered" ou "read", on annule le SMS
+        // read_at. Si la vérification échoue, on attend le prochain passage plutôt
+        // que de dépenser un SMS alors que le WhatsApp a peut-être été lu.
+        let report;
+        try {
+          const { getWhatsAppReport } = require('./direct7');
+          report = await getWhatsAppReport(row.request_id);
+        } catch (reportError) {
+          console.warn('[WABOT] Statut WhatsApp D7 indisponible, SMS différé pour', row.request_id, ':', reportError && reportError.message);
+          continue;
+        }
+        if (d7ReportConfirmsDelivery(report)) {
+          await markDeliveryNotificationRead(row.request_id);
+          continue;
+        }
+
+        // Relire la ligne juste avant l'envoi ferme la fenêtre entre la sélection
+        // initiale et un éventuel accusé "read" arrivé pendant l'appel à D7.
+        const { data: current, error: currentError } = await supabase
+          .from('whatsapp_delivery_read_tracking')
+          .select('request_id')
+          .eq('request_id', row.request_id)
+          .is('read_at', null)
+          .eq('sms_sent', false)
+          .maybeSingle();
+        if (currentError) throw currentError;
+        if (!current) continue;
+
+        await sendFallbackSmsForRow(row, 'WhatsApp non remis après 10 min');
       } catch (e) {
         console.error('[WABOT] Echec SMS de secours pour', row.buyer_phone, ':', e && e.message);
       }
@@ -1596,7 +1647,7 @@ if (String(process.env.ENABLE_WHATSAPP_READ_FALLBACK || 'true').toLowerCase() !=
     cron.schedule('*/2 * * * *', () => {
       runDeliveryReadFallbackCheck().catch((e) => console.error('[WABOT] Erreur reconciler fallback SMS:', e));
     });
-    console.log('[WABOT] Reconciler fallback SMS (livraison non lue après 10 min) actif, vérifié toutes les 2 min.');
+    console.log('[WABOT] Reconciler fallback SMS (WhatsApp non remis après 10 min) actif, vérifié toutes les 2 min.');
   } catch (e) {
     console.warn('[WABOT] node-cron indisponible, reconciler fallback SMS désactivé:', e && e.message);
   }
@@ -1668,7 +1719,7 @@ function createBot(deps = {}) {
     // Accusé de statut D7 (sent/delivered/read) -> pas un message, traité à part.
     const statusEvent = parseStatusEvent(body);
     if (statusEvent) {
-      if (statusEvent.status === 'read') {
+      if (statusEvent.status === 'delivered' || statusEvent.status === 'read') {
         await markRead(statusEvent.requestId);
       } else if (D7_FAILED_STATUSES.has(statusEvent.status)) {
         // Rejet/échec : inutile d'attendre les 10 min du reconciler, le WhatsApp
@@ -1744,6 +1795,8 @@ module.exports = {
   // exportés pour les tests
   parseD7Message,
   parseD7StatusEvent,
+  collectD7ReportStatuses,
+  d7ReportConfirmsDelivery,
   extractProductCode,
   extractShopCode,
   quantityFromText,

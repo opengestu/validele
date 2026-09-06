@@ -386,6 +386,13 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(bot.parseD7StatusEvent(inboundText('PD3431')), null);
   });
 
+  await test('rapport D7 livré ou lu -> le fallback SMS doit être annulé', () => {
+    assert.strictEqual(bot.d7ReportConfirmsDelivery({ messages: [{ status: 'read' }] }), true);
+    assert.strictEqual(bot.d7ReportConfirmsDelivery({ data: { messages: [{ status: 'READ' }] } }), true);
+    assert.strictEqual(bot.d7ReportConfirmsDelivery({ messages: [{ status: 'delivered' }] }), true);
+    assert.strictEqual(bot.d7ReportConfirmsDelivery({ messages: [{ status: 'sent' }] }), false);
+  });
+
   // Un accusé "read" marque la lecture (annule le SMS de secours) SANS déclencher
   // de réponse du bot (ce n'est pas un message, pas d'action à exécuter).
   await test('webhook accusé "read" -> markDeliveryNotificationRead appelé, aucune réponse envoyée', async () => {
@@ -397,13 +404,13 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(rec.sends.length, 0);
   });
 
-  // Un accusé "delivered" (pas "read") ne doit PAS annuler le fallback SMS.
-  await test('webhook accusé "delivered" -> markDeliveryNotificationRead NON appelé', async () => {
-    let called = false;
-    const markDeliveryNotificationRead = async () => { called = true; };
+  // Deux coches grises = message remis au téléphone : aucun SMS de secours.
+  await test('webhook accusé "delivered" -> fallback SMS annulé', async () => {
+    let markedRequestId = null;
+    const markDeliveryNotificationRead = async (requestId) => { markedRequestId = requestId; };
     const { b, rec } = makeBot({ markDeliveryNotificationRead });
     await b.processWebhook(inboundStatusEvent('req-789', 'delivered'));
-    assert.strictEqual(called, false);
+    assert.strictEqual(markedRequestId, 'req-789');
     assert.strictEqual(rec.sends.length, 0);
   });
 
