@@ -48,6 +48,47 @@ const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate
 
 const app = express();
 
+// Image publique d'un produit pour les canaux externes (notamment WhatsApp).
+// Les anciennes images sont enregistrées en data URL dans `products.image_url` :
+// cette route les transforme en vraie réponse HTTP sans exposer d'autre donnée.
+app.get('/api/products/:id/image', async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).send('Service indisponible');
+    const { data: product, error } = await supabase
+      .from('products')
+      .select('image_url, is_available')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!product || product.is_available === false || !product.image_url) {
+      return res.status(404).send('Image introuvable');
+    }
+
+    const imageUrl = String(product.image_url);
+    if (/^https:\/\//i.test(imageUrl)) {
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.redirect(302, imageUrl);
+    }
+
+    const match = imageUrl.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
+    if (!match) return res.status(404).send('Format image non pris en charge');
+    const bytes = Buffer.from(match[2], 'base64');
+    if (!bytes.length || bytes.length > 3 * 1024 * 1024) {
+      return res.status(413).send('Image trop volumineuse');
+    }
+    res.set({
+      'Content-Type': match[1].toLowerCase(),
+      'Content-Length': String(bytes.length),
+      'Cache-Control': 'public, max-age=300',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.send(bytes);
+  } catch (error) {
+    console.error('[PRODUCT-IMAGE] Erreur lecture image:', error?.message || error);
+    return res.status(500).send('Erreur serveur');
+  }
+});
+
 // Verbose admin logs are disabled by default to avoid log flooding under polling traffic.
 const ADMIN_VERBOSE_LOGS = String(process.env.ADMIN_VERBOSE_LOGS || '').toLowerCase() === 'true';
 const adminVerboseLog = (...args) => {

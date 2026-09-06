@@ -40,6 +40,9 @@ const DELIVERY_TEMPLATE_URL_DYNAMIC =
 
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || '';
 const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://www.validel.shop').replace(/\/+$/, '');
+const PUBLIC_API_BASE_URL = String(
+  process.env.PUBLIC_API_BASE_URL || process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'
+).replace(/\/+$/, '');
 // Frais de protection acheteur (SANS rapport avec la commission vendeur, gérée
 // séparément par un admin au moment du payout). Défaut 0 = pas de frais surprise
 // si la variable n'est pas réglée ; réglable à tout moment via Render, lu en
@@ -296,7 +299,7 @@ async function trouverProduit(code, { allowDemo = false } = {}) {
   if (!supabase || !code) return null;
   const { data: product, error } = await supabase
     .from('products')
-    .select('id, name, price, code, is_available, vendor_id, description, is_demo')
+    .select('id, name, price, code, is_available, vendor_id, description, image_url, is_demo')
     .ilike('code', code)
     .maybeSingle();
   if (error) {
@@ -332,6 +335,14 @@ async function trouverProduit(code, { allowDemo = false } = {}) {
     vendeurQuartier,
     vendeurPhone,
     description: product.description || '',
+    // Les fichiers choisis dans l'app sont historiquement stockés en data URL.
+    // WhatsApp exige une URL HTTPS accessible : le serveur les expose donc via
+    // une route publique en lecture seule. Une URL HTTPS existante reste directe.
+    imageUrl: /^https:\/\//i.test(String(product.image_url || ''))
+      ? product.image_url
+      : (/^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(String(product.image_url || ''))
+        ? `${PUBLIC_API_BASE_URL}/api/products/${encodeURIComponent(product.id)}/image`
+        : null),
     // Produit de démonstration : pilote la bannière de la fiche et l'arrêt du
     // parcours AVANT tout lien de paiement réel.
     isDemo: product.is_demo === true,
@@ -726,6 +737,7 @@ async function repliesFicheProduit(code, { phone, findProduct, setConvState }) {
     kind: 'buttons',
     body: ficheProduitText(produit),
     buttons: [btnPayer(produit.code), btnAutresQuestions(produit.code)],
+    ...(produit.imageUrl ? { headerImageUrl: produit.imageUrl } : {}),
   }];
 }
 

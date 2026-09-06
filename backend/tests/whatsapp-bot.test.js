@@ -202,6 +202,16 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.ok(rec.sends[0].body.includes('12 pots de yaourt'), 'la description doit apparaître dans la fiche');
   });
 
+  await test('fiche produit -> transmet l’image publique au message WhatsApp', async () => {
+    const imageUrl = 'https://api.validel.test/api/products/prod-1/image';
+    const { b, rec } = makeBot({
+      findProduct: async () => ({ ...FAKE, imageUrl }),
+    });
+    await b.processWebhook(inboundText('PD3431'));
+    assert.strictEqual(rec.sends[0].kind, 'buttons');
+    assert.strictEqual(rec.sends[0].headerImageUrl, imageUrl);
+  });
+
   // Crit. 8 : code inexistant -> avertissement, pas de crash
   await test('crit.8 PD9999 -> avertissement', async () => {
     const { b, rec } = makeBot();
