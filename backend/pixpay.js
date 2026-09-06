@@ -19,9 +19,46 @@ const PIXPAY_CONFIG = {
   // Configuration Wave PixPay
   wave_service_id: parseInt(process.env.PIXPAY_WAVE_SERVICE_ID || '211'),
   wave_business_name_id: process.env.PIXPAY_WAVE_BUSINESS_NAME_ID || '',
+  redirect_url: process.env.PIXPAY_REDIRECT_URL || '',
+  redirect_error_url: process.env.PIXPAY_REDIRECT_ERROR_URL || '',
   wave_redirect_url: process.env.PIXPAY_WAVE_REDIRECT_URL || '',
   wave_redirect_error_url: process.env.PIXPAY_WAVE_REDIRECT_ERROR_URL || ''
 };
+
+const PIXPAY_PUBLIC_WEB_URL = String(
+  process.env.PIXPAY_PUBLIC_WEB_URL ||
+  process.env.PUBLIC_WEB_URL ||
+  process.env.FRONTEND_URL ||
+  process.env.VITE_PUBLIC_WEB_URL ||
+  'https://www.validel.shop'
+).replace(/\/+$/, '');
+
+function isUnsafeRedirectUrl(candidate) {
+  try {
+    const parsed = new URL(String(candidate || '').trim());
+    const host = parsed.hostname.toLowerCase();
+    if (!host || !['https:', 'http:'].includes(parsed.protocol.toLowerCase())) return true;
+    if (host === 'example.com' || host.endsWith('.example.com')) return true;
+    if (host.includes('your-frontend.domain')) return true;
+    if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && ['localhost', '127.0.0.1'].includes(host)) return true;
+    return false;
+  } catch (_) {
+    return true;
+  }
+}
+
+function resolvePixpayRedirectUrl(candidate, fallbackPath, orderId) {
+  const safeFrontend = isUnsafeRedirectUrl(PIXPAY_PUBLIC_WEB_URL)
+    ? 'https://www.validel.shop'
+    : PIXPAY_PUBLIC_WEB_URL;
+  let result = isUnsafeRedirectUrl(candidate)
+    ? `${safeFrontend}${fallbackPath}`
+    : String(candidate).trim();
+  if (orderId && !/[?&]order_id=/.test(result)) {
+    result += `${result.includes('?') ? '&' : '?'}order_id=${encodeURIComponent(orderId)}`;
+  }
+  return result;
+}
 
 // Service ID constants to avoid confusion
 const PIXPAY_SERVICE_IDS = {
@@ -53,7 +90,7 @@ console.log('[PIXPAY] Configuration chargée:', {
  * @returns {Promise<Object>} Réponse PixPay avec sms_link (lien web)
  */
 async function initiatePayment(params) {
-  const { amount, phone, orderId, customData = {} } = params;
+  const { amount, phone, orderId, successUrl, cancelUrl, customData = {} } = params;
 
   if (!PIXPAY_CONFIG.api_key) {
     throw new Error('PIXPAY_API_KEY non configurée');
@@ -76,6 +113,16 @@ async function initiatePayment(params) {
     api_key: PIXPAY_CONFIG.api_key,
     service_id: PIXPAY_CONFIG.service_id_client_payment, // CASHOUT (213) = client paie → argent entre chez nous
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
+    redirect_url: resolvePixpayRedirectUrl(
+      successUrl || PIXPAY_CONFIG.redirect_url || PIXPAY_CONFIG.wave_redirect_url,
+      '/payment-success',
+      orderId
+    ),
+    redirect_error_url: resolvePixpayRedirectUrl(
+      cancelUrl || PIXPAY_CONFIG.redirect_error_url || PIXPAY_CONFIG.wave_redirect_error_url,
+      '/payment-error',
+      orderId
+    ),
     custom_data: JSON.stringify({
       order_id: orderId,
       ...customData
@@ -92,7 +139,8 @@ async function initiatePayment(params) {
     phone: formattedPhone,
     orderId,
     service_id: PIXPAY_CONFIG.service_id_client_payment,
-    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`
+    ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
+    redirect_url: payload.redirect_url
   });
 
   try {
@@ -316,19 +364,21 @@ async function initiateWavePayment(params) {
 
   // Pour Wave, destination = numéro du client qui paie
   // Build redirect URL and append order_id so frontend can show invoice immediately
-  let redirectUrl = successUrl || PIXPAY_CONFIG.wave_redirect_url || undefined;
+  let redirectUrl = resolvePixpayRedirectUrl(
+    successUrl || PIXPAY_CONFIG.wave_redirect_url,
+    '/payment-success',
+    orderId
+  );
   console.log('[PIXPAY-WAVE] DEBUG - redirectUrl construction:', {
     successUrl,
     PIXPAY_CONFIG_wave_redirect_url: PIXPAY_CONFIG.wave_redirect_url,
     redirectUrl_before_orderId: redirectUrl
   });
-  if (redirectUrl && orderId) {
-    const hasOrderId = /[?&]order_id=/.test(redirectUrl);
-    if (!hasOrderId) {
-      redirectUrl = redirectUrl + (redirectUrl.includes('?') ? '&' : '?') + 'order_id=' + encodeURIComponent(orderId);
-    }
-  }
-  const redirectErrorUrl = cancelUrl || PIXPAY_CONFIG.wave_redirect_error_url || undefined;
+  const redirectErrorUrl = resolvePixpayRedirectUrl(
+    cancelUrl || PIXPAY_CONFIG.wave_redirect_error_url,
+    '/payment-error',
+    orderId
+  );
 
   console.log('[PIXPAY-WAVE] DEBUG - Final redirect URLs:', {
     redirectUrl,
@@ -439,5 +489,6 @@ module.exports = {
   initiateWavePayment,
   sendMoney,
   checkTransactionStatus,
-  PIXPAY_CONFIG
+  PIXPAY_CONFIG,
+  resolvePixpayRedirectUrl
 };
