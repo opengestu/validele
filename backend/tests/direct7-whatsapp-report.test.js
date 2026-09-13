@@ -35,6 +35,7 @@ const direct7 = require('../direct7');
       templateId: 'paiement_confirme_validel',
       language: 'fr',
       bodyParams: ['Peignoir', '10 000'],
+      urlButtonSuffix: 'order-123',
     });
 
     assert.strictEqual(calls.length, 3);
@@ -47,6 +48,10 @@ const direct7 = require('../direct7');
     assert.deepStrictEqual(
       calls[2].payload.messages[0].content.template.body_parameter_values,
       { 0: 'Peignoir', 1: '10 000' }
+    );
+    assert.deepStrictEqual(
+      calls[2].payload.messages[0].content.template.buttons.actions,
+      [{ action_index: '0', action_type: 'url', action_payload: 'order-123' }]
     );
     assert.strictEqual(
       calls[1].payload.messages[0].content.interactive.header.image.link,

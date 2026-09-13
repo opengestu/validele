@@ -2988,8 +2988,9 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
 
     const { sendWhatsAppCtaUrl, sendWhatsAppTemplate } = require('./direct7');
     const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
+    const apiBase = String(process.env.PUBLIC_API_BASE_URL || 'https://validele.onrender.com').replace(/\/+$/, '');
     const trackingUrl = `${webBase}/order/${orderId}`;
-    const qrImageUrl = order.qr_code ? `${webBase}/api/guest/order/${orderId}/qr.png` : null;
+    const qrImageUrl = order.qr_code ? `${apiBase}/api/guest/order/${orderId}/qr.png` : null;
     const amount = Number(order.total_amount || 0).toLocaleString('fr-FR');
     const body = `✅ Paiement confirmé pour *${productName}* (${amount} FCFA).\n\nVotre argent est protégé jusqu'à la réception. Suivez votre commande à tout moment.`;
     const paymentTemplateName = String(
@@ -3005,8 +3006,27 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
         templateId: paymentTemplateName,
         language: paymentTemplateLang,
         bodyParams: [productName, amount],
+        urlButtonSuffix: String(orderId),
         from: order.bot_number || undefined,
       });
+
+      // Le template garantit la livraison hors fenetre de 24 h. Une seconde carte
+      // affiche le QR reel lorsque la conversation est encore ouverte (cas normal
+      // d'un paiement lance depuis le bot). Son echec ne supprime pas la confirmation.
+      if (qrImageUrl) {
+        try {
+          await sendWhatsAppCtaUrl(
+            order.buyer_phone,
+            `Presentez ce QR code au livreur pour confirmer la reception de *${productName}*.`,
+            'Voir ma commande',
+            trackingUrl,
+            order.bot_number || undefined,
+            { headerImageUrl: qrImageUrl },
+          );
+        } catch (qrError) {
+          console.warn('[WHATSAPP] Envoi du QR de commande echoue (confirmation deja envoyee):', qrError?.message || qrError);
+        }
+      }
     } catch (templateError) {
       // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
       // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
