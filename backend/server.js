@@ -3000,18 +3000,6 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
     // Répondre depuis le numéro de bot où la commande a été passée (prod ou démo) ;
     // NULL (commande web/app) -> repli sur WHATSAPP_BOT_NUMBER.
     try {
-      await sendWhatsAppTemplate(order.buyer_phone, {
-        templateId: paymentTemplateName,
-        language: paymentTemplateLang,
-        bodyParams: [productName, amount],
-        urlButtonSuffix: String(orderId),
-        from: order.bot_number || undefined,
-      });
-
-    } catch (templateError) {
-      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
-      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
-      console.warn('[WHATSAPP] Template paiement confirmé refusé, repli message libre:', templateError?.message || templateError);
       await sendWhatsAppCtaUrl(
         order.buyer_phone,
         body,
@@ -3019,6 +3007,17 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
         trackingUrl,
         order.bot_number || undefined,
       );
+
+    } catch (ctaError) {
+      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
+      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
+      console.warn('[WHATSAPP] CTA paiement refusé, repli template statique:', ctaError?.message || ctaError);
+      await sendWhatsAppTemplate(order.buyer_phone, {
+        templateId: paymentTemplateName,
+        language: paymentTemplateLang,
+        bodyParams: [productName, amount],
+        from: order.bot_number || undefined,
+      });
     }
     console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
   } catch (waErr) {
