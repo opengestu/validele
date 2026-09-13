@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
+const QRCode = require('qrcode');
 const jwt = require('jsonwebtoken');
 // Supabase helper: createClient may be needed in some routes; also expose global `supabase`
 const { createClient } = require('@supabase/supabase-js');
@@ -85,6 +86,36 @@ app.get('/api/products/:id/image', async (req, res) => {
     return res.send(bytes);
   } catch (error) {
     console.error('[PRODUCT-IMAGE] Erreur lecture image:', error?.message || error);
+    return res.status(500).send('Erreur serveur');
+  }
+});
+
+// PNG du QR acheteur pour WhatsApp et la page publique de suivi. L'UUID de la
+// commande est un jeton non devinable ; le QR encode le secret attendu au scan.
+app.get('/api/guest/order/:id/qr.png', async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).send('Service indisponible');
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('qr_code')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!order?.qr_code) return res.status(404).send('QR code introuvable');
+
+    const png = await QRCode.toBuffer(String(order.qr_code), {
+      type: 'png', width: 640, margin: 3, errorCorrectionLevel: 'M',
+      color: { dark: '#111827', light: '#FFFFFFFF' },
+    });
+    res.set({
+      'Content-Type': 'image/png',
+      'Content-Length': String(png.length),
+      'Cache-Control': 'public, max-age=300',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.send(png);
+  } catch (error) {
+    console.error('[ORDER-QR] Erreur génération QR:', error?.message || error);
     return res.status(500).send('Erreur serveur');
   }
 });
@@ -2944,7 +2975,7 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
   try {
     const { data: order } = await supabase
       .from('orders')
-      .select('buyer_phone, total_amount, product_id, bot_number')
+      .select('buyer_phone, total_amount, product_id, bot_number, qr_code')
       .eq('id', orderId)
       .maybeSingle();
     if (!order?.buyer_phone) return;
@@ -2958,6 +2989,7 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
     const { sendWhatsAppCtaUrl, sendWhatsAppTemplate } = require('./direct7');
     const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
     const trackingUrl = `${webBase}/order/${orderId}`;
+    const qrImageUrl = order.qr_code ? `${webBase}/api/guest/order/${orderId}/qr.png` : null;
     const amount = Number(order.total_amount || 0).toLocaleString('fr-FR');
     const body = `✅ Paiement confirmé pour *${productName}* (${amount} FCFA).\n\nVotre argent est protégé jusqu'à la réception. Suivez votre commande à tout moment.`;
     const paymentTemplateName = String(
@@ -2969,17 +3001,24 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
     // Répondre depuis le numéro de bot où la commande a été passée (prod ou démo) ;
     // NULL (commande web/app) -> repli sur WHATSAPP_BOT_NUMBER.
     try {
+      await sendWhatsAppCtaUrl(
+        order.buyer_phone,
+        body,
+        'Suivre ma commande',
+        trackingUrl,
+        order.bot_number || undefined,
+        qrImageUrl ? { headerImageUrl: qrImageUrl } : {},
+      );
+    } catch (templateError) {
+      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
+      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
+      console.warn('[WHATSAPP] Template paiement confirmé refusé, repli message libre:', templateError?.message || templateError);
       await sendWhatsAppTemplate(order.buyer_phone, {
         templateId: paymentTemplateName,
         language: paymentTemplateLang,
         bodyParams: [productName, amount],
         from: order.bot_number || undefined,
       });
-    } catch (templateError) {
-      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
-      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
-      console.warn('[WHATSAPP] Template paiement confirmé refusé, repli message libre:', templateError?.message || templateError);
-      await sendWhatsAppCtaUrl(order.buyer_phone, body, 'Voir ma commande', trackingUrl, order.bot_number || undefined);
     }
     console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
   } catch (waErr) {

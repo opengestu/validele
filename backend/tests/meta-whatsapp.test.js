@@ -256,6 +256,15 @@ function makeMetaBot(extra = {}) {
     assert.strictEqual(i.action.parameters.url, 'https://pay.test/abc');
   });
 
+  await test('sendCtaUrl accepte un QR en en-tête', async () => {
+    captured.length = 0; stubAxios();
+    const qrUrl = 'https://www.validel.shop/api/guest/order/abc/qr.png';
+    await meta.sendCtaUrl(BUYER, 'Commande confirmée', 'Suivre ma commande', 'https://track.test/abc', DEMO_NUMBER, { headerImageUrl: qrUrl });
+    restoreAxios();
+    assert.strictEqual(captured[0].payload.interactive.header.type, 'image');
+    assert.strictEqual(captured[0].payload.interactive.header.image.link, qrUrl);
+  });
+
   await test('sendList : 10 lignes max + sections', async () => {
     captured.length = 0; stubAxios();
     const rows = Array.from({ length: 14 }, (_, k) => ({ id: `q${k}`, title: `Quartier ${k}` }));

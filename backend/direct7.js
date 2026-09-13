@@ -464,13 +464,9 @@ async function sendWhatsAppButtons(phone, bodyText, buttons, from, options = {})
 
 // Envoi d'un message avec un unique bouton CTA url (ouvre un lien). Ne se combine pas
 // avec des boutons de réponse -> message séparé (contrainte WhatsApp).
-async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url, from) {
-  return postD7Whatsapp({
-    originator: resolveWhatsAppOriginator(from),
-    recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
-    content: {
-      message_type: 'INTERACTIVE',
-      interactive: {
+async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url, from, options = {}) {
+  const build = (withHeader) => {
+    const interactive = {
         type: 'cta_url',
         body: { text: String(bodyText || '').slice(0, 1024) },
         action: {
@@ -480,9 +476,21 @@ async function sendWhatsAppCtaUrl(phone, bodyText, displayText, url, from) {
             url: String(url || ''),
           },
         },
-      },
-    },
-  });
+      };
+    if (withHeader) interactive.header = { type: 'image', image: { link: String(options.headerImageUrl) } };
+    return {
+      originator: resolveWhatsAppOriginator(from),
+      recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
+      content: { message_type: 'INTERACTIVE', interactive },
+    };
+  };
+  if (!options.headerImageUrl) return postD7Whatsapp(build(false));
+  try {
+    return await postD7Whatsapp(build(true));
+  } catch (e) {
+    console.warn('[DIRECT7] En-tête image CTA refusé, renvoi sans image:', e && e.message);
+    return postD7Whatsapp(build(false));
+  }
 }
 
 // Envoi d'un message LISTE (menu déroulant natif WhatsApp). Sert au choix du

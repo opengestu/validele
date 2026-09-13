@@ -180,10 +180,9 @@ async function sendButtons(phone, bodyText, buttons, from, options = {}) {
   }
 }
 
-async function sendCtaUrl(phone, bodyText, displayText, url, from) {
-  return postMeta(envelope(phone, {
-    type: 'interactive',
-    interactive: {
+async function sendCtaUrl(phone, bodyText, displayText, url, from, options = {}) {
+  const build = (withHeader) => {
+    const interactive = {
       type: 'cta_url',
       body: { text: String(bodyText || '').slice(0, 1024) },
       action: {
@@ -193,8 +192,17 @@ async function sendCtaUrl(phone, bodyText, displayText, url, from) {
           url: String(url || ''),
         },
       },
-    },
-  }), from);
+    };
+    if (withHeader) interactive.header = { type: 'image', image: { link: String(options.headerImageUrl) } };
+    return envelope(phone, { type: 'interactive', interactive });
+  };
+  if (!options.headerImageUrl) return postMeta(build(false), from);
+  try {
+    return await postMeta(build(true), from);
+  } catch (e) {
+    console.warn('[META] En-tête image CTA refusé, renvoi sans image:', e && e.message);
+    return postMeta(build(false), from);
+  }
 }
 
 // 10 lignes MAX toutes sections confondues, titre 24, description 72, bouton 20.
