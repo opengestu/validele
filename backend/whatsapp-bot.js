@@ -1521,6 +1521,22 @@ async function resolveOrderBotNumber(orderId) {
   }
 }
 
+async function resolveOrderQrImageUrl(orderId) {
+  if (!supabase || !orderId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('qr_code')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error || !data?.qr_code) return null;
+    return `${PUBLIC_API_BASE_URL}/api/guest/order/${encodeURIComponent(orderId)}/qr.png`;
+  } catch (e) {
+    console.warn('[WABOT] lecture QR commande impossible:', e && e.message);
+    return null;
+  }
+}
+
 // Notification "en cours de livraison" : WhatsApp d'abord (template approuvé si
 // configuré, sinon message libre), SMS de secours si non remis après 10 min.
 // Appelée depuis server.js (mark-in-delivery). `botNumber` explicite prioritaire
@@ -1528,12 +1544,20 @@ async function resolveOrderBotNumber(orderId) {
 async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, botNumber }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
   const from = botNumber !== undefined ? botNumber : await resolveOrderBotNumber(orderId);
+  const qrImageUrl = await resolveOrderQrImageUrl(orderId);
 
   // Message libre : ne part que dans la fenêtre 24h, mais sert de repli si le
   // template n'est pas configuré OU s'il échoue à l'envoi.
   const sendFreeForm = () => {
     const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
-    return sendWhatsAppCtaUrl(buyerPhone, body, 'Suivre ma commande', trackingUrl, from);
+    return sendWhatsAppCtaUrl(
+      buyerPhone,
+      body,
+      'Suivre ma commande',
+      trackingUrl,
+      from,
+      qrImageUrl ? { headerImageUrl: qrImageUrl } : {},
+    );
   };
 
   const fallbackSmsText = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${orderId}`;
@@ -1552,6 +1576,7 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
             language: DELIVERY_TEMPLATE_LANG,
             bodyParams: [productName || 'votre commande'],
             urlButtonSuffix: DELIVERY_TEMPLATE_URL_DYNAMIC ? String(orderId) : null,
+            headerImageUrl: qrImageUrl,
             from,
           });
         } catch (tplErr) {

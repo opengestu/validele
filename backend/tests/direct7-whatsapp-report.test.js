@@ -37,8 +37,15 @@ const direct7 = require('../direct7');
       bodyParams: ['Peignoir', '10 000'],
       urlButtonSuffix: 'order-123',
     });
+    await direct7.sendWhatsAppTemplate('221771112233', {
+      templateId: 'commande_en_livraison_validel',
+      language: 'fr',
+      bodyParams: ['Balai'],
+      urlButtonSuffix: 'order-123',
+      headerImageUrl: 'https://api.validel.test/api/guest/order/order-123/qr.png',
+    });
 
-    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(calls.length, 4);
     for (const call of calls) {
       assert.strictEqual(
         call.payload.messages[0].report_url,
@@ -56,6 +63,10 @@ const direct7 = require('../direct7');
     assert.strictEqual(
       calls[1].payload.messages[0].content.interactive.header.image.link,
       'https://www.validel.shop/api/guest/order/test/qr.png'
+    );
+    assert.strictEqual(
+      calls[3].payload.messages[0].content.media_template.media.media_url,
+      'https://api.validel.test/api/guest/order/order-123/qr.png'
     );
     console.log('  ✓ chaque envoi WhatsApp D7 contient son URL de rapport read');
     console.log('  ✓ le template paiement transmet ses deux variables approuvées');

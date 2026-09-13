@@ -532,7 +532,7 @@ async function sendWhatsAppList(phone, bodyText, buttonLabel, rows, from) {
 // - bodyParams : valeurs des variables {{1}}, {{2}}… du CORPS, dans l'ordre
 // - urlButtonSuffix : suffixe dynamique du bouton URL (partie après l'URL de base
 //   définie dans le template) ; omis s'il n'y a pas de bouton dynamique.
-async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = [], urlButtonSuffix = null, from = null }) {
+async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = [], urlButtonSuffix = null, headerImageUrl = null, from = null }) {
   if (!templateId) throw new Error('templateId requis pour l\'envoi de template');
   const body_parameter_values = {};
   (Array.isArray(bodyParams) ? bodyParams : []).forEach((v, i) => {
@@ -556,10 +556,20 @@ async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = 
     };
   }
 
+  const content = headerImageUrl
+    ? {
+        message_type: 'TEMPLATE',
+        media_template: {
+          ...template,
+          media: { media_type: 'image', media_url: String(headerImageUrl) },
+        },
+      }
+    : { message_type: 'TEMPLATE', template };
+
   return postD7Whatsapp({
     originator: resolveWhatsAppOriginator(from),
     recipients: [{ recipient: normalizeWhatsAppPhone(phone), recipient_type: 'individual' }],
-    content: { message_type: 'TEMPLATE', template },
+    content,
   });
 }
 
