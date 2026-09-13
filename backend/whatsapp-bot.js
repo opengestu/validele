@@ -33,13 +33,6 @@ const DELIVERY_TEMPLATE_NAME = String(
   process.env.WHATSAPP_TEMPLATE_DELIVERY_NAME || 'commande_en_livraison_validel'
 ).trim();
 const DELIVERY_TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_DELIVERY_LANG || 'fr').trim();
-// Le bouton URL du template est-il dynamique (URL de base + suffixe {{1}}) ?
-// Défaut false : le template approuvé a un bouton URL STATIQUE, et lui envoyer un
-// paramètre le fait rejeter par Meta (#132018 "does not require parameters").
-// Passer à true UNIQUEMENT après avoir rendu l'URL dynamique côté Meta.
-const DELIVERY_TEMPLATE_URL_DYNAMIC =
-  String(process.env.WHATSAPP_TEMPLATE_DELIVERY_URL_DYNAMIC || 'false').toLowerCase() === 'true';
-
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || '';
 const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://www.validel.shop').replace(/\/+$/, '');
 const PUBLIC_API_BASE_URL = String(
@@ -1575,7 +1568,9 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
             templateId: DELIVERY_TEMPLATE_NAME,
             language: DELIVERY_TEMPLATE_LANG,
             bodyParams: [productName || 'votre commande'],
-            urlButtonSuffix: DELIVERY_TEMPLATE_URL_DYNAMIC ? String(orderId) : null,
+            // Le suivi est toujours propre a la commande. Un bouton statique vers
+            // /order/ est inutilisable et doit laisser place au repli CTA complet.
+            urlButtonSuffix: String(orderId),
             headerImageUrl: qrImageUrl,
             from,
           });
