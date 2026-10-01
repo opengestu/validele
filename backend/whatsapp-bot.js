@@ -1433,8 +1433,12 @@ async function sendFallbackSmsForRow(row, motif) {
   const { sendSMS } = require('./direct7');
   // Repli sur le texte livraison pour d'éventuelles lignes anciennes sans
   // fallback_sms_text (colonne ajoutée par la migration 006).
-  const text = row.fallback_sms_text
+  let text = row.fallback_sms_text
     || `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${row.order_id}`;
+  if (text.includes('en cours de livraison') && !text.includes('Code de secours')) {
+    const code = await resolveOrderReceiptCode(row.order_id);
+    text = deliveryFallbackText(row.order_id, null, code);
+  }
   await sendSMS(row.buyer_phone, text);
   await supabase
     .from('whatsapp_delivery_read_tracking')
@@ -1534,15 +1538,29 @@ async function resolveOrderQrImageUrl(orderId) {
 // configuré, sinon message libre), SMS de secours si non remis après 10 min.
 // Appelée depuis server.js (mark-in-delivery). `botNumber` explicite prioritaire
 // (tests / appelant qui a déjà la commande en main) ; sinon relu sur la commande.
-async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, botNumber }) {
+async function resolveOrderReceiptCode(orderId) {
+  const { data: order, error } = await supabase.from('orders').select('id, qr_code').eq('id', orderId).maybeSingle();
+  if (error || !order?.qr_code) throw new Error('Code de réception indisponible pour la notification livraison');
+  return require('./receipt-code').createReceiptCodes(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET).codeFor(order);
+}
+
+function deliveryFallbackText(orderId, trackingUrl, code) {
+  return `Validèl : livraison en cours. Code de secours : ${code}. Vérifiez le produit avant de donner le code au vendeur/livreur : il confirme la réception du colis. Suivi : ${trackingUrl || `${PUBLIC_WEB_BASE_URL}/order/${orderId}`}`;
+}
+
+async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, botNumber, receiptCode }) {
   if (!buyerPhone) return { success: false, reason: 'no_phone' };
+  if (!/^\d{4}$/.test(String(receiptCode || ''))) {
+    receiptCode = await resolveOrderReceiptCode(orderId);
+  }
+  const receiptInstruction = `Code de secours à 4 chiffres : ${receiptCode}. Vérifiez le produit avant de communiquer ce code au vendeur ou au livreur. Ce code confirme la réception du colis.`;
   const from = botNumber !== undefined ? botNumber : await resolveOrderBotNumber(orderId);
   const qrImageUrl = await resolveOrderQrImageUrl(orderId);
 
   // Message libre : ne part que dans la fenêtre 24h, mais sert de repli si le
   // template n'est pas configuré OU s'il échoue à l'envoi.
   const sendFreeForm = () => {
-    const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
+    const body = `🚚 Bonne nouvelle ! *${productName || 'votre commande'}* est en cours de livraison.\n\n${receiptInstruction}\n\nSuivez votre commande et contactez le livreur ou le vendeur.`;
     return sendWhatsAppCtaUrl(
       buyerPhone,
       body,
@@ -1553,21 +1571,24 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
     );
   };
 
-  const fallbackSmsText = `Votre commande sur Validèl est en cours de livraison. Suivez-la ici : ${PUBLIC_WEB_BASE_URL}/order/${orderId}`;
+  const fallbackSmsText = deliveryFallbackText(orderId, trackingUrl, receiptCode);
 
-  return sendWhatsAppWithSmsFallback({
+  try {
+    return await sendWhatsAppWithSmsFallback({
     orderId,
     buyerPhone,
     fallbackSmsText,
     sendWhatsAppFn: async () => {
       if (DELIVERY_TEMPLATE_NAME) {
-        // Template approuvé Meta : corps {{1}} = nom du produit ; bouton URL
+        // Conserver le seul paramètre du template Meta déjà approuvé. Le code
+        // et la consigne y sont inclus sans ajouter de variable au template.
+        // Corps {{1}} = produit + code ; bouton URL
         // dynamique suffixe = orderId (URL de base définie dans le template).
         try {
           return await sendWhatsAppTemplate(buyerPhone, {
             templateId: DELIVERY_TEMPLATE_NAME,
             language: DELIVERY_TEMPLATE_LANG,
-            bodyParams: [productName || 'votre commande'],
+            bodyParams: [`${productName || 'votre commande'} (${receiptInstruction})`],
             // Le suivi est toujours propre a la commande. Un bouton statique vers
             // /order/ est inutilisable et doit laisser place au repli CTA complet.
             urlButtonSuffix: String(orderId),
@@ -1581,7 +1602,15 @@ async function notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productN
       }
       return sendFreeForm();
     },
-  });
+    });
+  } catch (error) {
+    // Si les deux envois WhatsApp échouent avant un request_id, il n'y a aucun
+    // accusé D7 à attendre : envoyer le même SMS de secours immédiatement.
+    const requestId = `delivery-send-failed-${crypto.randomUUID()}`;
+    await recordDeliveryNotificationSent(requestId, orderId, buyerPhone, fallbackSmsText);
+    await sendFallbackSmsForRow({ request_id: requestId, order_id: orderId, buyer_phone: buyerPhone, fallback_sms_text: fallbackSmsText }, 'échec envoi WhatsApp');
+    return { success: true, channel: 'sms' };
+  }
 }
 
 // Notification "remboursement effectué" : WhatsApp d'abord (message libre, pas de

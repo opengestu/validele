@@ -7198,7 +7198,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     const { data: order, error: orderErr } = await dbClient
       .from('orders')
       .select(`
-        id, status, buyer_id, vendor_id, order_code, delivery_person_id,
+        id, status, buyer_id, vendor_id, order_code, delivery_person_id, qr_code,
         buyer:profiles!orders_buyer_id_fkey(phone),
         delivery_person:profiles!orders_delivery_person_id_fkey(phone),
         product:products(name)
@@ -7397,7 +7397,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
         const webBase = String(process.env.PUBLIC_WEB_BASE_URL || process.env.PUBLIC_WEB_URL || 'https://www.validel.shop').replace(/\/+$/, '');
         const trackingUrl = `${webBase}/order/${orderId}`;
         const productName = order?.product?.name || 'votre commande';
-        await notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl });
+        await notifyDeliveryStartedWithFallback({ orderId, buyerPhone, productName, trackingUrl, receiptCode: order.qr_code ? receiptCodes.codeFor(order) : undefined });
         console.log('[MARK-IN-DELIVERY] Notification WhatsApp (+ fallback SMS si non lu) programmée pour', buyerPhone);
       }
     } catch (waErr) {
