@@ -36,6 +36,18 @@ try {
   console.warn('[INIT] Could not require ./supabase (it may be optional):', e?.message || e);
 }
 const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET || 'votre-secret-très-long-et-sécurisé-changez-le';
+const receiptCodes = require('./receipt-code').createReceiptCodes(SUPABASE_SERVICE_ROLE_KEY || process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET);
+async function receiptActor(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
+  if (!token) return null;
+  try { return jwt.verify(token, JWT_SECRET).sub || null; }
+  catch {
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      return !error ? data?.user?.id : null;
+    } catch { return null; }
+  }
+}
 const cookieParser = require('cookie-parser');
 const { sendOTP, verifyOTP } = require('./direct7');
 const { sendPushNotification, sendPushToMultiple, sendPushToTopic } = require('./firebase-push');
@@ -538,6 +550,7 @@ app.get('/api/config/whatsapp-bot', (req, res) => {
 // non sensibles + les contacts (vendeur/livreur) pour appeler/WhatsApp.
 app.get('/api/guest/order/:id', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const { id } = req.params || {};
     if (!id) return res.status(400).json({ success: false, error: 'Identifiant manquant.' });
 
@@ -588,6 +601,7 @@ app.get('/api/guest/order/:id', async (req, res) => {
         // QR code de réception acheteur : à présenter/scanner au livreur pour confirmer
         // la remise du colis (même mécanisme que l'app, cf. QRScanner.tsx).
         qrCode: order.qr_code || null,
+        receiptCode: order.qr_code && ['paid', 'assigned', 'in_delivery'].includes(order.status) ? receiptCodes.codeFor(order) : null,
         product: product ? { name: product.name, price: product.price, imageUrl: product.image_url } : null,
         vendor: vendor ? { name: vendor.company_name || vendor.full_name || 'Vendeur', phone: vendor.phone || null } : null,
         delivery: delivery ? { name: delivery.full_name || 'Livreur', phone: delivery.phone || null } : null,
@@ -7124,6 +7138,18 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
 // Nouvelle version conforme et robuste de la route /api/orders/mark-in-delivery
 app.post('/api/orders/mark-in-delivery', async (req, res) => {
   try {
+    const selfDelivery = req.body.selfDelivery === true;
+    let authenticatedVendorId = null;
+    if (selfDelivery) {
+      const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
+      try {
+        authenticatedVendorId = jwt.verify(token, JWT_SECRET).sub;
+      } catch {
+        const { data, error } = await supabase.auth.getUser(token);
+        if (!error) authenticatedVendorId = data?.user?.id;
+      }
+      if (!authenticatedVendorId) return res.status(401).json({ success: false, error: 'Authentification requise' });
+    }
     console.log('[MARK-IN-DELIVERY] Request received:', { body: req.body });
     
     // Accepter les deux formats : orderId et orderId
@@ -7172,7 +7198,7 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     const { data: order, error: orderErr } = await dbClient
       .from('orders')
       .select(`
-        id, status, buyer_id, order_code, delivery_person_id,
+        id, status, buyer_id, vendor_id, order_code, delivery_person_id,
         buyer:profiles!orders_buyer_id_fkey(phone),
         delivery_person:profiles!orders_delivery_person_id_fkey(phone),
         product:products(name)
@@ -7186,6 +7212,15 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
+    if (selfDelivery) {
+      if (String(order.vendor_id) !== String(authenticatedVendorId)) {
+        return res.status(403).json({ success: false, error: 'Cette commande ne vous appartient pas' });
+      }
+      if (order.status !== 'paid' || order.delivery_person_id) {
+        return res.status(409).json({ success: false, error: 'Cette commande est déjà prise en charge ou ne peut pas être livrée' });
+      }
+      deliveryPersonId = authenticatedVendorId;
+    }
     // Update only if status is assigned or paid (allow starting delivery from 'paid')
     if (!['assigned', 'paid'].includes(order.status)) {
       console.log('[MARK-IN-DELIVERY] Order status not valid for delivery start:', order.status);
@@ -7212,8 +7247,15 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
     // Tentative d'update robuste : si une colonne manque dans le schéma (PGRST204),
     // on supprime les clés problématiques et on réessaie.
     async function safeUpdateOrder(id, updateObj, client) {
+      async function updateOrder(values) {
+        let query = client.from('orders').update(values).eq('id', id);
+        if (selfDelivery) query = query.eq('status', 'paid').is('delivery_person_id', null);
+        const result = await query.select('id').maybeSingle();
+        if (!result.error && !result.data) return { error: { message: 'Commande déjà prise en charge' } };
+        return result;
+      }
       try {
-        const { error } = await client.from('orders').update(updateObj).eq('id', id);
+        const { error } = await updateOrder(updateObj);
         if (!error) {
           console.log('[MARK-IN-DELIVERY] Order updated successfully');
           return { ok: true, used: updateObj, removed: [] };
@@ -7246,7 +7288,8 @@ app.post('/api/orders/mark-in-delivery', async (req, res) => {
           return { ok: false, error, removed: missingCols };
         }
 
-        const { error: retryErr } = await client.from('orders').update(cleaned).eq('id', id);
+        if (selfDelivery && missingCols.includes('delivery_person_id')) return { ok: false, error };
+        const { error: retryErr } = await updateOrder(cleaned);
         if (!retryErr) {
           console.log('[MARK-IN-DELIVERY] Order updated successfully (retry without missing columns)');
           return { ok: true, used: cleaned, removed: missingCols };
@@ -7394,9 +7437,34 @@ async function getDeliveryPersonPhone(deliveryPersonId) {
   }
 }
 
+app.post('/api/orders/receipt-code', async (req, res) => {
+  try {
+    const actorId = await receiptActor(req);
+    if (!actorId) return res.status(401).json({ success: false, error: 'Authentification requise' });
+    const { data: order, error } = await supabase.from('orders').select('id, qr_code, status').eq('qr_code', String(req.body.qrCode || '')).eq('buyer_id', actorId).maybeSingle();
+    if (error || !order || !['paid', 'assigned', 'in_delivery'].includes(order.status)) return res.status(404).json({ success: false, error: 'Code indisponible' });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ success: true, code: receiptCodes.codeFor(order) });
+  } catch { return res.status(500).json({ success: false, error: 'Code indisponible' }); }
+});
+
+app.post('/api/orders/verify-receipt-code', async (req, res) => {
+  try {
+    const actorId = await receiptActor(req);
+    if (!actorId) return res.status(401).json({ success: false, error: 'Authentification requise' });
+    const { data: order, error } = await supabase.from('orders').select('id, status, delivery_person_id, qr_code').eq('id', req.body.orderId).maybeSingle();
+    if (error || !order || order.status !== 'in_delivery' || String(order.delivery_person_id) !== String(actorId)) return res.status(403).json({ success: false, error: 'Cette livraison ne vous est pas affectée' });
+    const result = receiptCodes.check(order, req.body.code);
+    if (!result.ok) return res.status(result.status).json({ success: false, error: result.status === 429 ? 'Trop de tentatives. Réessayez dans 15 minutes ou utilisez le QR code.' : 'Code de secours incorrect' });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ success: true, proof: receiptCodes.proofFor(order.id, actorId) });
+  } catch { return res.status(500).json({ success: false, error: 'Vérification indisponible' }); }
+});
+
 app.post('/api/orders/mark-delivered', async (req, res) => {
   try {
-    const { orderId, deliveredBy } = req.body || {};
+    const { orderId } = req.body || {};
+    let deliveredBy = req.body?.deliveredBy;
     if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
 
     console.log('[MARK-DELIVERED] Request received:', { orderId, deliveredBy });
@@ -7413,12 +7481,26 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
     // Fetch current order
     // total_amount et product_id sont nécessaires aux notifications : sans eux le
     // vendeur recevait « Montant: undefined FCFA ».
-    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, order_code, total_amount, product_id').eq('id', orderId).maybeSingle();
+    const { data: order, error: orderErr } = await dbClient.from('orders').select('id, status, payout_status, buyer_id, vendor_id, delivery_person_id, qr_code, order_code, total_amount, product_id').eq('id', orderId).maybeSingle();
     if (orderErr || !order) {
       console.error('[MARK-DELIVERED] Order not found:', orderErr);
       return res.status(404).json({ success: false, error: 'order_not_found' });
     }
 
+    let verifiedReceiptProof = false;
+    if (req.body.receiptProof) {
+      const actorId = await receiptActor(req);
+      verifiedReceiptProof = !!actorId && order.status === 'in_delivery' && String(order.delivery_person_id) === String(actorId) && receiptCodes.verifyProof(req.body.receiptProof, order.id, actorId);
+      if (!verifiedReceiptProof) return res.status(403).json({ success: false, error: 'Confirmation expirée ou invalide. Saisissez à nouveau le code client.' });
+      deliveredBy = actorId;
+    }
+    if (!verifiedReceiptProof && order.delivery_person_id && String(order.delivery_person_id) === String(order.vendor_id)) {
+      const normalize = value => String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+      const expected = normalize(order.qr_code || order.order_code);
+      if (order.status !== 'in_delivery' || String(deliveredBy) !== String(order.vendor_id) || !expected || normalize(req.body.scannedQrCode) !== expected) {
+        return res.status(403).json({ success: false, error: 'Le QR code du client est requis pour confirmer cette livraison' });
+      }
+    }
     console.log('[MARK-DELIVERED] Order found:', { id: order.id, status: order.status, payout_status: order.payout_status });
 
     // Update only if status not already delivered

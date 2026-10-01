@@ -1,5 +1,6 @@
 
 import React from 'react';
+import ReceiptCode from '@/components/ReceiptCode';
 import { QrCode, Download, Share2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -108,6 +109,7 @@ const OrderQRCode = ({ qrCode, orderCode, productName, totalAmount }: OrderQRCod
         </div>
         
         {/* Informations de la commande */}
+        <ReceiptCode qrCode={qrCode} />
         <div className="space-y-2">
           <p className="text-sm text-gray-600">Commande: <span className="font-semibold">{orderCode}</span></p>
           <p className="text-sm text-gray-600">Produit: <span className="font-semibold">{productName}</span></p>

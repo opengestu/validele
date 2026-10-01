@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReceiptCode from '@/components/ReceiptCode';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShoppingCart, Package, Clock, CheckCircle, QrCode, UserCircle, CreditCard, Minus, Plus, Settings, XCircle, AlertTriangle, Image as ImageIcon, LogOut } from 'lucide-react';
 import { PhoneIcon, WhatsAppIcon } from './CustomIcons';
@@ -2208,6 +2209,7 @@ const BuyerDashboard = () => {
           <div style={{ background: 'white', borderRadius: 20, padding: 28, boxShadow: '0 8px 32px rgba(0,0,0,0.15)', width: 340, maxWidth: '92vw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 24 }}>
             <h3 style={{ marginBottom: 4, fontSize: 17, fontWeight: 700 }}>QR Code de la commande</h3>
             <LocalQRCode value={qrModalValue} size={260} />
+            <ReceiptCode qrCode={qrModalValue} />
 
             <button
               onClick={() => setQrModalOpen(false)}

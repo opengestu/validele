@@ -456,6 +456,7 @@ const App = () => {
                     } 
                   />
                 )}
+                {!adminOnlyMode && <Route path="/vendor/scanner" element={<ProtectedRoute requiredRole="vendor"><QRScanner /></ProtectedRoute>} />}
                 {/* Page de succès de paiement: doit rester accessible après une redirection externe */}
                 {!adminOnlyMode && <Route path="/payment-success" element={<PaymentSuccess />} />}
                 <Route path="*" element={adminOnlyMode ? <Navigate to="/admin" replace /> : <NotFound />} />

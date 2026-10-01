@@ -67,7 +67,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { apiUrl, postProfileUpdate, getProfileById, resolveAuthToken } from '@/lib/api';
 import { Product, Order } from '@/types/database';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
   StatsCard,
   StatusBadge
@@ -626,6 +626,7 @@ const VendorDashboard = () => {
 
         return {
           ...o,
+          vendor_id: o.vendor_id || caller.id,
           quantity: derivedQuantity,
           delivery_person_id: o.delivery_person_id ?? undefined,
           order_code: o.order_code ?? undefined,
@@ -2251,6 +2252,45 @@ const VendorDashboard = () => {
     setVendorQRModalOpen(true);
   };
 
+  const [startingSelfDelivery, setStartingSelfDelivery] = useState(false);
+  const [selfDeliveryOrder, setSelfDeliveryOrder] = useState<Order | null>(null);
+  const handleSelfDelivery = async (order: Order) => {
+    if (startingSelfDelivery) return;
+    setStartingSelfDelivery(true);
+    try {
+      const token = await resolveAuthToken();
+      if (!token) throw new Error('Veuillez vous reconnecter.');
+      const response = await fetch(apiUrl('/api/orders/mark-in-delivery'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId: order.id, selfDelivery: true }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Impossible de démarrer la livraison.');
+      setSelfDeliveryOrder(null);
+      await fetchOrders();
+      toast({ title: 'Vous livrez cette commande', description: 'À la remise du colis, scannez le QR code du client pour confirmer la réception.' });
+    } catch (error) {
+      toast({ title: 'Livraison impossible', description: error instanceof Error ? error.message : 'Veuillez réessayer.', variant: 'destructive' });
+    } finally {
+      setStartingSelfDelivery(false);
+    }
+  };
+
+  const renderSelfDeliveryAction = (order: Order) => {
+    if (order.status === 'paid' && !order.delivery_person_id) return (
+      <Button disabled={startingSelfDelivery} onClick={() => setSelfDeliveryOrder(order)} className="w-full mt-3 rounded-2xl">
+        {startingSelfDelivery ? 'Démarrage…' : 'Livrer moi-même'}
+      </Button>
+    );
+    if (order.status === 'in_delivery' && String(order.delivery_person_id) === String(order.vendor_id)) return (
+      <Button onClick={() => navigate(`/vendor/scanner?orderId=${encodeURIComponent(String(order.id))}&scan=1`)} className="w-full mt-3 rounded-2xl">
+        <QrCode className="h-4 w-4 mr-2" /> Scanner le QR du client
+      </Button>
+    );
+    return null;
+  };
+
   // Ferme automatiquement la modale QR vendeur dès que la commande passe en livraison.
   React.useEffect(() => {
     if (!vendorQRModalOpen || !selectedOrderForQR?.id) return;
@@ -2270,8 +2310,13 @@ const VendorDashboard = () => {
   const totalProducts = products.length;
   const activeProducts = products.filter(p => p.is_available).length;
   const totalOrders = orders.length;
-  // Nombre de commandes non livrées (ex: paid, in_delivery)
-  const nonDeliveredCount = orders.filter(o => !['delivered','cancelled','refunded'].includes(o.status || '')).length;
+  // Compter les commandes avant le démarrage de la livraison.
+  const nonDeliveredCount = orders.filter(o => ['pending', 'paid', 'assigned'].includes(o.status || '')).length;
+  const ordersBadge = nonDeliveredCount > 0 ? (
+    <span className="absolute -right-3 -top-3 flex min-w-5 h-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-bold text-white ring-2 ring-background" aria-label={`${nonDeliveredCount} commandes non livrées`}>
+      {nonDeliveredCount}
+    </span>
+  ) : null;
   const totalRevenue = orders
     .filter(o => o.status === 'delivered')
     .reduce((sum, o) => sum + (o.total_amount || 0), 0);
@@ -2355,7 +2400,7 @@ const VendorDashboard = () => {
               <span>Mes Produits</span>
             </TabsTrigger>
             <TabsTrigger value="orders" className="flex items-center space-x-2">
-              <ShoppingCart className="h-4 w-4" />
+              <span className="relative"><ShoppingCart className="h-4 w-4" />{ordersBadge}</span>
               <span>Commandes</span>
             </TabsTrigger>
             <TabsTrigger value="profile" className="flex items-center space-x-2">
@@ -2529,6 +2574,7 @@ const VendorDashboard = () => {
                           </button>
                         )}
                       </div>
+                      {renderSelfDeliveryAction(order)}
                     </div>
                   );
                 })}
@@ -2965,6 +3011,7 @@ const VendorDashboard = () => {
                                     </button>
                                   )}
                                 </div>
+                                {renderSelfDeliveryAction(order)}
                               </div>
                             ))}
                           </div>
@@ -3161,7 +3208,7 @@ const VendorDashboard = () => {
                   value="orders"
                   className="seller-nav-tab"
                 >
-                  <ShoppingCart className="h-5 w-5" />
+                  <span className="relative"><ShoppingCart className="h-5 w-5" />{ordersBadge}</span>
                   <span className="text-xs font-medium">Commandes</span>
                 </TabsTrigger>
                 <TabsTrigger
@@ -3177,6 +3224,25 @@ const VendorDashboard = () => {
         </Tabs>
       </div>
       </main>
+      <Dialog open={!!selfDeliveryOrder} onOpenChange={(open) => { if (!open && !startingSelfDelivery) setSelfDeliveryOrder(null); }}>
+        <DialogContent hideCloseButton={startingSelfDelivery} className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Allez-vous livrer vous-même cette commande ?</DialogTitle>
+            <DialogDescription>
+              En confirmant, vous prenez personnellement en charge la livraison{selfDeliveryOrder?.order_code ? ` de la commande ${selfDeliveryOrder.order_code}` : ''}.
+              Vous devrez remettre le colis au client et scanner son QR code pour confirmer la réception.
+              Si un livreur doit s’en charger, annulez.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={startingSelfDelivery} onClick={() => setSelfDeliveryOrder(null)}>Annuler</Button>
+            <Button disabled={startingSelfDelivery} onClick={() => { if (selfDeliveryOrder) void handleSelfDelivery(selfDeliveryOrder); }}>
+              {startingSelfDelivery ? 'Démarrage…' : 'Oui, je livre moi-même'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={sellDemoModalOpen} onOpenChange={setSellDemoModalOpen}>
         <DialogContent aria-describedby={undefined} className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>

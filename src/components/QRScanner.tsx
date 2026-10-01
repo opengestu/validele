@@ -12,7 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from '@/components/ui/dialog';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, resolveAuthToken } from '@/lib/api';
 import { notifyBuyerDeliveryStarted, notifyDeliveryCompleted } from '@/services/notifications';
 
 // Types locales pour commandes et résultats de validation
@@ -250,6 +250,9 @@ function QRScanSection({
   scanSessionId,
   active,
   scanVendorQRMode,
+  verifyReceiptCode,
+  verifyingReceiptCode,
+  receiptProof,
   onClose,
 }: {
   scannedCode: string;
@@ -263,6 +266,9 @@ function QRScanSection({
   scanSessionId: number;
   active: boolean;
   scanVendorQRMode: boolean;
+  verifyReceiptCode: (code: string) => Promise<void>;
+  verifyingReceiptCode: boolean;
+  receiptProof: string;
   onClose: () => void;
 }) {
   // ✅ MODIFICATION 1 : calcul de qrboxSize pour positionner le texte
@@ -274,6 +280,7 @@ function QRScanSection({
   const [hasScanned, setHasScanned] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [loadingScanner, setLoadingScanner] = useState(true);
+  const [receiptCodeInput, setReceiptCodeInput] = useState('');
 
   useEffect(() => {
     setHasScanned(false);
@@ -417,7 +424,7 @@ function QRScanSection({
               <div className="flex items-center justify-center w-14 h-14 rounded-full bg-primary/10">
                 <CheckCircle className="h-8 w-8 text-primary" />
               </div>
-              <span className="font-semibold text-lg text-gray-900">QR code valide et correspond à la commande</span>
+              <span className="font-semibold text-lg text-gray-900">{receiptProof ? 'Code de secours valide pour cette commande' : 'QR code valide et correspond à la commande'}</span>
             </div>
             <Button
               className="bg-primary text-primary-foreground w-full max-w-xs rounded-xl h-12 text-base font-semibold mt-2"
@@ -427,7 +434,7 @@ function QRScanSection({
               {isConfirmingDelivery ? (
                 <span className="inline-flex items-center"><Spinner size="sm" className="mr-2 local-spinner" /> Confirmation…</span>
               ) : (
-                'Confirmer la commande'
+                'Confirmer la réception du colis'
               )}
             </Button>
           </div>
@@ -443,6 +450,16 @@ function QRScanSection({
       )}
 
       {/* ✅ MODIFICATION 2 : Instruction label repositionné juste au-dessus du cadre */}
+      {!scanVendorQRMode && !scanValid && (
+        <form className="fixed bottom-6 left-4 right-4 z-[2200] mx-auto max-w-sm rounded-xl bg-white p-4 shadow-lg space-y-2" onSubmit={event => { event.preventDefault(); void verifyReceiptCode(receiptCodeInput); }}>
+          <label htmlFor="receipt-backup-code" className="text-sm font-semibold">Scan impossible ? Code client à 4 chiffres</label>
+          <p className="text-xs text-muted-foreground">Demandez le code après que le client a vérifié le produit.</p>
+          <div className="flex gap-2">
+            <Input id="receipt-backup-code" inputMode="numeric" type="text" pattern="[0-9]{4}" maxLength={4} autoComplete="off" placeholder="0000" value={receiptCodeInput} onChange={event => setReceiptCodeInput(event.target.value.replace(/\D/g, '').slice(0, 4))} />
+            <Button type="submit" disabled={verifyingReceiptCode || receiptCodeInput.length !== 4}>{verifyingReceiptCode ? 'Vérification…' : 'Vérifier'}</Button>
+          </div>
+        </form>
+      )}
       <div style={{
         position: 'fixed',
         left: 0,
@@ -485,6 +502,8 @@ const QRScanner = () => {
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
   const [validatedQrCode, setValidatedQrCode] = useState<string>('');
+  const [receiptProof, setReceiptProof] = useState('');
+  const [verifyingReceiptCode, setVerifyingReceiptCode] = useState(false);
   const [scanSessionId, setScanSessionId] = useState(0);
   const [autoOpenScanner, setAutoOpenScanner] = useState(false);
   const [scanVendorQRMode, setScanVendorQRMode] = useState(false);
@@ -510,6 +529,10 @@ const QRScanner = () => {
 
   const handleStartDelivery = useCallback(async () => {
     if (!currentOrder) return;
+    if (window.location.pathname === '/vendor/scanner') {
+      toast({ title: 'Démarrez depuis vos commandes', description: 'Utilisez « Livrer moi-même » dans votre espace vendeur avant de scanner le QR du client.', variant: 'destructive' });
+      return;
+    }
     if (!user?.id) {
       toast({ title: 'Erreur', description: 'Utilisateur non connecté.', variant: 'destructive' });
       return;
@@ -560,13 +583,38 @@ const QRScanner = () => {
     const orderId = params.get('orderId');
     const orderCodeParam = params.get('orderCode');
     const autoStart = params.get('autoStart') || params.get('scan');
+    const vendorScanner = window.location.pathname === '/vendor/scanner';
+    const vendorId = user?.id;
 
     if (autoStart) setAutoOpenScanner(true);
     if (!orderId && !orderCodeParam) return;
+    if (vendorScanner && !vendorId) return;
 
     let cancelled = false;
     (async () => {
       try {
+        if (vendorScanner && orderId) {
+          const token = await resolveAuthToken();
+          const response = await fetch(apiUrl('/api/vendor/orders'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ vendor_id: vendorId }),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.success) throw new Error('Impossible de charger la commande.');
+          const order = result.orders?.find((item: Order) => String(item.id) === orderId);
+          if (!order || order.status !== 'in_delivery' || String(order.delivery_person_id) !== String(vendorId)) {
+            throw new Error('Cette commande ne fait pas partie de vos livraisons en cours.');
+          }
+          if (!cancelled) {
+            setScanVendorQRMode(false);
+            setVendorScanLocked(true);
+            setCurrentOrder(order as Order);
+            setOrderCode(String(order.order_code || ''));
+            setScannedCode('');
+          }
+          return;
+        }
         if (orderId) {
           const { data, error } = await supabase
             .from('orders')
@@ -595,10 +643,11 @@ const QRScanner = () => {
         }
       } catch (e) {
         console.warn('[QRScanner] preload from URL failed:', e);
+        if (vendorScanner && !cancelled) toast({ title: 'Commande indisponible', description: e instanceof Error ? e.message : 'Impossible de charger la commande.', variant: 'destructive' });
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.id]);
 
   const handleSearchOrder = async () => {
     if (!orderCode.trim()) {
@@ -675,6 +724,7 @@ const QRScanner = () => {
   };
 
   const handleScanQR = async (code: string, resetScanCb?: () => void) => {
+    setReceiptProof('');
     const codeToCheck = code !== undefined ? code : scannedCode;
 
     if (scanVendorQRMode) {
@@ -816,10 +866,29 @@ const QRScanner = () => {
     }
   };
 
+  const verifyReceiptCode = async (code: string) => {
+    if (!currentOrder?.id || currentOrder.status !== 'in_delivery' || verifyingReceiptCode) return;
+    setVerifyingReceiptCode(true);
+    try {
+      const token = await resolveAuthToken();
+      const response = await fetch(apiUrl('/api/orders/verify-receipt-code'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId: currentOrder.id, code }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.proof) throw new Error(result.error || 'Code incorrect');
+      setReceiptProof(result.proof);
+      setValidatedQrCode('');
+      setValidationResult({ ...currentOrder, status: 'valid', timestamp: new Date().toLocaleString() });
+    } catch (error) {
+      toast({ title: 'Code non validé', description: error instanceof Error ? error.message : 'Vérification impossible.', variant: 'destructive' });
+    } finally { setVerifyingReceiptCode(false); }
+  };
+
   const handleConfirmDelivery = async () => {
     if (validationResult && validationResult.status === 'valid') {
       try {
-        if (!validatedQrCode) throw new Error('QR client validé manquant. Veuillez rescanner le QR code client.');
+        if (!validatedQrCode && !receiptProof) throw new Error('Scannez le QR client ou vérifiez son code de secours.');
 
         const normalize = (s: unknown) => (s || '').toString().replace(/[^a-z0-9]/gi, '').toUpperCase();
         const validatedNormalized = normalize(validatedQrCode);
@@ -843,16 +912,18 @@ const QRScanner = () => {
         // sinon les deux parties recevaient DEUX notifications de livraison.
         let backendNotified = false;
         try {
+          const token = receiptProof ? await resolveAuthToken() : '';
           const resp = await fetch(apiUrl('/api/orders/mark-delivered'), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId: validationResult.id, deliveredBy: user?.id, scannedQrCode: validatedQrCode }),
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ orderId: validationResult.id, deliveredBy: user?.id, scannedQrCode: validatedQrCode, ...(receiptProof ? { receiptProof } : {}) }),
           });
           const json = await resp.json().catch(() => ({}));
           if (!resp.ok || !json || !json.success) throw new Error(json?.error || json?.message || 'Échec confirmation livraison côté serveur');
           updatedOrder = json.order || json.updated || { id: validationResult.id, status: 'delivered' };
           backendNotified = true;
         } catch (e) {
+          if (receiptProof) throw e;
           console.warn('QRScanner: mark-delivered backend échoué, fallback client activé', e);
           const { data: fallbackUpdated, error: fallbackError } = await supabase
             .from('orders')
@@ -896,6 +967,7 @@ const QRScanner = () => {
 
         setValidationResult(null);
         setValidatedQrCode('');
+        setReceiptProof('');
         setScannedCode('');
         setOrderCode('');
         setVendorScanLocked(false);
@@ -903,7 +975,7 @@ const QRScanner = () => {
         setCurrentOrder(null);
         openScannerSafely();
         setIsConfirmingDelivery(false);
-        try { navigate('/delivery'); } catch { /* ignore */ }
+        try { navigate(window.location.pathname === '/vendor/scanner' ? '/vendor#orders' : '/delivery'); } catch { /* ignore */ }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
         console.error('QRScanner: erreur update delivered', errorMessage);
@@ -914,6 +986,7 @@ const QRScanner = () => {
   };
 
   useEffect(() => {
+    if (window.location.pathname === '/vendor/scanner') return;
     if (showScanSection && currentOrder) {
       setIsScanning(true);
       setTimeout(() => {
@@ -1015,9 +1088,19 @@ const QRScanner = () => {
             <CheckCircle className="h-16 w-16 text-primary mb-4" />
             <h2 className="text-xl font-bold text-primary mb-2 text-center">Commande livrée et confirmée !</h2>
             <p className="text-primary text-base mb-2 text-center">La livraison a bien été validée. Le paiement au vendeur est en attente de validation par un administrateur.</p>
-            <Button className="mt-4 bg-primary text-primary-foreground w-full rounded-xl" onClick={() => navigate('/delivery')}>Retour au dashboard</Button>
+            <Button className="mt-4 bg-primary text-primary-foreground w-full rounded-xl" onClick={() => navigate(window.location.pathname === '/vendor/scanner' ? '/vendor#orders' : '/delivery')}>Retour au dashboard</Button>
             <p className="text-sm text-gray-500 mt-2">Redirection automatique dans 3 secondes…</p>
           </div>
+        ) : !showScanSection && window.location.pathname === '/vendor/scanner' ? (
+          <Card className="border-0 shadow-lg">
+            <CardContent className="p-5 space-y-4 text-center">
+              <p>Présentez le QR code du client à la caméra pour confirmer la réception du colis.</p>
+              {currentOrder?.status === 'in_delivery' && String(currentOrder.delivery_person_id) === String(user?.id) && (
+                <Button className="w-full rounded-xl" onClick={openScannerSafely}>Scanner le QR code client</Button>
+              )}
+              <Button variant="outline" className="w-full rounded-xl" onClick={() => navigate('/vendor#orders')}>Retour aux commandes</Button>
+            </CardContent>
+          </Card>
         ) : !showScanSection ? (
           <div className="space-y-4">
             <Card className="border-0 shadow-lg">
@@ -1067,6 +1150,9 @@ const QRScanner = () => {
             scanSessionId={scanSessionId}
             active={showScanSection}
             scanVendorQRMode={scanVendorQRMode}
+            verifyReceiptCode={verifyReceiptCode}
+            verifyingReceiptCode={verifyingReceiptCode}
+            receiptProof={receiptProof}
             onClose={() => { setShowScanSection(false); }}
           />
         )}

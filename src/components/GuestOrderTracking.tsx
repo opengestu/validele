@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import SimpleQRCode from '@/components/ui/SimpleQRCode';
+import ReceiptCode from '@/components/ReceiptCode';
 import { apiUrl } from '@/lib/api';
 
 const phoneLogo = '/assets/phone-icon.png';
@@ -32,6 +33,7 @@ type OrderData = {
   deliveryAddress: string | null;
   createdAt: string;
   qrCode: string | null;
+  receiptCode?: string | null;
   product: { name: string; price: number; imageUrl: string | null } | null;
   vendor: OrderContact | null;
   delivery: OrderContact | null;
@@ -236,11 +238,12 @@ const GuestOrderTracking = () => {
                     Votre QR code de réception
                   </h3>
                   <p className="text-sm text-gray-600 mb-4">
-                    Présentez ce QR code au livreur au moment de la livraison pour confirmer que vous avez bien reçu votre colis.
+                    Vérifiez le produit avant de présenter ce QR code au vendeur ou au livreur pour confirmer la réception du colis.
                   </p>
                   <div className="inline-block bg-white p-4 rounded-lg border-2 border-gray-200">
                     <SimpleQRCode value={order.qrCode} size={200} />
                   </div>
+                  <div className="mt-4"><ReceiptCode code={order.receiptCode} /></div>
                   <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-4">
                     ⚠️ Ne montrez ce code qu'au livreur officiel, au moment de la remise du colis.
                   </p>
