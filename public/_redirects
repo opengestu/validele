@@ -1,9 +1,3 @@
-/member-login   /member-login.html   200
-/product/*      /index.html          200
-/order/*        /index.html          200
-/orders/*       /index.html          200
-/buyer/*        /index.html          200
-/vendor/*       /index.html          200
-/delivery/*     /index.html          200
-/admin/*        /index.html          200
-/payment-success/* /index.html       200
+# React routes use the native SPA fallback (wrangler.jsonc).
+# /member-login is served directly from member-login.html by HTML handling.
+# Do not rewrite routes to /index.html: Workers rejects these rules as loops.
