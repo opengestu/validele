@@ -10,6 +10,7 @@ import { apiUrl } from '@/lib/api';
 import useNetwork from '@/hooks/useNetwork';
 import AdminLoginForm from '@/components/AdminLoginForm';
 import { LogOut } from 'lucide-react';
+import PayoutControl from './PayoutControl';
 
 type Order = {
   id: string;
@@ -104,6 +105,7 @@ type Timer = {
 // Payout batches & items (for scheduled/manual mass payouts)
 type PayoutBatch = {
   id: string;
+  source?: 'manual' | 'automatic';
   created_by?: string | null;
   scheduled_at?: string;
   processed_at?: string | null;
@@ -214,8 +216,8 @@ const AdminDashboard: React.FC = () => {
   const shallowOrdersEqual = (a: OrderFull[] = [], b: OrderFull[] = []) => {
     try {
       if ((a || []).length !== (b || []).length) return false;
-      const aKey = (a || []).map(x => `${x.id}:${x.status}`).sort().join('|');
-      const bKey = (b || []).map(x => `${x.id}:${x.status}`).sort().join('|');
+      const aKey = (a || []).map(x => `${x.id}:${x.status}:${x.payout_status}:${x.payout_paid_at}`).sort().join('|');
+      const bKey = (b || []).map(x => `${x.id}:${x.status}:${x.payout_status}:${x.payout_paid_at}`).sort().join('|');
       return aKey === bKey;
     } catch (e) { return false; }
   };
@@ -1159,27 +1161,18 @@ const AdminDashboard: React.FC = () => {
         return;
       }
 
-      // 2) Ask for commission percentage
-      const commissionPctRaw = prompt('Pourcentage de commission à appliquer sur ce payout (ex: 2 pour 2%) ?', '0');
-      if (commissionPctRaw === null) return; // User cancelled
-      
-      const commissionPct = Number(commissionPctRaw);
-      if (isNaN(commissionPct) || commissionPct < 0) {
-        toast({ title: 'Erreur', description: 'Commission invalide', variant: 'destructive' });
-        return;
-      }
-
-      // 3) confirm with admin
-      if (!confirm('Confirmer le paiement au vendeur pour cette commande ?')) return;
+      const amounts = report.amounts;
+      if (!amounts) throw new Error('Configurer la commission payout sur Render avant paiement');
+      if (!confirm(`Confirmer le paiement ?\nBrut vendeur : ${formatFcfa(Number(amounts.amount))}\nCommission : ${amounts.commission_pct} % (${formatFcfa(Number(amounts.commission_amount))})\nNet envoyé : ${formatFcfa(Number(amounts.net_amount))}`)) return;
 
       // 4) execute payout
       const execRes = await fetch(apiUrl('/api/admin/verify-and-payout'), {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true, commission_pct: commissionPct })
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ orderId, execute: true })
       });
       const execJson = await execRes.json();
       if (!execRes.ok) throw new Error(execJson.error || 'Erreur exécution payout');
 
-      toast({ title: 'Succès', description: 'Payout initié (processing).' });
+      toast({ title: 'Traitement enregistré', description: 'Consultez le suivi des envois pour le résultat fournisseur.' });
       fetchData();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error || 'Erreur lors du payout');
@@ -1238,6 +1231,8 @@ const AdminDashboard: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      <PayoutControl getAuthHeader={getAuthHeader} />
 
       <div>
         <div className="mb-4 space-y-3">
@@ -1331,12 +1326,14 @@ const AdminDashboard: React.FC = () => {
                             o.payout_status === 'processing' ? 'bg-blue-100 text-blue-800' : 
                             o.payout_status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
                             o.payout_status === 'requested' ? 'bg-yellow-100 text-yellow-800' :
+                            o.payout_status === 'failed' ? 'bg-red-100 text-red-800' :
                             'bg-slate-100 text-slate-700'
                           }`}>
                             {o.payout_status === 'paid' ? 'Payé ✓' : 
                              o.payout_status === 'processing' ? 'En cours' :
                              o.payout_status === 'scheduled' ? 'Programmé' :
                              o.payout_status === 'requested' ? 'Demandé' :
+                             o.payout_status === 'failed' ? 'Échec confirmé' :
                              o.payout_status || '-'}
                           </span>
                           {o.payout_paid_at ? ` — Payé le ${new Date(o.payout_paid_at).toLocaleString()}` : 
@@ -1346,7 +1343,7 @@ const AdminDashboard: React.FC = () => {
                           <Button 
                             size="sm" 
                             onClick={() => handlePayout(o.id)} 
-                            disabled={!(o.status === 'delivered' && o.payout_status === 'requested') || processing}
+                            disabled={!(o.status === 'delivered' && ['requested','failed'].includes(o.payout_status || '')) || processing}
                             className={
                               o.payout_status === 'paid' ? 'bg-primary text-primary-foreground cursor-default' : 
                               o.payout_status === 'scheduled' ? 'bg-purple-600 hover:bg-purple-600 cursor-default' :
@@ -1484,15 +1481,14 @@ const AdminDashboard: React.FC = () => {
                   <Button onClick={async () => {
                     setProcessing(true);
                     try {
-                      const pctRaw = prompt('Pourcentage de commission à appliquer sur ce batch (ex: 2 pour 2%) ?', '0');
-                      if (pctRaw === null) { setProcessing(false); return; }
-                      const pct = Number(pctRaw);
-                      if (isNaN(pct) || pct < 0) throw new Error('Commission invalide');
-
-                      const res = await fetch(apiUrl('/api/admin/payout-batches/create'), { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({ commission_pct: pct }) });
+                      const res = await fetch(apiUrl('/api/admin/payout-batches/create'), { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() }, body: JSON.stringify({}) });
                       const json = await res.json();
                       if (!res.ok) throw new Error(json?.error || 'Erreur création batch');
-                      toast({ title: 'Succès', description: `Batch créé (commission ${pct}%)` });
+                      if (!json?.batch) {
+                        toast({ title: 'Aucun batch créé', description: json?.message || 'Aucune demande de payout éligible' });
+                      } else {
+                        toast({ title: 'Succès', description: `Batch créé (commission ${json.batch.commission_pct} %)` });
+                      }
                       fetchData();
                     } catch (err: unknown) {
                       const message = err instanceof Error ? err.message : String(err || 'Erreur');
@@ -2229,7 +2225,7 @@ function BatchDetailsModal({ batch, items, onClose, onOpenInvoice, onOpenVendors
                         <Button size="sm" variant="outline" onClick={() => onOpenInvoice(it.vendor_id || '', 'html')}>Voir</Button>
                         <Button size="sm" onClick={() => onOpenInvoice(it.vendor_id || '', 'pdf')}>PDF</Button>
                         <Button size="sm" variant="secondary" onClick={() => onOpenInvoice(it.vendor_id || '', 'xlsx')}>Excel</Button>
-                        {onRetryItem && it.status !== 'paid' && (
+                        {onRetryItem && it.status === 'failed' && (
                           <Button size="sm" variant="secondary" onClick={() => onRetryItem(it)}>Relancer</Button>
                         )}
                       </div>

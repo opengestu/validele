@@ -193,7 +193,10 @@ async function initiatePayment(params) {
  * @returns {Promise<Object>} Réponse PixPay
  */
 async function sendMoney(params) {
-  const { amount, phone, orderId, type = 'payout', walletType } = params;
+  const { amount, phone, orderId, type = 'payout', walletType, payoutAttemptId } = params;
+  const isVendorPayout = ['payout', 'vendor_payout'].includes(type);
+  if (isVendorPayout && (!payoutAttemptId || !process.env.PAYOUT_WEBHOOK_SECRET)) throw new Error('Tentative payout réservée et secret IPN requis');
+  if (!Number.isSafeInteger(Number(amount)) || Number(amount) <= 0) throw new Error('Montant payout invalide');
 
   // Log chaque appel payout, surtout pour Orange Money
   console.log('[PIXPAY][sendMoney] INIT payout', { amount, phone, orderId, type, walletType });
@@ -238,9 +241,12 @@ async function sendMoney(params) {
     ipn_url: `${PIXPAY_CONFIG.ipn_base_url}/api/payment/pixpay-webhook`,
     custom_data: JSON.stringify({
       order_id: orderId,
-      type
+      type,
+      ...(payoutAttemptId ? { payout_attempt_id: payoutAttemptId } : {})
     })
   };
+
+  if (isVendorPayout) payload.ipn_url += `?payout_token=${encodeURIComponent(process.env.PAYOUT_WEBHOOK_SECRET)}`;
 
   // Ajouter business_name_id pour Wave (nécessaire pour payin ET payout)
   if (walletType === 'wave-senegal' && PIXPAY_CONFIG.wave_business_name_id) {
@@ -257,7 +263,7 @@ async function sendMoney(params) {
     service_id: payload.service_id,
     business_name_id: payload.business_name_id || 'N/A',
     description: walletType === 'wave-senegal' ? 'Wave PAYOUT (80, PixPay -> Wave)' : 'Orange Money PAYOUT (214)',
-    payload: JSON.stringify(payload, null, 2)
+    // Never log api_key or the authenticated callback URL.
   });
 
   try {
@@ -282,6 +288,7 @@ async function sendMoney(params) {
 
     return {
       success: isSuccess,
+      uncertain: !isSuccess && response.data.data?.state !== 'FAILED',
       transaction_id: response.data.data?.transaction_id,
       state: response.data.data?.state,
       message: response.data.message || (isSuccess ? 'Payout initiated' : 'Pixpay returned an error'),
@@ -295,7 +302,6 @@ async function sendMoney(params) {
       statusText: error.response?.statusText,
       data: error.response?.data,
       message: error.response?.data?.message || error.message,
-      config: error.config,
       isAxiosError: error.isAxiosError,
       toString: error.toString()
     });
@@ -311,6 +317,8 @@ async function sendMoney(params) {
     
     return {
       success: false,
+      // Even an HTTP 5xx can follow a provider-side debit. Never retry it blindly.
+      uncertain: true,
       transaction_id: null,
       state: 'FAILED',
       message: errorMessage,

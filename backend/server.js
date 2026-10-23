@@ -59,6 +59,20 @@ const { isDemoBotNumber } = require('./demo');
 const { initiatePayment: pixpayInitiate, initiateWavePayment: pixpayWaveInitiate, sendMoney: pixpaySendMoney } = require('./pixpay');
 
 
+const { createPayoutService } = require('./payout-service');
+const payoutDb = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
+const controlledPayouts = createPayoutService({ db: payoutDb, sendMoney: pixpaySendMoney, onPaid: async dispatch => {
+  const { data: tokens, error } = await payoutDb.from('push_tokens').select('token').eq('user_id', dispatch.vendor_id).eq('is_active', true);
+  if (error) throw error;
+  const notification = getNotificationTemplate('PAYOUT_PAID', {
+    amount: dispatch.amount, orderCode: `lot ${dispatch.batch_id.slice(0, 8)}`,
+    method: dispatch.wallet_type === 'orange-senegal' ? 'Orange Money' : 'Wave'
+  });
+  if (tokens?.length) await sendPushToMultiple(tokens.map(t => t.token), notification.title, notification.body, notification.data);
+} });
+
 const app = express();
 
 // Image publique d'un produit pour les canaux externes (notamment WhatsApp).
@@ -3044,7 +3058,7 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     const ipnData = req.body;
 
     console.log('[PIXPAY-WEBHOOK] 🔔 IPN reçu à', new Date().toISOString());
-    console.log('[PIXPAY-WEBHOOK] Headers:', JSON.stringify(req.headers, null, 2));
+    // Do not log headers or callback tokens.
     console.log('[PIXPAY-WEBHOOK] Body:', JSON.stringify(ipnData, null, 2));
 
     // Create admin client with service role key to bypass RLS
@@ -3089,6 +3103,21 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
     const orderId = customData.order_id;
     const transactionType = customData.type || 'payment'; // 'payment' ou 'payout'
     console.log('[PIXPAY-WEBHOOK] 📦 Order ID:', orderId, '| State:', state, '| Type:', transactionType);
+
+    // Use persisted transaction type, never trust custom_data to disguise a payout as a pay-in.
+    const { data: recordedTx, error: recordedTxError } = await (supabaseAdmin || supabase)
+      .from('payment_transactions').select('transaction_type').eq('transaction_id', transaction_id).maybeSingle();
+    if (recordedTxError) return res.status(503).json({ error: 'Transaction lookup unavailable' });
+    const recordedType = String(recordedTx?.transaction_type || '').toLowerCase();
+    if (['payout','vendor_payout'].includes(String(transactionType).toLowerCase()) || ['payout','vendor_payout'].includes(recordedType) || customData.payout_attempt_id) {
+      try {
+        await controlledPayouts.handleWebhook(ipnData, req.query.payout_token, customData);
+        return res.json({ success: true });
+      } catch (error) {
+        console.error('[PAYOUT IPN]', error.message);
+        return res.status(409).json({ success: false, error: error.message });
+      }
+    }
 
     // Mettre à jour la transaction dans Supabase - utiliser supabaseAdmin pour bypass RLS
     if (transaction_id && supabaseAdmin) {
@@ -3320,71 +3349,6 @@ app.post('/api/payment/pixpay-webhook', async (req, res) => {
           }
         }
       }
-    } else if (state === 'SUCCESSFUL' && (transactionType === 'payout' || transactionType === 'vendor_payout')) {
-      console.log('[PIXPAY] ✅ Payout SUCCESSFUL', { transaction_id, transactionType, orderId });
-      try {
-        // If orderId corresponds to an order -> mark that order as paid
-        // Use supabaseAdmin to bypass RLS
-        if (orderId) {
-          // Check if orderId is an actual order
-          const { data: orderExists } = await supabaseAdmin.from('orders').select('id, vendor_id, order_code, total_amount').eq('id', orderId).maybeSingle();
-          if (orderExists && orderExists.id) {
-            await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-            console.log('[PIXPAY] Order payout marked paid:', orderId);
-            // Notifier le vendeur que le paiement est effectué
-            try {
-              const { data: vendorTokens } = await supabase
-                .from('push_tokens')
-                .select('token')
-                .eq('user_id', orderExists.vendor_id)
-                .eq('is_active', true);
-
-              if (vendorTokens && vendorTokens.length > 0) {
-                const notif = getNotificationTemplate('PAYOUT_PAID', {
-                  orderCode: orderExists.order_code,
-                  amount: orderExists.total_amount,
-                  orderId: orderExists.id
-                });
-
-                for (const { token } of vendorTokens) {
-                  await sendPushNotification(token, notif.title, notif.body, notif.data);
-                }
-                console.log('[PIXPAY] Notification payout payé envoyée au vendeur');
-              }
-            } catch (notifErr) {
-              console.error('[PIXPAY] Erreur notification payout payé:', notifErr);
-            }
-          } else {
-            // Otherwise treat orderId as a batch id - use supabaseAdmin to bypass RLS
-            // Correction: update payout_batch_items by provider_transaction_id (for both Orange and Wave)
-            // 1. Update all items in the batch with this provider_transaction_id to 'paid'
-            const { data: itemsToUpdate } = await supabaseAdmin
-              .from('payout_batch_items')
-              .select('id, order_id, batch_id')
-              .eq('batch_id', orderId)
-              .eq('provider_transaction_id', transaction_id);
-
-            if (itemsToUpdate && itemsToUpdate.length > 0) {
-              const itemIds = itemsToUpdate.map(i => i.id);
-              const orderIds = itemsToUpdate.map(i => i.order_id).filter(Boolean);
-              await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-              if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-            }
-
-            // 2. Vérifie si tous les items du batch sont maintenant 'paid' et complète le batch si oui
-            const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('status').eq('batch_id', orderId);
-            const allPaid = allItems && allItems.length > 0 && allItems.every(i => i.status === 'paid');
-            if (allPaid) {
-              await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', orderId);
-              console.log('[PIXPAY] Batch payout completed for batch:', orderId);
-            } else {
-              console.log('[PIXPAY] Batch payout: not all items are paid yet, batch remains in progress.');
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[PIXPAY] Error finalizing payout on webhook:', e);
-      }
     }
 
     // Trace de tout échec, quel que soit le type de transaction (paiement, payout, retrait admin)
@@ -3576,68 +3540,7 @@ app.post('/api/admin/confirm-payment', requireAdmin, async (req, res) => {
 });
 
 // Envoyer de l'argent (payout vendeur(se)/livreur) - PROTÉGÉ : nécessite un admin
-app.post('/api/payment/pixpay/payout', requireAdmin, async (req, res) => {
-  try {
-    const { amount, phone, orderId, type, walletType } = req.body;
 
-    if (!amount || !phone || !orderId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Paramètres manquants: amount, phone, orderId requis'
-      });
-    }
-
-    if (!walletType) {
-      return res.status(400).json({
-        success: false,
-        error: 'walletType requis (wave-senegal ou orange-senegal)'
-      });
-    }
-
-    console.log('[PIXPAY] Payout:', { amount, phone, orderId, type, walletType });
-
-    const result = await pixpaySendMoney({
-      amount,
-      phone,
-      orderId,
-      type: type || 'payout',
-      walletType
-    });
-
-    // Sauvegarder dans DB
-    if (result.success && result.transaction_id) {
-      const { error: dbError } = await supabase
-        .from('payment_transactions')
-        .insert({
-          transaction_id: result.transaction_id,
-          provider: 'pixpay',
-          order_id: orderId,
-          amount,
-          phone,
-          status: result.state || 'PENDING1',
-          transaction_type: 'payout',
-          raw_response: normalizeJsonField(result.raw)
-        });
-
-      if (dbError) {
-        console.error('[PIXPAY] Erreur sauvegarde payout:', dbError);
-      }
-    }
-
-    return res.json({
-      success: result.success,
-      transaction_id: result.transaction_id,
-      message: result.message
-    });
-
-  } catch (error) {
-    console.error('[PIXPAY] Erreur payout:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Erreur lors de l\'envoi d\'argent'
-    });
-  }
-});
 
 // ===== Admin endpoints =====
 
@@ -4286,325 +4189,7 @@ app.post('/api/admin/notify-all-vendors', requireAdmin, async (req, res) => {
   }
 });
 
-// Initiate payout for an order (admin)
-app.post('/api/admin/payout-order', requireAdmin, async (req, res) => {
-  try {
-    const { orderId } = req.body;
-    if (!orderId) return res.status(400).json({ success: false, error: 'orderId requis' });
 
-    // Verify eligibility based only on order status/payout_status
-    const report = await verifyOrderForPayout(orderId);
-    if (!report.ok) return res.status(404).json({ success: false, error: report.error });
-    if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible', report });
-
-    // Fetch vendor
-    const { data: vendor, error: vendorErr } = await supabase
-      .from('profiles')
-      .select('id, phone, wallet_type')
-      .eq('id', report.order.vendor_id)
-      .single();
-
-    if (vendorErr || !vendor) return res.status(404).json({ success: false, error: 'Vendeur non trouvé' });
-
-    const walletType = vendor.wallet_type || 'wave-senegal';
-    const phone = vendor.phone;
-
-    if (!phone) return res.status(400).json({ success: false, error: 'Numéro vendeur non trouvé' });
-
-    // Execute payout via PixPay
-    const result = await pixpaySendMoney({ amount: report.order.total_amount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
-
-    console.log('[ADMIN] payout-order Pixpay response:', JSON.stringify(result, null, 2));
-
-    // IMPORTANT: Check if Pixpay returned success before proceeding
-    if (!result || !result.success) {
-      const errorMsg = result?.message || result?.raw?.message || 'Pixpay returned an error';
-      console.error('[ADMIN] payout-order - Pixpay call failed:', errorMsg, result);
-      return res.status(500).json({ 
-        success: false, 
-        error: `Pixpay payout failed: ${errorMsg}`,
-        pixpay_response: result 
-      });
-    }
-
-    // Record transaction
-    if (result.transaction_id) {
-      const { error: txErr } = await supabase.from('payment_transactions').insert({
-        transaction_id: result.transaction_id,
-        provider: 'pixpay',
-        order_id: report.order.id,
-        amount: report.order.total_amount,
-        phone,
-        status: result.state || 'PENDING1',
-        transaction_type: 'payout',
-        raw_response: result.raw
-      });
-      if (txErr) console.error('[ADMIN] Erreur save payout tx:', txErr);
-
-      // Mark order as processing (final paid will be set by webhook SUCCESSFUL)
-      const { error: updErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
-      if (updErr) console.error('[ADMIN] Erreur mise à jour order payout_status:', updErr);
-      
-      // Notifier le vendeur que le paiement est en cours
-      try {
-        const { data: vendorTokens } = await supabase
-          .from('push_tokens')
-          .select('token')
-          .eq('user_id', report.order.vendor_id)
-          .eq('is_active', true);
-
-        if (vendorTokens && vendorTokens.length > 0) {
-          const notif = getNotificationTemplate('PAYOUT_PROCESSING', {
-            orderCode: report.order.order_code,
-            amount: report.order.total_amount,
-            orderId: report.order.id
-          });
-
-          for (const { token } of vendorTokens) {
-            await sendPushNotification(token, notif.title, notif.body, notif.data);
-          }
-          console.log('[ADMIN] Notification payout processing envoyée au vendeur');
-        }
-      } catch (notifErr) {
-        console.error('[ADMIN] Erreur notification payout:', notifErr);
-      }
-    } else {
-      console.warn('[ADMIN] payout-order - Pixpay returned success but no transaction_id');
-    }
-
-    res.json({ success: result.success, result });
-  } catch (error) {
-    console.error('[ADMIN] Erreur payout-order:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-// Helper: verify order payout eligibility and return a detailed report
-// NOTE: Per project rule, eligibility depends on order status, payout_status and that the buyer has paid.
-async function verifyOrderForPayout(orderId, dbClient = null) {
-  if (!orderId) return { ok: false, error: 'order_id_required' };
-
-  // Use provided client or fallback to global supabase
-  const db = dbClient || supabase;
-
-  // Fetch order (include payment_confirmed_at)
-  const { data: order, error: orderErr } = await db
-    .from('orders')
-    .select('id, order_code, status, total_amount, vendor_id, payout_status, payout_requested_at, payment_confirmed_at, is_demo')
-    .eq('id', orderId)
-    .maybeSingle();
-
-  if (orderErr || !order) return { ok: false, error: 'order_not_found' };
-
-  // Checks: delivered implies buyer paid for our app flow; accept payment_confirmed_at, status='paid' or status='delivered' as paid
-  const delivered = order.status === 'delivered';
-  const paid = !!order.payment_confirmed_at || order.status === 'paid' || order.status === 'delivered';
-  // IMPORTANT: Do NOT trust payout_status='paid' alone - we must verify a real Pixpay transaction exists
-  // The payout_status might be incorrectly set without an actual payout
-  const payoutStatusOk = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
-  let alreadyPaid = false; // Start with false, only set true if we find a REAL transaction
-
-  // Vendor info required
-  const { data: vendor } = await db
-    .from('profiles')
-    .select('id, full_name, phone, wallet_type')
-    .eq('id', order.vendor_id)
-    .maybeSingle();
-
-  const vendorOk = vendor && vendor.phone;
-
-  // Check if a successful payout transaction ACTUALLY exists for this order
-  // This is the authoritative check - we don't trust payout_status alone
-  try {
-    // 1) Check for a direct transaction for this order with provider_transaction_id
-    const { data: txs } = await db.from('payment_transactions')
-      .select('id, transaction_id, status, provider_transaction_id')
-      .eq('order_id', orderId)
-      .eq('transaction_type', 'payout')
-      .limit(5);
-    
-    // A payout is considered done if there's a SUCCESSFUL transaction OR a transaction with provider_transaction_id
-    const hasTx = txs && txs.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
-    
-    if (hasTx) {
-      console.log(`[ADMIN] verifyOrderForPayout: Found existing payout transaction for order ${orderId}`);
-      alreadyPaid = true;
-      // Reconcile DB state if needed
-      if (order.payout_status !== 'paid') {
-        try {
-          await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-        } catch (e) {
-          console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid:', e?.message || e);
-        }
-      }
-    } else {
-      // 2) Check if order is part of a batch that has a successful payout transaction
-      const { data: items } = await db.from('payout_batch_items')
-        .select('batch_id, provider_transaction_id, status')
-        .eq('order_id', orderId);
-      
-      // Check if any batch item has a provider_transaction_id (meaning Pixpay was called)
-      const itemWithTx = (items || []).find(i => i.provider_transaction_id && i.provider_transaction_id !== 'null');
-      if (itemWithTx) {
-        console.log(`[ADMIN] verifyOrderForPayout: Found batch item with provider_transaction_id for order ${orderId}`);
-        alreadyPaid = true;
-        if (order.payout_status !== 'paid') {
-          try {
-            await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-          } catch (e) {
-            console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch):', e?.message || e);
-          }
-        }
-      } else {
-        // 3) Check batch-level transaction
-        const batchIds = (items || []).map(i => i.batch_id).filter(Boolean);
-        if (batchIds.length > 0) {
-          const { data: txsBatch } = await db.from('payment_transactions')
-            .select('id, transaction_id, status, provider_transaction_id')
-            .in('batch_id', batchIds)
-            .eq('transaction_type', 'payout')
-            .limit(5);
-          
-          const hasBatchTx = txsBatch && txsBatch.some(t => t.status === 'SUCCESSFUL' || (t.provider_transaction_id && t.provider_transaction_id !== 'null'));
-          if (hasBatchTx) {
-            console.log(`[ADMIN] verifyOrderForPayout: Found batch transaction for order ${orderId}`);
-            alreadyPaid = true;
-            if (order.payout_status !== 'paid') {
-              try {
-                await db.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', orderId);
-              } catch (e) {
-                console.warn('[ADMIN] verifyOrderForPayout - failed to mark order paid (batch tx):', e?.message || e);
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // If payout_status says 'paid' but we found NO transaction, reset it to allow retry
-    if (order.payout_status === 'paid' && !alreadyPaid) {
-      console.log(`[ADMIN] verifyOrderForPayout: Order ${orderId} has payout_status='paid' but NO real transaction found - resetting to 'requested'`);
-      try {
-        await db.from('orders').update({ payout_status: 'requested', payout_paid_at: null }).eq('id', orderId);
-        // Update our local reference
-        order.payout_status = 'requested';
-      } catch (e) {
-        console.warn('[ADMIN] verifyOrderForPayout - failed to reset payout_status:', e?.message || e);
-      }
-    }
-  } catch (e) {
-    console.warn('[ADMIN] verifyOrderForPayout - error checking existing payout txs:', e?.message || e);
-    // Non-fatal, but be conservative
-  }
-
-  // Recalculate payoutStatusOk after potential reset
-  const payoutStatusOkFinal = (order.payout_status === 'requested' || order.payout_status === 'scheduled');
-
-  // Barrière test mode : une commande de démonstration ne doit JAMAIS déclencher
-  // un virement réel vers un vendeur. C'est le dernier verrou avant l'argent :
-  // il est volontairement ici, dans la fonction que TOUS les chemins de payout
-  // traversent (batch, verify-and-payout, exécution). `undefined` (colonne absente
-  // avant la migration 009) -> false -> comportement historique inchangé.
-  const isDemoOrder = order.is_demo === true;
-
-  // Eligible only if delivered AND buyer paid AND payout status valid AND vendor info present and not already paid
-  const eligible = delivered && paid && payoutStatusOkFinal && !alreadyPaid && vendorOk && !isDemoOrder;
-
-  const reasons = [];
-  if (!delivered) reasons.push('not_delivered');
-  if (!paid) reasons.push('not_paid');
-  if (!vendorOk) reasons.push('vendor_info_missing');
-  if (!payoutStatusOkFinal) reasons.push('invalid_payout_status');
-  if (alreadyPaid) reasons.push('already_paid');
-  if (isDemoOrder) reasons.push('demo_order');
-
-  return {
-    ok: true,
-    order,
-    vendor: vendor || null,
-    checks: {
-      delivered,
-      paid,
-      payment_confirmed_at: order.payment_confirmed_at || null,
-      payoutStatusOk: payoutStatusOkFinal,
-      vendorOk,
-      payout_status: order.payout_status || null,
-      alreadyPaid,
-      isDemoOrder
-    },
-    eligible,
-    reasons
-  };
-}
-
-// POST /api/admin/verify-and-payout - run a full verification and optionally execute the payout (admin only)
-app.post('/api/admin/verify-and-payout', requireAdmin, async (req, res) => {
-  try {
-    const { orderId, execute, commission_pct } = req.body || {};
-    if (!orderId) return res.status(400).json({ success: false, error: 'orderId required' });
-
-    const report = await verifyOrderForPayout(orderId);
-    if (!report.ok) return res.status(404).json({ success: false, error: report.error });
-
-    // If just verifying, return the report
-    if (!execute) return res.json({ success: true, report });
-
-    // If executing, make sure eligible
-    if (!report.eligible) return res.status(400).json({ success: false, error: 'order_not_eligible_for_payout', report });
-
-    // Calculate commission and net amount
-    const grossAmount = Number(report.order.total_amount || 0);
-    const commissionPct = typeof commission_pct === 'number' ? commission_pct : (commission_pct ? Number(commission_pct) : 0);
-    const commissionAmount = Math.round(grossAmount * commissionPct / 100);
-    const netAmount = grossAmount - commissionAmount;
-
-    // Call PixPay to send money to vendor (NET amount after commission)
-    const phone = report.vendor.phone;
-    const walletType = report.vendor.wallet_type || 'wave-senegal';
-
-    console.log('[ADMIN] verify-and-payout executing payout for order:', orderId, { grossAmount, commissionPct, commissionAmount, netAmount, phone, walletType });
-
-    const payoutRes = await pixpaySendMoney({ amount: netAmount, phone, orderId: report.order.id, type: 'vendor_payout', walletType });
-
-    console.log('[ADMIN] verify-and-payout Pixpay response:', JSON.stringify(payoutRes, null, 2));
-
-    // IMPORTANT: Check if Pixpay returned success before proceeding
-    if (!payoutRes || !payoutRes.success) {
-      const errorMsg = payoutRes?.message || payoutRes?.raw?.message || 'Pixpay returned an error';
-      console.error('[ADMIN] verify-and-payout - Pixpay call failed:', errorMsg, payoutRes);
-      return res.status(500).json({ 
-        success: false, 
-        error: `Pixpay payout failed: ${errorMsg}`,
-        pixpay_response: payoutRes 
-      });
-    }
-
-    if (payoutRes.transaction_id) {
-      const { error: txErr } = await supabase.from('payment_transactions').insert({
-        transaction_id: payoutRes.transaction_id,
-        provider: 'pixpay',
-        order_id: report.order.id,
-        amount: netAmount,
-        phone,
-        status: payoutRes.state || 'PENDING1',
-        transaction_type: 'payout',
-        raw_response: payoutRes.raw
-      });
-      if (txErr) console.error('[ADMIN] verify-and-payout - failed saving payout tx:', txErr);
-
-      // mark order as processing; final 'paid' will be set by webhook when provider confirms
-      const { error: updateErr } = await supabase.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).eq('id', report.order.id);
-      if (updateErr) console.error('[ADMIN] verify-and-payout - failed updating order payout_status:', updateErr);
-    } else {
-      console.warn('[ADMIN] verify-and-payout - Pixpay returned success but no transaction_id');
-    }
-
-    return res.json({ success: true, payout: payoutRes });
-  } catch (error) {
-    console.error('[ADMIN] verify-and-payout error:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
 
 // ---------- Admin Transfers (Withdraw from Pixpay to Wave/Orange Money) ----------
 // GET /api/admin/transfers - List admin transfers history
@@ -4753,98 +4338,11 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
   }
 });
 
+require('./payout-routes').registerPayoutRoutes(app, requireAdmin, controlledPayouts);
+
 // ---------- Payout Batches (admin) ----------
 // Create a payout batch from delivered orders with payout_status = 'requested'
-app.post('/api/admin/payout-batches/create', requireAdmin, async (req, res) => {
-  try {
-    const { notes, scheduled_at, commission_pct } = req.body || {};
-    const createdBy = req.adminUser?.id || null;
 
-    // Prefer the service role client for admin operations to bypass RLS
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let supabaseAdmin = supabase;
-    if (serviceRoleKey) {
-      const { createClient } = require('@supabase/supabase-js');
-      supabaseAdmin = createClient(process.env.SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      console.log('[ADMIN] create payout batch - using service role client');
-    } else {
-      console.warn('[ADMIN] create payout batch - SUPABASE_SERVICE_ROLE_KEY missing; falling back to RLS-bound client (may fail)');
-    }
-
-    const pct = typeof commission_pct === 'number' ? Number(commission_pct) : (commission_pct ? Number(commission_pct) : 0);
-    if (isNaN(pct) || pct < 0) return res.status(400).json({ success: false, error: 'commission_pct must be a non-negative number' });
-
-    // Fetch orders eligible for batching (delivered & requested). We accept delivered orders as paid per app workflow.
-    // Les commandes de démonstration sont écartées ici (elles le sont aussi dans
-    // verifyOrderForPayout) : elles ne doivent jamais entrer dans un lot de virements.
-    const { data: orders, error } = await supabaseAdmin
-      .from('orders')
-      .select('id, vendor_id, total_amount, payment_confirmed_at, status')
-      .eq('status', 'delivered')
-      .eq('payout_status', 'requested')
-      .eq('is_demo', false);
-
-    if (error) {
-      console.error('[ADMIN] create payout batch - fetch orders error:', error);
-      throw error;
-    }
-
-    if (!orders || orders.length === 0) {
-      return res.json({ success: true, message: 'No payout requests found' });
-    }
-
-    const totalAmount = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
-
-    // Insert batch (store commission_pct) with explicit 'scheduled' status
-    const { data: batch, error: batchErr } = await supabaseAdmin
-      .from('payout_batches')
-      .insert({ 
-        created_by: createdBy, 
-        scheduled_at: scheduled_at || new Date().toISOString(), 
-        total_amount: totalAmount, 
-        notes, 
-        commission_pct: pct,
-        status: 'scheduled'  // Explicit status for process-scheduled to work
-      })
-      .select('*')
-      .single();
-
-    if (batchErr || !batch) {
-      console.error('[ADMIN] create payout batch - insert batch error:', batchErr);
-      throw batchErr || new Error('Failed to create batch');
-    }
-
-    console.log('[ADMIN] create payout batch - batch created with id:', batch.id, 'status:', batch.status);
-
-    // Compute commission and net per item and insert items with status 'queued'
-    const items = orders.map(o => {
-      const amount = Number(o.total_amount || 0);
-      const commission_amount = Math.round(amount * pct / 100);
-      const net_amount = amount - commission_amount;
-      return { batch_id: batch.id, order_id: o.id, vendor_id: o.vendor_id, amount, commission_pct: pct, commission_amount, net_amount, status: 'queued' };
-    });
-    console.log('[ADMIN] create payout batch - inserting', items.length, 'items with status queued');
-
-    const { error: itemsErr } = await supabaseAdmin.from('payout_batch_items').insert(items);
-    if (itemsErr) {
-      console.error('[ADMIN] create payout batch - insert items error:', itemsErr);
-      throw itemsErr;
-    }
-
-    // Mark orders as scheduled
-    const orderIds = orders.map(o => o.id);
-    const { error: updateOrdersErr } = await supabaseAdmin.from('orders').update({ payout_status: 'scheduled' }).in('id', orderIds);
-    if (updateOrdersErr) {
-      console.error('[ADMIN] create payout batch - updating orders error:', updateOrdersErr);
-    }
-
-    res.json({ success: true, batch });
-  } catch (error) {
-    console.error('[ADMIN] create payout batch error:', error);
-    const msg = error?.message || (error && typeof error === 'object' ? JSON.stringify(error) : String(error));
-    res.status(500).json({ success: false, error: msg });
-  }
-});
 
 // List payout batches
 app.get('/api/admin/payout-batches', requireAdmin, async (req, res) => {
@@ -5697,267 +5195,7 @@ app.get('/api/buyer/orders/:id/invoice', async (req, res) => {
   }
 });
 
-// Helper to process a single payout batch (reusable for cron/manual)
-async function processPayoutBatch(batchId) {
-  try {
-    if (!batchId) return { success: false, error: 'batch id required' };
-
-    // Use service role client to bypass RLS for payout batch operations
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey) {
-      console.error('[ADMIN] processPayoutBatch: SUPABASE_SERVICE_ROLE_KEY missing');
-      return { success: false, error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY required' };
-    }
-    const supabaseAdmin = createClient(SUPABASE_URL, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-
-    console.log('[ADMIN] processPayoutBatch: Looking for batch:', batchId);
-    const { data: batch, error: batchErr } = await supabaseAdmin.from('payout_batches').select('*').eq('id', batchId).maybeSingle();
-    console.log('[ADMIN] processPayoutBatch: Batch lookup result:', { batch, batchErr });
-    if (batchErr || !batch) return { success: false, error: 'Batch not found', details: batchErr?.message };
-    if (batch.status === 'processing') return { success: false, error: 'Batch already processing' };
-
-    await supabaseAdmin.from('payout_batches').update({ status: 'processing' }).eq('id', batchId);
-
-    // Debug: fetch ALL items regardless of status to see what's in the batch
-    const { data: allItems } = await supabaseAdmin.from('payout_batch_items').select('id, order_id, status, vendor_id').eq('batch_id', batchId);
-    console.log('[ADMIN] processPayoutBatch: ALL items in batch:', allItems?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status, vendor_id: i.vendor_id })));
-
-    const { data: items, error: itemsErr } = await supabaseAdmin.from('payout_batch_items').select('*, order:orders(id, order_code)').eq('batch_id', batchId).in('status', ['queued', 'failed']);
-    console.log('[ADMIN] processPayoutBatch: Items with queued/failed status:', { count: items?.length || 0, itemsErr, items: items?.map(i => ({ id: i.id, order_id: i.order_id, status: i.status })) });
-    if (!items || items.length === 0) {
-      console.log('[ADMIN] processPayoutBatch: No items found with queued/failed status - marking batch as completed');
-      await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
-      return { success: true, message: 'No items to process' };
-    }
-
-    const byVendor = items.reduce((acc, it) => { (acc[it.vendor_id] = acc[it.vendor_id] || []).push(it); return acc; }, {});
-
-    const results = [];
-    for (const vendorId of Object.keys(byVendor)) {
-      const vendorItems = byVendor[vendorId];
-      console.log('[ADMIN] processPayoutBatch: Processing vendor:', vendorId, 'items:', vendorItems.length);
-
-      // Verify each item/order for eligibility and split eligible vs ineligible
-      const eligibleItems = [];
-      const ineligible = [];
-      for (const it of vendorItems) {
-        try {
-          const report = await verifyOrderForPayout(it.order_id, supabaseAdmin);
-          console.log('[ADMIN] processPayoutBatch: Order verification:', { order_id: it.order_id, eligible: report.eligible, reasons: report.reasons });
-          if (report.ok && report.eligible) {
-            eligibleItems.push(it);
-          } else {
-            ineligible.push({ item: it, reason: report });
-          }
-        } catch (e) {
-          console.error('[ADMIN] processPayoutBatch: Order verification error:', it.order_id, e);
-          ineligible.push({ item: it, reason: { ok: false, error: String(e) } });
-        }
-      }
-
-      console.log('[ADMIN] processPayoutBatch: Eligible:', eligibleItems.length, 'Ineligible:', ineligible.length);
-
-      // Mark ineligible items - distinguish between already_paid (success) and other failures
-      if (ineligible.length > 0) {
-        const alreadyPaidItems = ineligible.filter(i => i.reason?.reasons?.includes('already_paid'));
-        const failedItems = ineligible.filter(i => !i.reason?.reasons?.includes('already_paid'));
-        
-        // Mark already paid items as 'paid' (they succeeded previously)
-        if (alreadyPaidItems.length > 0) {
-          const paidIds = alreadyPaidItems.map(i => i.item.id);
-          try {
-            await supabaseAdmin.from('payout_batch_items').update({ status: 'paid', provider_response: JSON.stringify({ info: 'already_paid_previously' }) }).in('id', paidIds);
-            console.log('[ADMIN] processPayoutBatch: Marked', paidIds.length, 'items as paid (already paid previously)');
-          } catch (e) {
-            console.error('[ADMIN] failed marking already_paid items:', e);
-          }
-        }
-        
-        // Mark other ineligible items as failed
-        if (failedItems.length > 0) {
-          const failedIds = failedItems.map(i => i.item.id);
-          try {
-            await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: 'order_not_eligible', details: failedItems.map(i => i.reason) }) }).in('id', failedIds);
-          } catch (e) {
-            console.error('[ADMIN] failed marking ineligible payout items:', e);
-          }
-        }
-      }
-
-      // If all items are already paid, consider this vendor as success
-      const alreadyPaidCount = ineligible.filter(i => i.reason?.reasons?.includes('already_paid')).length;
-      if (eligibleItems.length === 0 && alreadyPaidCount === vendorItems.length) {
-        console.log('[ADMIN] processPayoutBatch: All items for vendor', vendorId, 'already paid');
-        results.push({ vendorId, success: true, message: 'all_already_paid' });
-        continue;
-      }
-
-      if (eligibleItems.length === 0) {
-        results.push({ vendorId, success: false, error: 'no_eligible_items' });
-        continue;
-      }
-
-      // Use net_amount (gross - commission) to compute payout per vendor
-      const totalNet = eligibleItems.reduce((s, it) => s + Number(it.net_amount || it.amount || 0), 0);
-      console.log('[ADMIN] processPayoutBatch: Total net amount for vendor', vendorId, ':', totalNet);
-
-      const { data: vendor } = await supabaseAdmin.from('profiles').select('id, phone, wallet_type').eq('id', vendorId).maybeSingle();
-      console.log('[ADMIN] processPayoutBatch: Vendor info:', { vendorId, phone: vendor?.phone, wallet_type: vendor?.wallet_type });
-      if (!vendor || !vendor.phone) {
-        const failReason = 'Vendor phone not found';
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: failReason }) }).in('id', eligibleItems.map(i => i.id));
-        results.push({ vendorId, success: false, error: failReason });
-        continue;
-      }
-
-      try {
-        console.log('[ADMIN] processPayoutBatch: Sending payout via pixpay:', { amount: totalNet, phone: vendor.phone, walletType: vendor.wallet_type || 'wave-senegal' });
-        const payoutRes = await pixpaySendMoney({ amount: totalNet, phone: vendor.phone, orderId: batchId, type: 'vendor_payout', walletType: vendor.wallet_type || 'wave-senegal' });
-        console.log('[ADMIN] processPayoutBatch: Pixpay response:', payoutRes);
-
-        if (payoutRes && payoutRes.transaction_id) {
-          // Record aggregated payout transaction and link to batch_id (not a single order)
-          await supabaseAdmin.from('payment_transactions').insert({ transaction_id: payoutRes.transaction_id, provider: 'pixpay', batch_id: batchId, order_id: null, amount: totalNet, phone: vendor.phone, status: payoutRes.state || 'PENDING1', transaction_type: 'payout', raw_response: normalizeJsonField(payoutRes.raw), provider_response: normalizeJsonField(payoutRes.raw) });
-          // mark batch items as processing (will be set to 'paid' by webhook on SUCCESSFUL)
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'processing', provider_transaction_id: payoutRes.transaction_id, provider_response: normalizeJsonField(payoutRes.raw) }).in('id', eligibleItems.map(i => i.id));
-          const orderIds = eligibleItems.map(i => i.order_id).filter(Boolean);
-          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'processing', payout_processing_at: new Date().toISOString() }).in('id', orderIds);
-          results.push({ vendorId, success: true, transaction_id: payoutRes.transaction_id, total_net: totalNet });
-        } else {
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify(payoutRes || { error: 'Unknown payout response' }) }).in('id', eligibleItems.map(i => i.id));
-          results.push({ vendorId, success: false, error: payoutRes?.message || 'Payout failed' });
-        }
-      } catch (err) {
-        console.error('[ADMIN] payout batch vendor error:', err);
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ error: String(err) }) }).in('id', eligibleItems.map(i => i.id));
-        results.push({ vendorId, success: false, error: String(err) });
-      }
-    }
-
-    // Determine final batch status:
-    // - If any vendor payout failed completely -> 'failed'
-    // - If all vendor payouts succeeded but items are 'processing' (waiting for webhook) -> 'processing'
-    // - If all items are already 'paid' -> 'completed'
-    const anyFailed = results.some(r => !r.success && r.message !== 'all_already_paid');
-    const anyProcessing = results.some(r => r.success && r.transaction_id); // Has transaction_id = sent to Pixpay, waiting for confirmation
-    const allAlreadyPaid = results.every(r => r.message === 'all_already_paid');
-    
-    let finalStatus = 'completed';
-    if (anyFailed) {
-      finalStatus = 'failed';
-    } else if (anyProcessing) {
-      finalStatus = 'processing'; // Wait for webhook to confirm and set to 'completed'
-    } else if (allAlreadyPaid) {
-      finalStatus = 'completed';
-    }
-    
-    console.log('[ADMIN] processPayoutBatch: Final results:', { anyFailed, anyProcessing, allAlreadyPaid, finalStatus, results });
-    await supabaseAdmin.from('payout_batches').update({ status: finalStatus, processed_at: new Date().toISOString() }).eq('id', batchId);
-
-    return { success: true, results };
-  } catch (error) {
-    console.error('[ADMIN] processPayoutBatch error:', error);
-    try { await supabase.from('payout_batches').update({ status: 'failed' }).eq('id', batchId); } catch (e) { console.error('[ADMIN] failed marking batch failed:', e); }
-    return { success: false, error: String(error) };
-  }
-}
-
-// Process a payout batch (admin triggers payouts per vendor, aggregated)
-app.post('/api/admin/payout-batches/:id/process', requireAdmin, async (req, res) => {
-  try {
-    const batchId = req.params.id;
-    const result = await processPayoutBatch(batchId);
-    if (!result || !result.success) return res.status(500).json(result);
-    res.json(result);
-  } catch (error) {
-    console.error('[ADMIN] process payout batch error (outer):', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-// Cancel a payout batch
-app.post('/api/admin/payout-batches/:id/cancel', requireAdmin, async (req, res) => {
-  try {
-    const batchId = req.params.id;
-    if (!batchId) return res.status(400).json({ success: false, error: 'batch id required' });
-
-    await supabase.from('payout_batches').update({ status: 'cancelled', processed_at: new Date().toISOString() }).eq('id', batchId);
-    // revert item states and orders
-    const { data: items } = await supabase.from('payout_batch_items').select('*').eq('batch_id', batchId);
-    if (items && items.length > 0) {
-      await supabase.from('payout_batch_items').update({ status: 'failed', provider_response: JSON.stringify({ reason: 'Batch cancelled' }) }).eq('batch_id', batchId);
-      const orderIds = items.map(i => i.order_id).filter(Boolean);
-      if (orderIds.length > 0) await supabase.from('orders').update({ payout_status: 'requested' }).in('id', orderIds);
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('[ADMIN] cancel payout batch error:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-// Admin utility: finalize payout (force mark transaction/batch as SUCCESSFUL and finalize DB state)
-app.post('/api/admin/finalize-payout', requireAdmin, async (req, res) => {
-  try {
-    const { transaction_id, batch_id, provider_response } = req.body || {};
-    if (!transaction_id && !batch_id) return res.status(400).json({ success: false, error: 'transaction_id or batch_id required' });
-
-    if (transaction_id) {
-      // Update the payment transaction
-      const { data: txs, error: txErr } = await supabase.from('payment_transactions').select('*').eq('transaction_id', transaction_id).limit(1);
-      if (txErr) throw txErr;
-      if (!txs || txs.length === 0) return res.status(404).json({ success: false, error: 'transaction not found' });
-      const tx = txs[0];
-
-      await supabase.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || tx.provider_response || null, provider_transaction_id: transaction_id, provider_error: null, updated_at: new Date().toISOString() }).eq('transaction_id', transaction_id);
-
-      // If this tx references an order, mark order paid - use supabaseAdmin to bypass RLS
-      if (tx.order_id) {
-        await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).eq('id', tx.order_id);
-      }
-
-      // If tx references a batch, finalize batch - use supabaseAdmin to bypass RLS
-      if (tx.batch_id) {
-        const batchId = tx.batch_id;
-        const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batchId);
-        if (items && items.length > 0) {
-          const itemIds = items.map(i => i.id);
-          const orderIds = items.map(i => i.order_id).filter(Boolean);
-          await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-          if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-        }
-        await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batchId);
-      }
-
-      return res.json({ success: true, message: 'transaction finalized', transaction_id });
-    }
-
-    // finalize by batch_id - use supabaseAdmin to bypass RLS
-    if (batch_id) {
-      const { data: txsBatch } = await supabaseAdmin.from('payment_transactions').select('*').eq('batch_id', batch_id).limit(1);
-      if (txsBatch && txsBatch.length > 0) {
-        const txb = txsBatch[0];
-        await supabaseAdmin.from('payment_transactions').update({ status: 'SUCCESSFUL', provider_response: provider_response || txb.provider_response || null, provider_transaction_id: txb.provider_transaction_id || txb.transaction_id || null, provider_error: null, updated_at: new Date().toISOString() }).eq('batch_id', batch_id);
-      }
-
-      const { data: items } = await supabaseAdmin.from('payout_batch_items').select('id,order_id').eq('batch_id', batch_id);
-      if (items && items.length > 0) {
-        const itemIds = items.map(i => i.id);
-        const orderIds = items.map(i => i.order_id).filter(Boolean);
-        await supabaseAdmin.from('payout_batch_items').update({ status: 'paid' }).in('id', itemIds);
-        if (orderIds.length > 0) await supabaseAdmin.from('orders').update({ payout_status: 'paid', payout_paid_at: new Date().toISOString() }).in('id', orderIds);
-      }
-      await supabaseAdmin.from('payout_batches').update({ status: 'completed', processed_at: new Date().toISOString() }).eq('id', batch_id);
-
-      return res.json({ success: true, message: 'batch finalized', batch_id });
-    }
-
-  } catch (error) {
-    console.error('[ADMIN] finalize-payout error:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
+async function processPayoutBatch(batchId) { return controlledPayouts.processBatch(batchId); }
 
 // Admin utility: Sync all PENDING1/PENDING2 transactions - check if they actually succeeded
 // This is useful to fix transactions where the webhook didn't update the status
@@ -6097,29 +5335,10 @@ app.post('/api/admin/payout-batches/process-scheduled', requireAdmin, async (req
   }
 });
 
-// Optional scheduler for automatic batch processing (enabled via env)
-if (process.env.ENABLE_PAYOUT_SCHEDULER === 'true') {
-  try {
-    const cron = require('node-cron');
-    const expr = process.env.PAYOUT_SCHEDULE_CRON || '0 2 * * *'; // default daily at 02:00
-    cron.schedule(expr, async () => {
-      console.log(`[SCHEDULER] Running payout scheduler at ${new Date().toISOString()} (cron: ${expr})`);
-      try {
-        const now = new Date().toISOString();
-        const { data: batches } = await supabase.from('payout_batches').select('*').lte('scheduled_at', now).eq('status', 'scheduled').limit(100);
-        for (const b of batches || []) {
-          const r = await processPayoutBatch(b.id);
-          console.log('[SCHEDULER] processed batch', b.id, r && r.success ? 'OK' : r);
-        }
-      } catch (e) {
-        console.error('[SCHEDULER] Error during scheduled processing:', e);
-      }
-    }, { scheduled: true });
-    console.log(`[SCHEDULER] Payout scheduler enabled (${expr})`);
-  } catch (e) {
-    console.warn('[SCHEDULER] node-cron not installed, scheduler disabled');
-  }
-}
+const payoutTimer = setInterval(() => {
+  controlledPayouts.tick().catch(error => console.error('[PAYOUT] Automatisme suspendu:', error.message));
+}, 60_000);
+payoutTimer.unref();
 
 // Optional payment reconciler: mark old PENDING transactions as SUCCESSFUL (configurable and disabled by default)
 if (process.env.ENABLE_PAYMENT_RECONCILER === 'true') {
@@ -7090,7 +6309,8 @@ app.post('/api/notify/admin-delivery-request', async (req, res) => {
       const { error: updateErr } = await supabase
         .from('orders')
         .update({ payout_status: 'requested', payout_requested_at: new Date().toISOString(), payout_requested_by: requestedBy || null })
-        .eq('id', orderId);
+        .eq('id', orderId)
+        .is('payout_status', null);
       if (updateErr) console.error('[NOTIFY-ADMIN] Erreur update order payout_status:', updateErr);
     } catch (e) {
       console.error('[NOTIFY-ADMIN] Erreur tentative update order:', e);
@@ -7508,7 +6728,7 @@ app.post('/api/orders/mark-delivered', async (req, res) => {
 
     // If payout_status is not already requested/scheduled/paid, set it to requested
     const currentPayout = order.payout_status;
-    if (!['requested','scheduled','paid'].includes(currentPayout)) {
+    if (currentPayout == null) {
       updates.payout_status = 'requested';
       updates.payout_requested_at = new Date().toISOString();
       updates.payout_requested_by = deliveredBy || null;
@@ -7631,7 +6851,7 @@ app.post('/api/admin/sync-delivered-payouts', requireAdmin, async (req, res) => 
       .from('orders')
       .select('id, order_code, status, payout_status, vendor_id')
       .eq('status', 'delivered')
-      .not('payout_status', 'in', '(requested,scheduled,paid)')
+      .is('payout_status', null)
       .limit(1000);
 
     if (error) throw error;
