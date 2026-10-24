@@ -198,7 +198,7 @@ const AdminDashboard: React.FC = () => {
   const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'payouts_history'|'commissions'|'transfers'|'refunds'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders'|'transactions'|'payouts'|'seller_payments'|'payouts_history'|'commissions'|'transfers'|'refunds'>('orders');
 
   // Admin transfers state
   const [transfers, setTransfers] = useState<AdminTransfer[]>([]);
@@ -1232,14 +1232,13 @@ const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      <PayoutControl getAuthHeader={getAuthHeader} />
-
       <div>
         <div className="mb-4 space-y-3">
           <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'orders' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('orders')}>Commandes</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'transactions' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts')}>Payouts</button>
+            <button aria-pressed={activeTab === 'seller_payments'} className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'seller_payments' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('seller_payments')}>Paiements des vendeurs</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'payouts_history' ? 'bg-slate-800 text-white' : 'bg-slate-100'}`} onClick={() => setActiveTab('payouts_history')}>Historique</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'commissions' ? 'bg-emerald-700 text-white' : 'bg-emerald-100 text-emerald-900'}`} onClick={() => setActiveTab('commissions')}>📊 Commissions</button>
             <button className={`shrink-0 rounded px-3 py-2 text-sm ${activeTab === 'refunds' ? 'bg-pink-700 text-white' : 'bg-pink-100 text-pink-800'}`} onClick={() => setActiveTab('refunds')}>🔄 Remboursements</button>
@@ -1254,6 +1253,7 @@ const AdminDashboard: React.FC = () => {
               placeholder={`🔍 Rechercher ${
                 activeTab === 'orders' ? 'commandes (code, nom, téléphone, statut...)' : 
                 activeTab === 'transactions' ? 'transactions (ID, order, batch, provider...)' : 
+                activeTab === 'seller_payments' ? 'virements (prestataire, transaction, statut...)' :
                 activeTab === 'commissions' ? 'commissions (order, vendeur, statut...)' :
                 activeTab === 'transfers' ? 'transfers (téléphone, wallet, statut...)' : 
                 activeTab === 'refunds' ? 'remboursements (order, acheteur, statut...)' : 
@@ -1274,6 +1274,8 @@ const AdminDashboard: React.FC = () => {
             )}
           </div>
         </div>
+
+        {activeTab === 'seller_payments' && <PayoutControl getAuthHeader={getAuthHeader} searchQuery={searchQuery} />}
 
         {activeTab === 'orders' && (
           <Card>

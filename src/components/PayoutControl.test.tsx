@@ -17,7 +17,7 @@ describe('contrôle payouts', () => {
     mockApi(); render(<PayoutControl getAuthHeader={auth} />);
     expect(await screen.findByText('Mode manuel')).toBeInTheDocument();
     expect(screen.getByText(/Commission payout : 2 %/)).toBeInTheDocument();
-    expect(await screen.findByText(/À vérifier chez le prestataire/)).toBeInTheDocument();
+    expect(await screen.findByText('À vérifier')).toBeInTheDocument();
   });
   it('activation explicite puis arrêt manuel', async () => {
     const fetchMock = mockApi(); vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -51,7 +51,7 @@ describe('contrôle payouts', () => {
   });
   it('aucun secours proposé pour un résultat incertain', async () => {
     mockApi(); render(<PayoutControl getAuthHeader={auth} />);
-    await screen.findByText(/À vérifier chez le prestataire/);
+    await screen.findByText('À vérifier');
     expect(screen.queryByRole('button', { name: 'Tenter le secours' })).not.toBeInTheDocument();
   });
   it('migration de routage absente bloque l’activation', async () => {
