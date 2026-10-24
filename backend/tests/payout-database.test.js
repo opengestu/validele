@@ -53,7 +53,7 @@ describe('payout PostgreSQL', () => {
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
       CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY);
       CREATE TABLE profiles(id uuid PRIMARY KEY, phone text, wallet_type text);
-      CREATE TABLE orders(id uuid PRIMARY KEY, order_code text, vendor_id uuid, status text,total_amount bigint,protection_fee bigint DEFAULT 0,payout_status text,payment_confirmed_at timestamptz,is_demo boolean DEFAULT false,payout_paid_at timestamptz,payout_processing_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE orders(id uuid PRIMARY KEY, order_code text, vendor_id uuid, status text,total_amount bigint,protection_fee bigint DEFAULT 0,payout_status text,payment_confirmed_at timestamptz,is_demo boolean DEFAULT false,created_at timestamptz DEFAULT now());
       CREATE TABLE refund_requests(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text);`);
     for (const file of ['create_payout_batches.sql','add_batch_commission_fields.sql','create_payment_transactions.sql']) await db.exec(fs.readFileSync(path.join(__dirname,'../scripts',file),'utf8'));
     await db.exec('ALTER TABLE payment_transactions ADD COLUMN batch_id uuid;');
@@ -67,6 +67,24 @@ describe('payout PostgreSQL', () => {
     await db.query("insert into orders(id,vendor_id,status,total_amount,protection_fee,payout_status,payment_confirmed_at) values($1,$2,'delivered',10300,300,'requested',now())",[order,vendor]);
   });
   test('manuel par défaut, automatique suspendu', async () => { assert.equal(await batch('automatic'),null); assert.equal(await scalar('select count(*)::int from payout_batches'),0); });
+  test('répare une base existante sans payout_processing_at et reprend le lot sans double réservation', async () => {
+    const b=await batch();
+    await db.exec('ALTER TABLE orders DROP COLUMN payout_processing_at');
+    await assert.rejects(claim(b.id), /payout_processing_at.*does not exist/);
+    assert.equal(await scalar('select count(*)::int from payout_dispatches'),0);
+    assert.equal(await scalar('select payout_status from orders'),'scheduled');
+    const repair=fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20261024_fix_payout_order_timestamps.sql'),'utf8');
+    await db.exec(repair);
+    const d=await claim(b.id);
+    assert.ok(d.id);
+    assert.ok(await scalar('select payout_processing_at from orders'));
+    assert.equal(await claim(b.id),null);
+    await settle(d.id,'repaired-tx','SUCCESSFUL');
+    const paidAt=await scalar('select payout_paid_at from orders');
+    await db.exec(repair);
+    assert.equal(await scalar('select payout_status from orders'),'paid');
+    assert.deepEqual(await scalar('select payout_paid_at from orders'),paidAt);
+  });
   test('commission et exclusion des frais acheteur, réservation unique du lot', async () => {
     const [first,second]=await Promise.all([batch(),batch()]);
     assert.equal([first,second].filter(Boolean).length,1);

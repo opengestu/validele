@@ -1,6 +1,11 @@
 -- Run before deploying the controlled payout backend. No historical status is rewritten.
 BEGIN;
 
+-- Older installations do not have these timestamps. Declare them before the RPCs.
+ALTER TABLE public.orders
+  ADD COLUMN IF NOT EXISTS payout_processing_at timestamptz,
+  ADD COLUMN IF NOT EXISTS payout_paid_at timestamptz;
+
 ALTER TABLE public.payout_batches ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'manual';
 CREATE TABLE IF NOT EXISTS public.payout_settings (
   id integer PRIMARY KEY CHECK (id = 1),

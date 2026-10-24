@@ -15,6 +15,8 @@ Avant déploiement
 Comportement
 ------------
 
+Si le journal indique `column "payout_processing_at" of relation "orders" does not exist`, appliquer `supabase/migrations/20261024_fix_payout_order_timestamps.sql` dans la base Supabase déjà configurée. Ce correctif ajoute les dates manquantes sans changer les statuts ni le mode. La réservation en erreur est annulée par PostgreSQL avant tout appel Pixpay ; le lot reste disponible pour le prochain passage automatique. Ne pas réinitialiser les commandes ni recréer manuellement un virement pour corriger ce problème de schéma.
+
 - Chaque minute, le backend lit le mode et crée des lots automatiques avec les commandes livrées, non démo, ayant un paiement confirmé et sans remboursement en attente/accepté/traité. Il utilise un client service_role indépendant des sessions de connexion.
 - La base réserve chaque commande avant l'appel Pixpay. Les accès manuel, automatique et batch utilisent cette réservation. Le passage en manuel bloque les prochaines réservations automatiques ; un virement déjà réservé peut terminer son envoi.
 - Le brut vendeur exclut les frais de protection acheteur enregistrés sur la commande. La commission est arrondie en FCFA, le net doit être strictement positif. Les lots existants et leurs relances conservent les montants enregistrés ; un ancien lot incohérent est bloqué et doit être vérifié.
