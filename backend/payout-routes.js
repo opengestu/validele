@@ -19,6 +19,10 @@ function registerPayoutRoutes(app, requireAdmin, service) {
   app.get('/api/admin/payout-settings', requireAdmin, wrap(async () => ({ success: true, settings: await service.settings() })));
   app.get('/api/admin/payout-attempts', requireAdmin, wrap(async () => ({ success: true, attempts: await service.attempts() })));
   app.put('/api/admin/payout-settings', requireAdmin, wrap(async req => {
+    if (req.body?.commission_pct !== undefined || req.body?.protection_fee_pct !== undefined) {
+      if (req.body?.mode !== undefined || req.body?.fallback_enabled !== undefined) throw new Error('Enregistrer les taux séparément du mode');
+      await service.setFees(req.body.commission_pct, req.body.protection_fee_pct, req.adminUser.id);
+    }
     if (req.body?.mode !== undefined) await service.setMode(req.body.mode, req.adminUser.id);
     if (req.body?.fallback_enabled !== undefined) await service.setFallback(req.body.fallback_enabled, req.adminUser.id);
     return { success: true, settings: await service.settings() };

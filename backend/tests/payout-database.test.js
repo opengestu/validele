@@ -64,9 +64,11 @@ describe('payout PostgreSQL', () => {
     await db.exec('ALTER TABLE payment_transactions ADD COLUMN batch_id uuid;');
     await db.exec(fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20261023_controlled_payouts.sql'),'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20261024_provider_routed_payouts.sql'),'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20261024_admin_fee_settings.sql'),'utf8'));
   });
   after(async () => { if (db) await db.close(); });
   beforeEach(async () => {
+    await db.exec('UPDATE payout_settings SET commission_pct=null,protection_fee_pct=null; TRUNCATE fee_settings_events;');
     await db.exec("TRUNCATE payout_dispatch_items,payout_dispatches,payout_batch_items,payout_batches,payment_transactions,refund_requests,orders,profiles,auth.users CASCADE; UPDATE payout_settings SET mode='manual',fallback_enabled=false;");
     await db.query('insert into auth.users(id) values($1),($2)',[vendor,vendor2]);
     await db.query("insert into profiles values($1,'771111111','wave-senegal'),($2,'772222222','wave-senegal')",[vendor,vendor2]);
@@ -74,6 +76,25 @@ describe('payout PostgreSQL', () => {
     await collection(order);
   });
   test('manuel par défaut, automatique suspendu', async () => { assert.equal(await batch('automatic'),null); assert.equal(await scalar('select count(*)::int from payout_batches'),0); });
+  test('taux admin prioritaires, persistants et lots existants conservés', async () => {
+    const service = createPayoutService({ db: serviceDb(), env: { PAYOUT_COMMISSION_PCT: '2', VALIDEL_COMMISSION_PCT: '3', PAYOUT_WEBHOOK_SECRET: 'secret' }, sendMoney: async () => {} });
+    const existing = await batch();
+    await service.setFees(5, 4, vendor);
+    const settings = await service.settings();
+    assert.equal(Number(settings.commission_pct), 5);
+    assert.equal(Number(settings.protection_fee_pct), 4);
+    assert.equal(settings.fees_editable, true);
+    assert.equal(Number(await scalar('select commission_pct from payout_batches where id=$1', [existing.id])), 2);
+    assert.equal(await scalar('select count(*)::int from fee_settings_events'), 1);
+    await seedSecondOrder();
+    const next = await service.createBatch();
+    assert.equal(Number(next.commission_pct), 5);
+    assert.equal(await require('../fee-settings').readProtectionRate(serviceDb()), 4);
+    await assert.rejects(service.setFees(100, 4, vendor));
+    await assert.rejects(service.setFees(5, -1, vendor));
+    await assert.rejects(db.query('select set_admin_fee_settings(100,4,$1)', [vendor]));
+    assert.equal(Number((await service.settings()).commission_pct), 5);
+  });
   test('répare une base existante sans payout_processing_at et reprend le lot sans double réservation', async () => {
     const b=await batch();
     await db.exec('ALTER TABLE orders DROP COLUMN payout_processing_at');

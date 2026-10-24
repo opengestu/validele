@@ -464,11 +464,11 @@ app.post('/api/guest/order', async (req, res) => {
     // 3) Créer la commande. payment_method='wave' pour satisfaire la contrainte CHECK ;
     // la vraie méthode (Wave/OM) est choisie à l'étape paiement, comme dans l'app.
     // total_amount = (prix × quantité) + frais de protection. Frais de protection
-    // = VALIDEL_COMMISSION_PCT (même variable que le bot WhatsApp, seule source de
+    // Réglage admin partagé avec le bot WhatsApp, Render en valeur par défaut, source de
     // vérité) ; SANS RAPPORT avec la commission vendeur (payout admin, séparée).
     const price = Number(product.price) || 0;
     const lineTotal = price * qty;
-    const protectionFeePct = getProtectionFeePct();
+    const protectionFeePct = await getProtectionFeePct();
     const protectionFee = Math.round((lineTotal * protectionFeePct) / 100);
     const total_amount = lineTotal + protectionFee;
     const qr_code = generateSecureQrCode('C-');
@@ -538,18 +538,13 @@ app.post('/api/guest/order', async (req, res) => {
   }
 });
 
-// Frais de protection acheteur : lu en temps réel (pas au build du frontend),
-// pour que changer VALIDEL_COMMISSION_PCT sur Render se répercute immédiatement
-// sur la page de paiement, sans reconstruire/redéployer le site. Défaut 0 = pas
-// de frais surprise si la variable n'est pas réglée. SANS RAPPORT avec la
-// commission vendeur (réglée par un admin au moment du payout).
-function getProtectionFeePct() {
-  const n = Number(process.env.VALIDEL_COMMISSION_PCT);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+// Frais acheteur : réglage admin en base, Render en valeur par défaut.
+async function getProtectionFeePct() {
+  return require('./fee-settings').readProtectionRate(payoutDb);
 }
-
-app.get('/api/config/protection-fee', (req, res) => {
-  res.json({ success: true, pct: getProtectionFeePct() });
+app.get('/api/config/protection-fee', async (req, res) => {
+  try { res.json({ success: true, pct: await getProtectionFeePct() }); }
+  catch (error) { res.status(503).json({ success: false, error: 'Frais temporairement indisponibles' }); }
 });
 
 // Numéro WhatsApp Business du bot, exposé au frontend en temps réel : source

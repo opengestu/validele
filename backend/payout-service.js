@@ -34,15 +34,19 @@ function createPayoutService({ db, sendMoney, paydunya, onPaid = async () => {},
     if (!db) throw new Error('Client Supabase service_role requis pour les payouts');
     const { data, error } = await db.from('payout_settings').select('*').eq('id', 1).single();
     if (error || !data) throw new Error('Configuration payout indisponible : appliquer la migration payout');
-    return { ...data, ...commissionConfig(env), webhook_configured: !!env.PAYOUT_WEBHOOK_SECRET,
+    return { ...data, ...commissionConfig(data.commission_pct != null ? { PAYOUT_COMMISSION_PCT: data.commission_pct } : env), protection_fee_pct: require('./fee-settings').protectionRate(data, env), fees_editable: 'protection_fee_pct' in data && 'commission_pct' in data, webhook_configured: !!env.PAYOUT_WEBHOOK_SECRET,
       routing_configured: typeof data.fallback_enabled === 'boolean', paydunya_configured: paydunyaPayout.configured(), pixpay_configured: !!env.PIXPAY_API_KEY };
+  }
+  async function setFees(commission, protection, actorId) {
+    if (typeof commission !== 'number' || !Number.isFinite(commission) || commission < 0 || commission >= 100 || typeof protection !== 'number' || !Number.isFinite(protection) || protection < 0 || protection > 100) throw new Error('Commission : 0 à moins de 100 %. Protection : 0 à 100 %.');
+    await rpc('set_admin_fee_settings', { p_commission: commission, p_protection: protection, p_actor: actorId });
   }
   async function setMode(mode, actorId) {
     if (!['manual', 'automatic'].includes(mode)) throw new Error('Mode invalide');
     if (mode === 'automatic') {
       const config = await settings();
       if (!config.routing_configured) throw new Error('Appliquer la migration de routage payout avant activation');
-      if (!config.commission_configured || !config.webhook_configured) throw new Error('Configurer PAYOUT_COMMISSION_PCT et PAYOUT_WEBHOOK_SECRET sur Render avant activation');
+      if (!config.commission_configured || !config.webhook_configured) throw new Error('Configurer la commission dans l’admin et PAYOUT_WEBHOOK_SECRET sur Render avant activation');
     }
     return rpc('set_payout_mode', { p_mode: mode, p_actor: actorId });
   }
@@ -54,7 +58,7 @@ function createPayoutService({ db, sendMoney, paydunya, onPaid = async () => {},
   }
   async function createBatch({ orderId = null, pct, actorId = null, source = 'manual', notes = null, scheduledAt = null } = {}) {
     if (!env.PAYOUT_WEBHOOK_SECRET) throw new Error('PAYOUT_WEBHOOK_SECRET doit être configuré sur Render');
-    const rate = pct === undefined ? commissionConfig(env).commission_pct : Number(pct);
+    const rate = pct === undefined ? (await settings()).commission_pct : Number(pct);
     if (rate === null || !Number.isFinite(rate) || rate < 0 || rate >= 100) throw new Error('Commission requise, comprise entre 0 et moins de 100 %');
     return rpc('create_controlled_payout_batch', { p_order: orderId, p_pct: rate, p_actor: actorId, p_source: source, p_notes: notes, p_scheduled_at: scheduledAt });
   }
@@ -62,7 +66,7 @@ function createPayoutService({ db, sendMoney, paydunya, onPaid = async () => {},
     const report = await rpc('inspect_payout_order', { p_order: orderId });
     const { data: items, error } = await db.from('payout_batch_items').select('amount,commission_pct,commission_amount,net_amount,batch:payout_batches!inner(status)').eq('order_id', orderId).neq('batch.status', 'cancelled').in('status', ['queued', 'failed']).order('created_at', { ascending: false }).limit(1);
     if (error) throw new Error(error.message);
-    const rate = commissionConfig(env).commission_pct;
+    const rate = (await settings()).commission_pct;
     report.amounts = items?.[0] || (rate !== null && report.order ? payoutAmounts(report.order.total_amount, report.order.protection_fee, rate) : null);
     return report;
   }
@@ -194,7 +198,7 @@ function createPayoutService({ db, sendMoney, paydunya, onPaid = async () => {},
     if (error) throw new Error(error.message);
     return data;
   }
-  return { settings, setMode, setFallback, createBatch, verifyOrder, processBatch, payOrder, tick, settle, handleWebhook, handlePaydunyaWebhook, fallbackAttempt, attempts, cancelBatch: batchId => rpc('cancel_controlled_payout_batch', { p_batch: batchId }) };
+  return { settings, setFees, setMode, setFallback, createBatch, verifyOrder, processBatch, payOrder, tick, settle, handleWebhook, handlePaydunyaWebhook, fallbackAttempt, attempts, cancelBatch: batchId => rpc('cancel_controlled_payout_batch', { p_batch: batchId }) };
 }
 
 module.exports = { createPayoutService, commissionConfig, payoutAmounts, validWebhookToken };

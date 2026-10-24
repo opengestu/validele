@@ -38,14 +38,9 @@ const PUBLIC_WEB_BASE_URL = String(process.env.PUBLIC_WEB_BASE_URL || 'https://w
 const PUBLIC_API_BASE_URL = String(
   process.env.PUBLIC_API_BASE_URL || process.env.PIXPAY_IPN_BASE_URL || 'https://validele.onrender.com'
 ).replace(/\/+$/, '');
-// Frais de protection acheteur (SANS rapport avec la commission vendeur, gérée
-// séparément par un admin au moment du payout). Défaut 0 = pas de frais surprise
-// si la variable n'est pas réglée ; réglable à tout moment via Render, lu en
-// temps réel par la page de paiement web (voir GET /api/config/protection-fee).
-const COMMISSION_PCT = (() => {
-  const n = Number(process.env.VALIDEL_COMMISSION_PCT);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-})();
+// Taux propre à chaque message, partagé avec le paiement web et lu en base.
+const feeContext = new (require('node:async_hooks').AsyncLocalStorage)();
+const currentProtectionRate = () => feeContext.getStore() ?? require('./fee-settings').protectionRate(null);
 
 // Mode test : n'appelle PAS D7, affiche dans les logs ce que le bot AURAIT envoyé.
 // Permet de tester tout le parcours en local sans numéro WhatsApp ni compte D7.
@@ -190,7 +185,7 @@ function computeFees(price, qty = 1) {
   const p = Number(price) || 0;
   const q = Math.min(999, Math.max(1, Math.floor(Number(qty) || 1)));
   const ligne = p * q;
-  const frais = Math.round((ligne * COMMISSION_PCT) / 100);
+  const frais = Math.round((ligne * currentProtectionRate()) / 100);
   return { prix: p, quantite: q, ligne, frais, total: ligne + frais };
 }
 
@@ -568,13 +563,13 @@ function txtFaqFrais(produit) {
   if (!produit) {
     return [
       '*Frais de protection*',
-      `Un frais de protection de ${COMMISSION_PCT} % s'applique sur la transaction, affiché avant toute confirmation. Aucun frais caché.`,
+      `Un frais de protection de ${currentProtectionRate()} % s'applique sur la transaction, affiché avant toute confirmation. Aucun frais caché.`,
     ].join('\n');
   }
   const { frais, total } = computeFees(produit.prix);
   return [
     '*Frais de protection*',
-    `Frais de protection de ${COMMISSION_PCT} %, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
+    `Frais de protection de ${currentProtectionRate()} %, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
     `Total à payer : *${formatFcfa(total)} FCFA*, affiché avant toute confirmation. Aucun frais caché.`,
   ].join('\n');
 }
@@ -1790,7 +1785,8 @@ function createBot(deps = {}) {
       console.warn('[WABOT] message sans expéditeur, ignoré:', parsed.msgId);
       return;
     }
-    const actions = await decideReplies(parsed, {
+    const rate = await (deps.getProtectionRate || (() => require('./fee-settings').protectionRate(null)))();
+    const actions = await feeContext.run(rate, () => decideReplies(parsed, {
       findProduct,
       findShop,
       getConversationState,
@@ -1799,7 +1795,7 @@ function createBot(deps = {}) {
       createGuestOrder,
       initiatePayment,
       readPaymentStatus: deps.readPaymentStatus,
-    });
+    }));
     for (const action of actions) {
       // Répondre DEPUIS le numéro qui a reçu le message (parsed.to) -> routage
       // multi-numéro prod/démo sur un seul backend/webhook.
@@ -1824,7 +1820,7 @@ function createBot(deps = {}) {
 }
 
 function registerWhatsAppBot(app, deps) {
-  const bot = createBot(deps);
+  const bot = createBot({ getProtectionRate: () => require('./fee-settings').readProtectionRate(supabase), ...deps });
   app.post('/api/whatsapp/webhook/:secret', bot.handler);
   // Vérification en tâche de fond : ne retarde pas le démarrage. La bannière reste
   // désactivée tant que la vérification n'a pas abouti, donc aucune fenêtre de risque.

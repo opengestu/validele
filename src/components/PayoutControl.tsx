@@ -3,8 +3,9 @@ import { apiUrl } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChevronDown, HelpCircle, ShieldCheck, Wallet } from 'lucide-react';
+import AdminFeeSettings from './AdminFeeSettings';
 
-type Settings = { mode: 'manual' | 'automatic'; commission_pct: number | null; commission_configured: boolean; webhook_configured: boolean; updated_at: string; fallback_enabled: boolean; routing_configured: boolean; pixpay_configured: boolean; paydunya_configured: boolean };
+type Settings = { mode: 'manual' | 'automatic'; commission_pct: number | null; protection_fee_pct?: number; fees_editable?: boolean; commission_configured: boolean; webhook_configured: boolean; updated_at: string; fallback_enabled: boolean; routing_configured: boolean; pixpay_configured: boolean; paydunya_configured: boolean };
 type Dispatch = { id: string; amount: number; status: string; created_at: string; transaction_id: string | null; provider: string; collection_provider: string | null; fallback_of: string | null };
 const providerName = (provider?: string | null) => ({ pixpay: 'Pixpay', paydunya: 'PayDunya' })[provider || ''] || 'À identifier';
 const dispatchStatus = (status: string) => ({ PROCESSING: 'En cours', UNKNOWN: 'À vérifier', SUCCESSFUL: 'Payé', FAILED: 'Échec confirmé' })[status] || status;
@@ -69,6 +70,7 @@ export default function PayoutControl({ getAuthHeader, searchQuery = '' }: { get
       <span className="w-fit rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">Commission payout : {settings?.commission_configured ? `${settings.commission_pct} %` : 'à configurer'}</span>
     </CardHeader>
     <CardContent className="space-y-5 pt-5">
+      {settings && <AdminFeeSettings commission={settings.commission_pct} protection={settings.protection_fee_pct ?? 0} editable={!!settings.fees_editable} getAuthHeader={getAuthHeader} onSaved={load} />}
       <div className="grid gap-3 md:grid-cols-2">
         <section aria-label="Mode de paiement" className="flex flex-col gap-4 rounded-xl border p-4">
           <div className="flex items-start gap-3">
