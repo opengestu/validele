@@ -19,9 +19,19 @@ function registerPayoutRoutes(app, requireAdmin, service) {
   app.get('/api/admin/payout-settings', requireAdmin, wrap(async () => ({ success: true, settings: await service.settings() })));
   app.get('/api/admin/payout-attempts', requireAdmin, wrap(async () => ({ success: true, attempts: await service.attempts() })));
   app.put('/api/admin/payout-settings', requireAdmin, wrap(async req => {
-    await service.setMode(req.body?.mode, req.adminUser.id);
+    if (req.body?.mode !== undefined) await service.setMode(req.body.mode, req.adminUser.id);
+    if (req.body?.fallback_enabled !== undefined) await service.setFallback(req.body.fallback_enabled, req.adminUser.id);
     return { success: true, settings: await service.settings() };
   }));
+  app.post('/api/admin/payout-attempts/:id/fallback', requireAdmin, wrap(req => service.fallbackAttempt(req.params.id)));
+  app.post('/api/payment/paydunya-payout-webhook', async (req, res) => {
+    try {
+      let body = req.body?.data || req.body;
+      if (typeof body === 'string') body = JSON.parse(body);
+      await service.handlePaydunyaWebhook(body, req.query.payout_token, req.query.attempt_id);
+      return res.json({ success: true });
+    } catch (error) { return res.status(409).json({ success: false, error: error.message }); }
+  });
   app.post('/api/admin/payout-batches/create', requireAdmin, wrap(async req => {
     const batch = await service.createBatch({ actorId: req.adminUser.id, notes: req.body?.notes, scheduledAt: req.body?.scheduled_at });
     return { success: true, batch, message: batch ? 'Batch créé' : 'Aucune commande éligible' };

@@ -22,7 +22,8 @@ function validWebhookToken(received, expected) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-function createPayoutService({ db, sendMoney, onPaid = async () => {}, env = process.env, logger = console }) {
+function createPayoutService({ db, sendMoney, paydunya, onPaid = async () => {}, env = process.env, logger = console }) {
+  const paydunyaPayout = paydunya || require('./paydunya-payout').createPaydunyaPayout({ env });
   async function rpc(name, args = {}) {
     if (!db) throw new Error('Client Supabase service_role requis pour les payouts');
     const { data, error } = await db.rpc(name, args);
@@ -33,15 +34,23 @@ function createPayoutService({ db, sendMoney, onPaid = async () => {}, env = pro
     if (!db) throw new Error('Client Supabase service_role requis pour les payouts');
     const { data, error } = await db.from('payout_settings').select('*').eq('id', 1).single();
     if (error || !data) throw new Error('Configuration payout indisponible : appliquer la migration payout');
-    return { ...data, ...commissionConfig(env), webhook_configured: !!env.PAYOUT_WEBHOOK_SECRET };
+    return { ...data, ...commissionConfig(env), webhook_configured: !!env.PAYOUT_WEBHOOK_SECRET,
+      routing_configured: typeof data.fallback_enabled === 'boolean', paydunya_configured: paydunyaPayout.configured(), pixpay_configured: !!env.PIXPAY_API_KEY };
   }
   async function setMode(mode, actorId) {
     if (!['manual', 'automatic'].includes(mode)) throw new Error('Mode invalide');
     if (mode === 'automatic') {
       const config = await settings();
+      if (!config.routing_configured) throw new Error('Appliquer la migration de routage payout avant activation');
       if (!config.commission_configured || !config.webhook_configured) throw new Error('Configurer PAYOUT_COMMISSION_PCT et PAYOUT_WEBHOOK_SECRET sur Render avant activation');
     }
     return rpc('set_payout_mode', { p_mode: mode, p_actor: actorId });
+  }
+  async function setFallback(enabled, actorId) {
+    if (typeof enabled !== 'boolean') throw new Error('Réglage de secours invalide');
+    const config = await settings();
+    if (enabled && (!config.routing_configured || !config.paydunya_configured || !config.pixpay_configured || !config.webhook_configured)) throw new Error('Configurer les deux prestataires et le suivi sécurisé avant activation du secours');
+    return rpc('set_payout_fallback', { p_enabled: enabled, p_actor: actorId });
   }
   async function createBatch({ orderId = null, pct, actorId = null, source = 'manual', notes = null, scheduledAt = null } = {}) {
     if (!env.PAYOUT_WEBHOOK_SECRET) throw new Error('PAYOUT_WEBHOOK_SECRET doit être configuré sur Render');
@@ -67,17 +76,65 @@ function createPayoutService({ db, sendMoney, onPaid = async () => {}, env = pro
       : await db.from('payout_dispatches').select('*').eq('transaction_id', body.transaction_id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!dispatch) throw new Error('Virement historique à rapprocher avant migration');
+    // Before the routing migration every recorded dispatch was sent through Pixpay.
+    // Continue accepting those IPNs while new reservations remain migration-gated.
+    if ((dispatch.provider || 'pixpay') !== 'pixpay') throw new Error('Prestataire IPN incohérent');
     if (body.amount != null && Number(body.amount) !== Number(dispatch.amount)) throw new Error('Montant IPN incohérent');
     const state = String(body.state).toUpperCase();
     if (!['SUCCESSFUL', 'FAILED', 'PENDING', 'PENDING1', 'PENDING2', 'PROCESSING'].includes(state)) throw new Error('Statut IPN inconnu');
     const settled = await settle(dispatch.id, body.transaction_id, ['SUCCESSFUL', 'FAILED'].includes(state) ? state : 'PROCESSING', {
       state, response: body.response ?? null, error: body.error ?? null, received_at: new Date().toISOString()
     });
-    if (dispatch.status !== 'SUCCESSFUL' && settled.status === 'SUCCESSFUL') {
+    if (settled.transitioned && settled.status === 'SUCCESSFUL') {
       try { await onPaid(settled); }
       catch (error) { logger.error('[PAYOUT] Notification:', error.message); }
     }
     return settled;
+  }
+  async function handlePaydunyaWebhook(body, token, attemptId) {
+    if (!validWebhookToken(token, env.PAYOUT_WEBHOOK_SECRET)) throw new Error('Authentification IPN payout invalide');
+    const expectedHash = crypto.createHash('sha512').update(env.PAYDUNYA_MASTER_KEY || '').digest('hex');
+    if (!env.PAYDUNYA_MASTER_KEY || !validWebhookToken(body.hash, expectedHash)) throw new Error('Hash IPN PayDunya invalide');
+    const { data: dispatch, error } = await db.from('payout_dispatches').select('*').eq('id', attemptId).single();
+    if (error || !dispatch || dispatch.provider !== 'paydunya' || !dispatch.provider_reference || body.token !== dispatch.provider_reference || Number(body.amount) !== Number(dispatch.amount)) throw new Error('IPN PayDunya incohérent');
+    return reconcilePaydunyaDispatch(dispatch);
+  }
+  async function reconcilePaydunyaDispatch(dispatch) {
+    const verified = await paydunyaPayout.checkStatus(dispatch);
+    const settled = await settle(dispatch.id, verified.transaction_id, verified.state, { ...verified, verified_by: 'paydunya_check_status' });
+    if (settled.transitioned && settled.status === 'SUCCESSFUL') {
+      try { await onPaid(settled); } catch (error) { logger.error('[PAYOUT] Notification:', error.message); }
+    }
+    return settled;
+  }
+  async function executeDispatch(dispatch) {
+    if (!['pixpay', 'paydunya'].includes(dispatch.provider)) throw new Error('Prestataire payout absent : migration requise');
+    let result;
+    try {
+      const params = { amount: Number(dispatch.amount), phone: dispatch.phone, walletType: dispatch.wallet_type, orderId: dispatch.batch_id, type: 'vendor_payout', payoutAttemptId: dispatch.id,
+        recordReference: reference => rpc('bind_payout_reference', { p_attempt: dispatch.id, p_reference: reference }) };
+      result = dispatch.provider === 'pixpay' ? await sendMoney(params) : await paydunyaPayout.sendMoney(params);
+    } catch (error) { result = { success: false, uncertain: true, message: error.message }; }
+    const transactionId = result?.transaction_id || null;
+    const state = dispatch.provider === 'paydunya' && ['SUCCESSFUL', 'FAILED', 'PROCESSING'].includes(result?.verified_state)
+      ? result.verified_state : transactionId && result.success ? 'PROCESSING'
+        : result && !result.success && result.uncertain === false ? 'FAILED' : 'UNKNOWN';
+    let settled;
+    try { settled = await settle(dispatch.id, transactionId, state, { message: result?.message || null, state: result?.state || null }); }
+    catch (error) {
+      logger.error('[PAYOUT] Résultat à rapprocher, tentative conservée:', dispatch.id, error.message);
+      throw new Error('Virement envoyé ou incertain ; suivi à vérifier. Ne pas relancer.');
+    }
+    if (settled.transitioned && settled.status === 'SUCCESSFUL') {
+      try { await onPaid(settled); } catch (error) { logger.error('[PAYOUT] Notification:', error.message); }
+    }
+    return { vendorId: dispatch.vendor_id, provider: dispatch.provider, collection_provider: dispatch.collection_provider, fallback_of: dispatch.fallback_of,
+      attempt_id: dispatch.id, transaction_id: transactionId, state: settled.status || state, amount: dispatch.amount, success: ['PROCESSING', 'SUCCESSFUL'].includes(settled.status || state) };
+  }
+  async function fallbackAttempt(attemptId, automatic = false) {
+    const dispatch = await rpc('claim_payout_fallback', { p_attempt: attemptId, p_automatic: automatic });
+    if (!dispatch) return { success: false, message: 'Secours bloqué : résultat non final, tentative plus récente ou secours déjà tenté' };
+    return { success: true, result: await executeDispatch(dispatch) };
   }
   async function processBatch(batchId, automatic = false, onlyOrder = null) {
     if (!env.PAYOUT_WEBHOOK_SECRET) throw new Error('PAYOUT_WEBHOOK_SECRET doit être configuré sur Render');
@@ -85,27 +142,14 @@ function createPayoutService({ db, sendMoney, onPaid = async () => {}, env = pro
     if (error) throw new Error(error.message);
     const results = [];
     for (const vendorId of new Set((items || []).map(item => item.vendor_id))) {
-      // This RPC reserves orders and writes the dispatch BEFORE contacting Pixpay.
-      const dispatch = await rpc('claim_payout_dispatch', { p_batch: batchId, p_vendor: vendorId, p_automatic: automatic, p_order: onlyOrder });
-      if (!dispatch) continue;
-      let result;
-      try {
-        result = await sendMoney({ amount: dispatch.amount, phone: dispatch.phone, walletType: dispatch.wallet_type, orderId: batchId, type: 'vendor_payout', payoutAttemptId: dispatch.id });
-      } catch (error) {
-        result = { success: false, uncertain: true, message: error.message };
+      // At most two groups: the same seller may have collections at both providers.
+      let nextProvider = null;
+      for (let group = 0; group < 2; group++) {
+        const dispatch = await rpc('claim_payout_dispatch', { p_batch: batchId, p_vendor: vendorId, p_automatic: automatic, p_order: onlyOrder, p_provider: nextProvider, p_fallback_of: null });
+        if (!dispatch) break;
+        results.push(await executeDispatch(dispatch));
+        nextProvider = dispatch.provider === 'pixpay' ? 'paydunya' : 'pixpay';
       }
-      const transactionId = result?.transaction_id || null;
-      // A timeout or malformed response is UNKNOWN, never an automatic retry.
-      const state = transactionId && result.success ? 'PROCESSING'
-        : result && !result.success && result.uncertain === false ? 'FAILED' : 'UNKNOWN';
-      try {
-        await settle(dispatch.id, transactionId, state, { message: result?.message || null, state: result?.state || null });
-      } catch (error) {
-        // The pre-existing dispatch remains locked if recording the response fails.
-        logger.error('[PAYOUT] Résultat à rapprocher, tentative conservée:', dispatch.id, error.message);
-        throw new Error('Virement envoyé ou incertain ; suivi à vérifier. Ne pas relancer.');
-      }
-      results.push({ vendorId, attempt_id: dispatch.id, transaction_id: transactionId, state, amount: dispatch.amount, success: state === 'PROCESSING' });
     }
     return { success: true, results, message: results.length ? 'Traitement enregistré' : 'Aucun élément disponible (déjà traité, réservé ou automatisme désactivé)' };
   }
@@ -125,20 +169,32 @@ function createPayoutService({ db, sendMoney, onPaid = async () => {}, env = pro
     ticking = true;
     try {
       const config = await settings();
+      if (!config.routing_configured) return;
+      if (config.paydunya_configured) {
+        const { data: pending, error } = await db.from('payout_dispatches').select('*').eq('provider', 'paydunya').in('status', ['PROCESSING', 'UNKNOWN']).not('provider_reference', 'is', null).order('updated_at').limit(50);
+        if (error) throw new Error(error.message);
+        for (const dispatch of pending || []) {
+          try { await reconcilePaydunyaDispatch(dispatch); } catch (error) { logger.error('[PAYOUT] Rapprochement PayDunya:', dispatch.id, error.message); }
+        }
+      }
       if (config.mode !== 'automatic' || !config.commission_configured || !config.webhook_configured) return;
       await createBatch({ source: 'automatic' });
       // Resume only queued items after restart; processing/unknown/failed items are never retried.
       const { data, error } = await db.from('payout_batches').select('id,queued:payout_batch_items!inner(id)').eq('queued.status', 'queued').in('status', ['scheduled', 'processing', 'failed']).eq('source', 'automatic').lte('scheduled_at', new Date().toISOString()).order('created_at').limit(100);
       if (error) throw new Error(error.message);
       for (const batch of data || []) await processBatch(batch.id, true);
+      if (config.fallback_enabled) {
+        const failed = await rpc('list_payout_fallback_candidates');
+        for (const dispatch of failed || []) await fallbackAttempt(dispatch.id, true);
+      }
     } finally { ticking = false; }
   }
   async function attempts() {
-    const { data, error } = await db.from('payout_dispatches').select('id,batch_id,amount,status,transaction_id,created_at,updated_at').order('created_at', { ascending: false }).limit(20);
+    const { data, error } = await db.from('payout_dispatches').select('id,batch_id,amount,status,provider,collection_provider,fallback_of,transaction_id,created_at,updated_at').order('created_at', { ascending: false }).limit(20);
     if (error) throw new Error(error.message);
     return data;
   }
-  return { settings, setMode, createBatch, verifyOrder, processBatch, payOrder, tick, settle, handleWebhook, attempts, cancelBatch: batchId => rpc('cancel_controlled_payout_batch', { p_batch: batchId }) };
+  return { settings, setMode, setFallback, createBatch, verifyOrder, processBatch, payOrder, tick, settle, handleWebhook, handlePaydunyaWebhook, fallbackAttempt, attempts, cancelBatch: batchId => rpc('cancel_controlled_payout_batch', { p_batch: batchId }) };
 }
 
 module.exports = { createPayoutService, commissionConfig, payoutAmounts, validWebhookToken };

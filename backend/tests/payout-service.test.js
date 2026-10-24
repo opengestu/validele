@@ -23,7 +23,8 @@ function fixture(response, failSettle = false) {
     from() { return { select() { return this; }, eq() { return this; }, in() { return Promise.resolve({ data: [{ vendor_id: 'vendor' }] }); } }; },
     async rpc(name, args) {
       calls.push({ name, args });
-      if (name === 'claim_payout_dispatch') return { data: { id: 'attempt', amount: 9800, phone: 'test', wallet_type: 'wave-senegal' } };
+      if (name === 'claim_payout_dispatch' && args.p_provider) return { data: null };
+      if (name === 'claim_payout_dispatch') return { data: { provider: 'pixpay', id: 'attempt', amount: 9800, phone: 'test', wallet_type: 'wave-senegal' } };
       if (failSettle) return { error: { message: 'DB unavailable' } };
       return { data: {} };
     }
@@ -34,7 +35,7 @@ function fixture(response, failSettle = false) {
 test('réservation durable avant envoi et identifiant de tentative transmis', async () => {
   const { service, calls } = fixture({ success: true, transaction_id: 'tx' });
   await service.processBatch('batch');
-  assert.deepEqual(calls.map(c => c.name), ['claim_payout_dispatch', 'sendMoney', 'settle_payout_dispatch']);
+  assert.deepEqual(calls.map(c => c.name), ['claim_payout_dispatch', 'sendMoney', 'settle_payout_dispatch', 'claim_payout_dispatch']);
   assert.equal(calls[1].params.payoutAttemptId, 'attempt');
   assert.equal(calls[2].args.p_state, 'PROCESSING');
 });
@@ -42,11 +43,11 @@ test('timeout ou réponse incomplète restent incertains, refus explicite échou
   for (const response of [new Error('timeout'), { success: true }, { success: false, uncertain: true }]) {
     const { service, calls } = fixture(response);
     await service.processBatch('batch');
-    assert.equal(calls.at(-1).args.p_state, 'UNKNOWN');
+    assert.equal(calls.find(c => c.name === 'settle_payout_dispatch').args.p_state, 'UNKNOWN');
   }
   const { service, calls } = fixture({ success: false, uncertain: false });
   await service.processBatch('batch');
-  assert.equal(calls.at(-1).args.p_state, 'FAILED');
+  assert.equal(calls.find(c => c.name === 'settle_payout_dispatch').args.p_state, 'FAILED');
 });
 test('échec enregistrement après envoi ne propose pas une relance', async () => {
   const { service } = fixture({ success: true, transaction_id: 'tx' }, true);

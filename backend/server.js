@@ -4339,6 +4339,7 @@ app.post('/api/admin/transfers', requireAdmin, async (req, res) => {
 });
 
 require('./payout-routes').registerPayoutRoutes(app, requireAdmin, controlledPayouts);
+require('./payment-provenance').registerPaymentProvenance(app, { db: payoutDb });
 
 // ---------- Payout Batches (admin) ----------
 // Create a payout batch from delivered orders with payout_status = 'requested'
@@ -7997,7 +7998,7 @@ app.head('/api/paydunya/notification', (req, res) => {
   res.status(200).end();
 });
 
-app.post('/api/paydunya/notification', async (req, res) => {
+app.post(['/api/paydunya/notification', '/api/paydunya/callback'], async (req, res) => {
   console.log('Notification paiement reçue:', req.body);
 
   const token = req.body?.invoice_token || req.body?.token || req.body?.data?.invoice?.token;
