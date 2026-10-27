@@ -218,7 +218,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundText('PD9999'));
     assert.strictEqual(rec.sends.length, 1);
     assert.strictEqual(rec.sends[0].kind, 'text');
-    assert.ok(rec.sends[0].body.includes("n'existe pas"));
+    assert.ok(rec.sends[0].body.includes('Je ne retrouve pas le produit PD9999'));
   });
 
   // Crit. 9 : aucun code -> invite
@@ -369,7 +369,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     assert.strictEqual(aiCalls, 8, `attendu 8 appels IA, obtenu ${aiCalls}`);
     const lastSend = rec.sends[rec.sends.length - 1];
     assert.strictEqual(lastSend.kind, 'text');
-    assert.ok(lastSend.body.includes('beaucoup de questions'));
+    assert.ok(lastSend.body.includes('poursuivre la conversation avec le vendeur'));
   });
 
   // Fallback SMS anti-doublon : parsing de l'accusé de statut D7
@@ -612,7 +612,21 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     await b.processWebhook(inboundText('PD3431'));
     const body = String(rec.sends[0].body);
     assert.ok(!/DÉMONSTRATION/.test(body));
-    assert.ok(/Ce produit est bien enregistré/.test(body));
+    assert.ok(/Bonjour et bienvenue chez Validèl/.test(body));
+    assert.ok(!/Ce produit est bien enregistré|Code :/.test(body));
+    for (const label of ['Prix :', 'Frais de protection', 'Total à payer']) assert.ok(body.includes(label));
+    assert.ok(body.includes('paiement est vérifié'));
+    assert.ok(body.includes('demander un examen'));
+    assert.strictEqual(rec.sends[0].buttons[0].title, 'Commander');
+    assert.strictEqual(rec.sends[0].buttons[0].id, 'pay:PD3431');
+  });
+
+  await test('fiche longue : prix, protection et invitation restent lisibles', () => {
+    const body = bot.ficheProduitText({ ...FAKE, nom: 'N'.repeat(300), vendeurNom: 'V'.repeat(300), vendeurQuartier: 'Q'.repeat(300), description: 'D'.repeat(600) });
+    assert.ok(body.length <= 1024);
+    assert.ok(body.includes('Total à payer'));
+    assert.ok(body.includes('demander un examen'));
+    assert.ok(body.endsWith('question sur ce produit.'));
   });
 
   await test('checkout démo -> initiatePayment n\'est JAMAIS appelé', async () => {
@@ -980,7 +994,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
     const { b, rec } = makeBot({ findShop: async () => vide });
     await b.processWebhook(inboundText('BQ12345'));
     assert.strictEqual(rec.sends[0].kind, 'text');
-    assert.ok(rec.sends[0].body.includes('aucun produit'));
+    assert.ok(/aucun produit/i.test(rec.sends[0].body));
   });
 
   // WhatsApp plafonne une liste à 10 lignes : au-delà, le message doit renvoyer

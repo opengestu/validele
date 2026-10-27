@@ -556,15 +556,8 @@ async function sendWhatsAppTemplate(phone, { templateId, language, bodyParams = 
     };
   }
 
-  const content = headerImageUrl
-    ? {
-        message_type: 'TEMPLATE',
-        media_template: {
-          ...template,
-          media: { media_type: 'image', media_url: String(headerImageUrl) },
-        },
-      }
-    : { message_type: 'TEMPLATE', template };
+  if (headerImageUrl) template.media = { media_type: 'image', media_url: String(headerImageUrl) };
+  const content = { message_type: 'TEMPLATE', template };
 
   return postD7Whatsapp({
     originator: resolveWhatsAppOriginator(from),

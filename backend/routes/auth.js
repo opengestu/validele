@@ -186,14 +186,11 @@ router.post('/login-pin', async (req, res) => {
     }
 
     const pinHash = user.pin_hash;
-    console.log('[LOGIN-PIN] PIN reçu:', pin);
-    console.log('[LOGIN-PIN] PIN hash stocké:', pinHash);
     let verified = false;
     try {
       // If pinHash looks like a bcrypt hash, use bcrypt.compare
       if (/^\$2[aby]\$/.test(String(pinHash))) {
         verified = await bcrypt.compare(String(pin), String(pinHash));
-        console.log('[LOGIN-PIN] Résultat bcrypt.compare:', verified);
       } else {
         // Fallback to plain equality for legacy plaintext storage
         verified = String(pin) === String(pinHash);
@@ -214,7 +211,7 @@ router.post('/login-pin', async (req, res) => {
     }
 
     if (!verified) {
-      console.warn('[LOGIN-PIN] PIN incorrect. PIN reçu:', pin, '| PIN hash stocké:', pinHash);
+      console.warn('[LOGIN-PIN] Échec de vérification du PIN');
       registerPinFailure(attemptKey, now);
       return res.status(401).json({ error: 'Invalid PIN' });
     }

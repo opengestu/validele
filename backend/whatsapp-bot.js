@@ -442,33 +442,35 @@ function txtDemoStop(produit, order) {
   ].filter((l) => l !== null).join('\n').slice(0, 1024);
 }
 
+const TXT_SERVICE_PROTECTION = '🔒 Avec Validèl, le paiement est vérifié et le vendeur est payé après validation de la réception. En cas de problème, vous pouvez demander un examen depuis le suivi de commande.';
+const TXT_LIMITE_PROTECTION = 'Un remboursement dépend de l’examen de la demande. Les frais de protection ne sont pas inclus dans le montant remboursable.';
+
 function ficheProduitText(produit) {
   const { prix, frais, total } = computeFees(produit.prix);
   const ligneVendeur = produit.vendeurQuartier
-    ? `Vendeur : *${produit.vendeurNom}* — ${produit.vendeurQuartier}`
-    : `Vendeur : *${produit.vendeurNom}*`;
+    ? `Proposé par *${shortDescription(produit.vendeurNom, 50)}* · ${shortDescription(produit.vendeurQuartier, 50)}`
+    : `Proposé par *${shortDescription(produit.vendeurNom, 50)}*`;
   // Description du produit (si renseignée) : rend la fiche compréhensible pour le
   // client, au lieu d'un simple code + nom sans explication.
-  const desc = shortDescription(produit.description);
+  const desc = shortDescription(produit.description, 120);
   const lignes = [];
   // Annoncé AVANT tout le reste : le testeur doit savoir dès la première ligne
   // qu'il ne s'engage à rien.
   if (produit.isDemo) lignes.push('🧪 *DÉMONSTRATION — ceci n\'est pas une vraie vente*', '');
-  lignes.push(`📦 *${produit.nom}*`);
+  lignes.push('Bonjour et bienvenue chez Validèl 👋', 'Voici le produit qui vous intéresse :', '');
+  lignes.push(`📦 *${shortDescription(produit.nom, 90)}*`);
   if (desc) lignes.push(desc);
   lignes.push(
     `Prix : *${formatFcfa(prix)} FCFA*`,
     ligneVendeur,
-    `Code : ${produit.code}`,
-    '',
-    produit.isDemo
-      ? '🧪 Produit de démonstration : déroulez le parcours librement, aucun paiement ne vous sera demandé.'
-      : '✅ Ce produit est bien enregistré sur Validèl.',
     '',
     `Frais de protection : ${formatFcfa(frais)} FCFA`,
     `*Total à payer : ${formatFcfa(total)} FCFA*`,
     '',
-    'Votre argent est protégé : le vendeur n\'est payé qu\'après votre confirmation de réception.',
+    TXT_SERVICE_PROTECTION,
+    'Les frais correspondent à ce service de protection. Consultez « Une question ? » → « Les frais » pour les détails.',
+    '',
+    'Pour continuer, appuyez sur « Commander ». Vous pouvez aussi me poser une question sur ce produit.',
   );
   return lignes.join('\n').slice(0, 1024);
 }
@@ -478,16 +480,17 @@ function paiementCtaText(produit) {
   return [
     `🔒 *Paiement protégé — ${formatFcfa(total)} FCFA*`,
     'Payez avec Wave ou Orange Money. Aucun compte à créer.',
+    TXT_SERVICE_PROTECTION,
     '',
     '⚠️ Validèl ne demandera jamais votre code secret Wave ou Orange Money.',
   ].join('\n');
 }
 
 const TXT_CODE_INTROUVABLE = (code) =>
-  `⚠️ Le code ${code} n'existe pas sur Validèl.\nNe payez pas ce vendeur tant que le produit n'est pas enregistré.`;
+  `Je ne retrouve pas le produit ${code}. Vérifiez le lien ou le code auprès du vendeur, puis envoyez-le-moi à nouveau.\n\nAttendez de retrouver sa fiche avant de payer.`;
 
 const TXT_AUCUN_CODE =
-  'Envoyez le code produit reçu du vendeur (ex : PD3431) pour commencer.\nPour voir tout le catalogue d\'une boutique, envoyez son code (ex : BQ12345).';
+  'Bonjour et bienvenue chez Validèl 👋\nJe vous accompagne pour découvrir un produit et préparer votre commande.\n\nEnvoyez-moi le code produit reçu du vendeur (ex : PD3431), ou le code de sa boutique pour consulter son catalogue (ex : BQ12345).';
 
 // ── Messages sans texte (vocal, image, sticker…) ────────────────────────────
 // Le vocal est le cas courant : sur WhatsApp l'acheteur répond naturellement à
@@ -512,22 +515,22 @@ const txtMediaNonLu = (type) =>
 
 // ── Catalogue de boutique ──────────────────────────────────────────────────
 const TXT_BOUTIQUE_INTROUVABLE = (shopCode) =>
-  `⚠️ Le code boutique ${shopCode} n'existe pas sur Validèl.\nVérifiez le lien reçu du vendeur.`;
+  `Je ne retrouve pas la boutique ${shopCode}. Pouvez-vous vérifier le lien ou le code reçu du vendeur ?`;
 
 const txtCatalogueVide = (boutique) =>
-  `🏪 *${boutique.nom}*\n\nCette boutique n'a aucun produit en vente pour l'instant. Revenez plus tard.`;
+  `Bienvenue chez *${boutique.nom}* 👋\n\nAucun produit n'est disponible dans ce catalogue pour le moment. Vous pouvez revenir le consulter plus tard.`;
 
 function txtCatalogue(boutique) {
   const nb = boutique.produits.length;
   const lignes = [
-    `🏪 *${boutique.nom}*`,
+    `Bienvenue chez *${boutique.nom}* 👋`,
     boutique.quartier ? boutique.quartier : null,
     '',
     boutique.tronque
       ? `Voici ses ${nb} produits les plus récents. Le catalogue complet est sur ${catalogLink(boutique.shopCode)}`
       : `${nb} produit${nb > 1 ? 's' : ''} disponible${nb > 1 ? 's' : ''}.`,
     '',
-    'Ouvrez la liste ci-dessous et choisissez un produit pour voir sa fiche.',
+    'Quel produit vous intéresse ? Appuyez sur « Voir les produits » pour découvrir les photos, les prix et les descriptions.',
     '',
     '🔒 Votre argent est protégé : le vendeur n\'est payé qu\'après votre confirmation de réception.',
   ];
@@ -540,45 +543,53 @@ const catalogRows = (boutique) =>
   boutique.produits.map((p) => ({
     id: `cat:${p.code}`,
     title: p.nom,
-    description: `${formatFcfa(p.prix)} FCFA · ${p.code}`,
+    description: `${formatFcfa(p.prix)} FCFA`,
   }));
 
 const TXT_CATALOGUE_BOUTON = 'Voir les produits';
 
 const TXT_AI_QUOTA_DEPASSE =
-  'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, contactez directement le vendeur ou utilisez le menu "Autres questions".\n\n⚠️ *Important* : payez toujours via Validèl. En dehors de Validèl, votre argent n\'est plus protégé et, en cas de problème, Validèl ne pourra rien faire.';
+  'Pour obtenir davantage de précisions, contactez le vendeur ou consultez le menu « Une question ? ».\n\n🔒 Pour bénéficier du paiement protégé, réglez votre achat via Validèl.';
 
 const TXT_FAQ_MARCHE = [
   '*Comment Validèl protège votre achat*',
   '1️⃣ Vous payez avec Wave ou Orange Money.',
-  '2️⃣ Votre argent est protégé — ni vous ni le vendeur ne pouvez y toucher.',
-  '3️⃣ Le vendeur livre, en sachant que l\'argent est là.',
+  '2️⃣ Le paiement est vérifié et le vendeur prépare votre commande.',
+  '3️⃣ Votre commande vous est livrée.',
   '4️⃣ Vous vérifiez votre produit et confirmez la réception.',
   '5️⃣ Le vendeur est payé.',
   '',
   'Rien n\'est versé au vendeur avant votre confirmation.',
+  'En cas de produit non reçu ou non conforme, ne confirmez pas la réception et ouvrez le suivi de commande pour demander un examen.',
+  TXT_LIMITE_PROTECTION,
 ].join('\n');
 
 function txtFaqFrais(produit) {
   if (!produit) {
     return [
       '*Frais de protection*',
-      `Un frais de protection de ${currentProtectionRate()} % s'applique sur la transaction, affiché avant toute confirmation. Aucun frais caché.`,
+      `Les frais de protection sont de ${currentProtectionRate()} %. Vous retrouvez leur montant et le total avant de payer.`,
+      TXT_SERVICE_PROTECTION,
+      'Ces frais correspondent au suivi du paiement et au traitement des demandes en cas de problème. Ils sont distincts du prix du produit.',
+      TXT_LIMITE_PROTECTION,
     ].join('\n');
   }
   const { frais, total } = computeFees(produit.prix);
   return [
     '*Frais de protection*',
     `Frais de protection de ${currentProtectionRate()} %, soit ${formatFcfa(frais)} FCFA pour cette commande.`,
-    `Total à payer : *${formatFcfa(total)} FCFA*, affiché avant toute confirmation. Aucun frais caché.`,
+    `Pour un article, le total est de *${formatFcfa(total)} FCFA*, frais de protection inclus. Le montant final tient compte de la quantité choisie.`,
+    TXT_SERVICE_PROTECTION,
+    'Ces frais correspondent au suivi du paiement et au traitement des demandes en cas de problème. Ils sont distincts du prix du produit.',
+    TXT_LIMITE_PROTECTION,
   ].join('\n');
 }
 
 const TXT_FAQ_PROBLEME = [
   '*En cas de problème*',
   'Tant que vous n\'avez pas confirmé la réception, votre argent reste protégé.',
-  'Si le produit n\'arrive pas, ou s\'il ne correspond pas : *ne confirmez pas la réception*. Depuis votre *page de suivi de commande* (lien reçu juste après le paiement), vous pouvez demander l\'*annulation* ou le *remboursement* en un clic.',
-  'Notre équipe examine alors les preuves des deux côtés et tranche. Si le litige est en votre faveur, vous êtes remboursé sur le compte Wave ou Orange Money qui a payé.',
+  'Si votre produit n’arrive pas ou ne correspond pas à la commande, *ne confirmez pas la réception*. Ouvrez votre *lien de suivi de commande* pour consulter les actions d’annulation ou de demande de remboursement disponibles.',
+  'Notre équipe examine votre demande et les éléments transmis. Un remboursement reste soumis à cette vérification.',
 ].join('\n');
 
 // Lien WhatsApp direct vers le vendeur (null si numéro absent).
@@ -594,7 +605,7 @@ function repliesContacterVendeur(produit, intro) {
   const body = [
     intro,
     '',
-    '⚠️ *Important* : payez toujours via Validèl. Si vous réglez le vendeur en dehors de Validèl, votre argent n\'est plus protégé et, en cas de problème, Validèl ne pourra rien faire.',
+    '🔒 Vous pouvez échanger avec le vendeur avant de commander. Pour bénéficier du paiement protégé, réglez votre achat via Validèl.',
   ].filter(Boolean).join('\n');
   const link = vendorWaLink(produit);
   if (link) {
@@ -604,8 +615,8 @@ function repliesContacterVendeur(produit, intro) {
 }
 
 // Boutons réutilisés
-const btnPayer = (code) => ({ id: `pay:${code}`, title: 'Payer en sécurité' });
-const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Autres questions' });
+const btnPayer = (code) => ({ id: `pay:${code}`, title: 'Commander' });
+const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Une question ?' });
 
 // ---------------------------------------------------------------------------
 // Checkout conversationnel : nom -> adresse -> wallet -> commande + lien de paiement
@@ -615,9 +626,9 @@ const btnAutresQuestions = (code) => ({ id: `faq:${code}`, title: 'Autres questi
 const txtDemandeQuantite = (produit) => [
   `📦 *${produit.nom}* — ${formatFcfa(computeFees(produit.prix).total)} FCFA l'unité`,
   '',
-  'Pour préparer votre commande :',
+  'Préparons votre commande ensemble.',
   '',
-  '1️⃣ *Combien en voulez-vous ?*',
+  '1️⃣ *Combien souhaitez-vous en commander ?*',
   '',
   '_Envoyez un nombre (ex : 1, 2, 3…). Tapez « annuler » à tout moment pour arrêter._',
 ].join('\n');
@@ -632,9 +643,9 @@ const txtDemandeNom = (produit, quantite = 1) => {
   return [
     ligneQte,
     '',
-    '2️⃣ *Votre prénom et nom ?*',
+    '2️⃣ *À quel prénom et nom faut-il préparer la commande ?*',
     '',
-    '_Tapez « annuler » à tout moment pour arrêter._',
+    'Le numéro de cette conversation sera utilisé pour vous joindre.',
   ].join('\n');
 };
 
@@ -642,29 +653,29 @@ const txtDemandeNom = (produit, quantite = 1) => {
 // lieu de sélectionner. Le quartier seul suffit : les livreurs appellent avant de
 // livrer, et le numéro de l'acheteur est déjà sur la commande (compte WhatsApp).
 const TXT_DEMANDE_ADRESSE = [
-  '3️⃣ *Votre quartier de livraison ?*',
+  '3️⃣ *Dans quel quartier souhaitez-vous être livré ?*',
   '',
   '_Ex : Mbour, quartier Golf._',
 ].join('\n');
 
 const TXT_DEMANDE_ZONE = [
-  '3️⃣ *Où faut-il livrer ?*',
+  '3️⃣ *Où souhaitez-vous recevoir votre commande ?*',
   '',
-  'Choisissez votre quartier dans la liste.',
+  'Choisissez votre quartier ci-dessous, ou indiquez-le directement par message.',
 ].join('\n');
 const TXT_ZONE_BOUTON = 'Choisir le quartier';
 
 const TXT_DEMANDE_WALLET = '4️⃣ *Comment souhaitez-vous payer ?*';
-const TXT_QUANTITE_INVALIDE = 'Merci d\'indiquer un nombre d\'articles (ex : 1, 2, 3…).';
-const TXT_NOM_INVALIDE = 'Merci d\'indiquer votre prénom et nom (entre 2 et 60 caractères).';
-const TXT_ADRESSE_INVALIDE = 'Merci d\'indiquer votre quartier de livraison (au moins 5 caractères).';
+const TXT_QUANTITE_INVALIDE = 'De combien d’articles avez-vous besoin ? Envoyez simplement un nombre, par exemple 1, 2 ou 3.';
+const TXT_NOM_INVALIDE = 'Pouvez-vous m’indiquer votre prénom et nom en 2 à 60 caractères pour préparer la commande ?';
+const TXT_ADRESSE_INVALIDE = 'Pouvez-vous préciser votre ville et votre quartier en 5 à 200 caractères ? Par exemple : Mbour, quartier Golf.';
 const TXT_WALLET_INVALIDE = 'Choisissez *Wave* ou *Orange Money* avec les boutons ci-dessous.';
-const TXT_CHECKOUT_ANNULE = 'Commande annulée. Vous pouvez la reprendre quand vous voulez.';
-const TXT_CHECKOUT_EN_COURS = 'Un instant, je finalise votre commande…';
+const TXT_CHECKOUT_ANNULE = 'La préparation de cette commande est annulée. Appuyez sur « Commander » si vous souhaitez recommencer.';
+const TXT_CHECKOUT_EN_COURS = 'Un petit instant, je prépare votre commande et son lien de paiement…';
 const TXT_CHECKOUT_ECHEC = [
-  '⚠️ Je n\'ai pas pu finaliser la commande ici.',
+  'Je rencontre une difficulté pour terminer cette étape dans WhatsApp.',
   '',
-  'Utilisez le lien ci-dessous pour terminer votre paiement en sécurité.',
+  'Le bouton ci-dessous ouvre la page du produit pour poursuivre votre commande. Si votre compte a déjà été débité, ne payez pas à nouveau : demandez d’abord la vérification du paiement.',
 ].join('\n');
 
 function txtRecapCommande(produit, order, walletLabel, quantite = 1) {
@@ -672,12 +683,15 @@ function txtRecapCommande(produit, order, walletLabel, quantite = 1) {
     ? `📦 ${quantite} × ${produit.nom}`
     : `📦 ${produit.nom}`;
   return [
-    `✅ *Commande ${order.orderCode}*`,
+    `Votre commande *${order.orderCode}* est prête à être réglée.`,
     ligneProduit,
     `💰 *${formatFcfa(order.totalAmount)} FCFA* (frais de protection inclus)`,
     `💳 ${walletLabel}`,
     '',
-    '🔒 Votre argent est protégé jusqu\'à ce que vous confirmiez la réception.',
+    'Vérifiez le montant, puis appuyez sur « Payer maintenant » pour ouvrir le paiement.',
+    '',
+    TXT_SERVICE_PROTECTION,
+    TXT_LIMITE_PROTECTION,
     '',
     '⚠️ Validèl ne demandera jamais votre code secret Wave ou Orange Money.',
   ].join('\n');
@@ -1098,7 +1112,7 @@ async function decideReplies(parsed, deps) {
         const code = parts[1];
         return [{
           kind: 'buttons',
-          body: 'Que souhaitez-vous savoir ?',
+          body: 'Je vous aide avec plaisir. Qu’aimeriez-vous savoir sur votre achat ?',
           buttons: [
             { id: `faq:marche:${code}`, title: 'Comment ça marche' },
             { id: `faq:frais:${code}`, title: 'Les frais' },
@@ -1174,7 +1188,7 @@ async function decideReplies(parsed, deps) {
       }
       if (isAiQuotaExceeded(state)) {
         const produitQuota = await findProduct(state.productCode);
-        const intro = 'Vous avez posé beaucoup de questions aujourd\'hui 🙂 Pour aller plus loin, vous pouvez contacter directement le vendeur.';
+        const intro = 'Pour obtenir davantage de précisions sur ce produit, vous pouvez poursuivre la conversation avec le vendeur.';
         return produitQuota
           ? repliesContacterVendeur(produitQuota, intro)
           : [{ kind: 'text', body: TXT_AI_QUOTA_DEPASSE }];
@@ -1354,7 +1368,7 @@ async function askProductQuestionAI(produit, question) {
     'acheteurs et vendeurs au Sénégal (l\'argent est bloqué jusqu\'à confirmation de réception).',
     'Réponds UNIQUEMENT à partir des informations produit ci-dessous. N\'invente JAMAIS une',
     'caractéristique, une couleur, un délai de livraison ou une garantie qui n\'est pas indiquée.',
-    'Si tu ne sais pas, dis-le clairement et invite le client à utiliser le menu "Autres questions"',
+    'Si tu ne sais pas, dis-le clairement et invite le client à utiliser le menu "Une question ?"',
     'ou à contacter le vendeur directement.',
     'IMPORTANT : chaque fois que tu invites à contacter le vendeur, rappelle en une phrase',
     'qu\'il faut TOUJOURS payer via Validèl — payer le vendeur en dehors de Validèl fait perdre',
@@ -1395,6 +1409,14 @@ async function askProductQuestionAI(produit, question) {
 // de SMS. Sinon, le reconciler périodique envoie le SMS après 10 min, une
 // seule fois (sms_sent). Le texte SMS est stocké par notif -> mécanisme réutilisable.
 const DELIVERY_READ_FALLBACK_DELAY_MS = 10 * 60 * 1000;
+
+function deliveryRequestIds(requestId) {
+  const value = String(requestId || '').trim();
+  if (!/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(value)) return [value];
+  const compact = value.replace(/-/g, '').toLowerCase();
+  const uuid = compact.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+  return [...new Set([value, uuid, compact])];
+}
 
 async function recordDeliveryNotificationSent(requestId, orderId, buyerPhone, fallbackSmsText = null) {
   if (!supabase || !requestId) return;
@@ -1451,7 +1473,7 @@ async function sendFallbackSmsNow(requestId, status, motifDetail) {
     const { data: row, error } = await supabase
       .from('whatsapp_delivery_read_tracking')
       .select('request_id, order_id, buyer_phone, fallback_sms_text')
-      .eq('request_id', requestId)
+      .in('request_id', deliveryRequestIds(requestId))
       .is('read_at', null)
       .eq('sms_sent', false)
       .maybeSingle();
@@ -1481,7 +1503,7 @@ async function markDeliveryNotificationRead(requestId) {
     const { error } = await supabase
       .from('whatsapp_delivery_read_tracking')
       .update({ read_at: new Date().toISOString() })
-      .eq('request_id', requestId)
+      .in('request_id', deliveryRequestIds(requestId))
       .is('read_at', null);
     if (error) console.warn('[WABOT] markDeliveryNotificationRead erreur:', error.message);
     else console.log('[WABOT] WhatsApp remis au client, SMS de secours annulé pour request_id:', requestId);
