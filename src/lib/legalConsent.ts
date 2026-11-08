@@ -1,9 +1,9 @@
 export const LEGAL_ACCEPTANCE_KEY = "validele:legal_accepted_v1";
-export const LEGAL_VERSION = "2026-04-20";
-export const LEGAL_FEATURE_ENABLED = false;
+export const LEGAL_VERSION = "2026-11-05";
+export const LEGAL_FEATURE_ENABLED = true;
 
 export const LEGAL_BRAND_NAME = "Validèl";
-export const LEGAL_CONTACT_EMAIL = "contact@validel.com";
+export const LEGAL_CONTACT_EMAIL = "contact@validel.net";
 export const LEGAL_CONTACT_PHONE = "+221777804136";
 export const LEGAL_SUPPORT_WHATSAPP = "+221777804136";
 export const LEGAL_CONTACT_ADDRESS = "Dakar, Sénégal";

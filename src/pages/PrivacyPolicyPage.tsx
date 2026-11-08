@@ -48,7 +48,7 @@ const PrivacyPolicyPage: React.FC = () => {
           <section>
             <h2 className="text-lg font-semibold text-slate-900">0. Responsable du traitement</h2>
             <p className="mt-2">
-              Le service est exploité sous la marque {LEGAL_BRAND_NAME}. Contact légal:
+              Le service est exploité sous la marque {LEGAL_BRAND_NAME}. Contact légal :
               {" "}{LEGAL_CONTACT_EMAIL} | {LEGAL_CONTACT_PHONE} | {LEGAL_CONTACT_ADDRESS}.
               Support WhatsApp: {LEGAL_SUPPORT_WHATSAPP}.
             </p>

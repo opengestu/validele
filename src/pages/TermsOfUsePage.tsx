@@ -39,8 +39,8 @@ const TermsOfUsePage: React.FC = () => {
             Conditions d'utilisation
           </h1>
           <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-            Ces conditions définissent les règles d'utilisation de l'application
-            {LEGAL_BRAND_NAME} pour tous les profils utilisateurs.
+            Ces conditions définissent les règles d'utilisation de l'application{" "}
+            {LEGAL_BRAND_NAME} pour tous les profils d'utilisateur.
           </p>
         </header>
 
@@ -48,7 +48,7 @@ const TermsOfUsePage: React.FC = () => {
           <section>
             <h2 className="text-lg font-semibold text-slate-900">0. Éditeur du service</h2>
             <p className="mt-2">
-              Le service est fourni sous la marque {LEGAL_BRAND_NAME}. Contact légal:
+              Le service est fourni sous la marque {LEGAL_BRAND_NAME}. Contact légal :
               {" "}{LEGAL_CONTACT_EMAIL} | {LEGAL_CONTACT_PHONE} | {LEGAL_CONTACT_ADDRESS}.
               Support WhatsApp: {LEGAL_SUPPORT_WHATSAPP}.
             </p>
@@ -72,7 +72,7 @@ const TermsOfUsePage: React.FC = () => {
 
           <section>
             <h2 className="text-lg font-semibold text-slate-900">3. Bon usage du service</h2>
-            <p className="mt-2">Il est notamment interdit de:</p>
+            <p className="mt-2">Il est notamment interdit de :</p>
             <ul className="mt-2 list-disc space-y-1 pl-6">
               <li>utiliser l'application à des fins frauduleuses ou illégales,</li>
               <li>publier des contenus trompeurs ou non conformes,</li>

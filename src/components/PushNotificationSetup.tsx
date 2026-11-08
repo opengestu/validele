@@ -6,6 +6,7 @@ import { Dialog } from '@capacitor/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { notifyWelcome } from '@/services/notifications';
 import { apiUrl, postProfileUpdate } from '@/lib/api';
+import WebPushNotificationSetup from './WebPushNotificationSetup';
 
 /**
  * Composant qui initialise les notifications push après connexion.
@@ -185,7 +186,7 @@ const PushNotificationSetup = () => {
     return () => clearTimeout(timer);
   }, [user, initialized]);
 
-  return null;
+  return Capacitor.getPlatform() === 'web' ? <WebPushNotificationSetup /> : null;
 };
 
 export default PushNotificationSetup;

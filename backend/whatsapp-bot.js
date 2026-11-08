@@ -1236,11 +1236,11 @@ async function decideReplies(parsed, deps) {
 const memProcessed = new Map(); // secours UNIQUEMENT si Supabase indisponible (non fiable multi-instance)
 const MEM_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function defaultIsDuplicate(msgId) {
+async function defaultIsDuplicate(msgId, db = supabase) {
   if (!msgId) return false;
-  if (supabase) {
+  if (db) {
     try {
-      const { error } = await supabase
+      const { error } = await db
         .from('whatsapp_processed_messages')
         .insert({ msg_id: msgId });
       if (!error) return false;                 // insertion OK -> première fois
@@ -1763,7 +1763,7 @@ async function executeAction(action, to, senders, from) {
 function createBot(deps = {}) {
   const findProduct = deps.findProduct || trouverProduit;
   const findShop = deps.findShop || trouverBoutique;
-  const isDuplicate = deps.isDuplicate || defaultIsDuplicate;
+  const isDuplicate = deps.isDuplicate || ((msgId) => defaultIsDuplicate(msgId, deps.db));
   const getConversationState = deps.getConversationState || defaultGetConversationState;
   const setConversationState = deps.setConversationState || defaultSetConversationState;
   const askProductQuestion = deps.askProductQuestion || askProductQuestionAI;
@@ -1842,7 +1842,12 @@ function createBot(deps = {}) {
 }
 
 function registerWhatsAppBot(app, deps) {
-  const bot = createBot({ getProtectionRate: () => require('./fee-settings').readProtectionRate(supabase), ...deps });
+  const db = (deps && deps.db) || supabase;
+  const bot = createBot({
+    getProtectionRate: () => require('./fee-settings').readProtectionRate(db),
+    ...deps,
+    db,
+  });
   app.post('/api/whatsapp/webhook/:secret', bot.handler);
   // Vérification en tâche de fond : ne retarde pas le démarrage. La bannière reste
   // désactivée tant que la vérification n'a pas abouti, donc aucune fenêtre de risque.

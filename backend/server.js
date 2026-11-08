@@ -210,7 +210,7 @@ app.use(cookieParser());
 // Sécurisé par token secret dans l'URL. Ne modifie aucun statut (lecture/notification).
 try {
   const { registerWhatsAppBot } = require('./whatsapp-bot');
-  registerWhatsAppBot(app);
+  registerWhatsAppBot(app, { db: payoutDb });
 } catch (e) {
   console.error('[INIT] Échec du montage du bot WhatsApp:', e && (e.message || e));
 }
@@ -1043,20 +1043,26 @@ app.post('/api/me/push-token', async (req, res) => {
       }
     }
 
-    // Mettre à jour le profil avec le token (utiliser le JWT utilisateur pour respecter RLS)
-    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    // L'identité a été vérifiée ci-dessus. Les JWT SMS internes ne sont pas
+    // reconnus par Supabase : utiliser le client admin pour ces sessions.
+    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY, {
+      ...(SUPABASE_SERVICE_ROLE_KEY ? {} : {
       global: { headers: { Authorization: `Bearer ${token}` } }
+      })
     });
 
     const { data, error } = await supabaseUser
       .from('profiles')
-      .upsert({ id: userId, push_token }, { onConflict: 'id', returning: 'representation' });
+      .update({ push_token })
+      .eq('id', userId)
+      .select('id');
 
     if (error) {
       console.error('[ME PUSH-TOKEN] supabase upsert error:', error);
       return res.status(500).json({ success: false, error: error.message || 'Erreur DB' });
     }
 
+    if (!data?.length) return res.status(404).json({ success: false, error: 'Profil introuvable' });
     console.log('[ME PUSH-TOKEN] push_token enregistré pour user:', userId);
     return res.json({ success: true, data: data?.[0] });
   } catch (err) {
@@ -3023,6 +3029,20 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
     // Répondre depuis le numéro de bot où la commande a été passée (prod ou démo) ;
     // NULL (commande web/app) -> repli sur WHATSAPP_BOT_NUMBER.
     try {
+      // Cette notification est initiée par Validèl et peut partir bien après le
+      // dernier message du client : le template approuvé est le chemin principal.
+      // D7 peut accepter un CTA libre puis Meta le rejeter de façon asynchrone ;
+      // attendre une exception du CTA n'est donc pas fiable hors des 24 heures.
+      await sendWhatsAppTemplate(order.buyer_phone, {
+        templateId: paymentTemplateName,
+        language: paymentTemplateLang,
+        bodyParams: [productName, amount],
+        from: order.bot_number || undefined,
+      });
+    } catch (templateError) {
+      // Repli utile si le template est indisponible et que le client se trouve
+      // encore dans sa fenêtre de conversation de 24 heures.
+      console.warn('[WHATSAPP] Template paiement refusé, repli CTA libre:', templateError?.message || templateError);
       await sendWhatsAppCtaUrl(
         order.buyer_phone,
         body,
@@ -3030,17 +3050,6 @@ async function notifyBuyerWhatsAppPaymentConfirmed(orderId) {
         trackingUrl,
         order.bot_number || undefined,
       );
-
-    } catch (ctaError) {
-      // Repli utile uniquement si le client se trouve encore dans sa fenêtre de
-      // conversation de 24 h. Le rejet reste journalisé pour corriger le template.
-      console.warn('[WHATSAPP] CTA paiement refusé, repli template statique:', ctaError?.message || ctaError);
-      await sendWhatsAppTemplate(order.buyer_phone, {
-        templateId: paymentTemplateName,
-        language: paymentTemplateLang,
-        bodyParams: [productName, amount],
-        from: order.bot_number || undefined,
-      });
     }
     console.log('[WHATSAPP] Notification paiement confirmé envoyée à', order.buyer_phone);
   } catch (waErr) {

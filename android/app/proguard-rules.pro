@@ -1,4 +1,8 @@
 # Add project specific ProGuard rules here.
+# Capacitor reads annotation members (including nested Permission values) at runtime.
+# R8 full mode must retain their defaults and methods for checkPermissions().
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault
+-keep @interface com.getcapacitor.annotation.** { *; }
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 #

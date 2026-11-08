@@ -24,7 +24,7 @@ export const createInvoice = async (data: {
             },
             store: {
                 name: 'Validèl',
-                email: 'contact@validel.com',
+                email: 'contact@validel.net',
                 phone: '+221770000000',
                 address: 'Dakar, Sénégal'
             }

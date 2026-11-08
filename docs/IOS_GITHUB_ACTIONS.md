@@ -41,16 +41,50 @@ These three are only required if you choose `upload_to_app_store = true` when la
 
 ## How to prepare the secrets
 
+You do not need a local Mac for this workflow. You still need:
+
+- An active Apple Developer Program membership.
+- The app created in App Store Connect with bundle ID `com.validele.app`.
+- A cloud macOS builder, here GitHub Actions `macos-15`.
+- Apple signing assets: an Apple Distribution certificate and an App Store provisioning profile.
+
+The signing assets can be prepared from Windows by generating a private key and CSR with OpenSSL, creating the certificate/profile in the Apple Developer portal, then converting them to Base64 for GitHub secrets.
+
+### 0. Create a CSR on Windows
+
+Install OpenSSL for Windows if needed, then run:
+
+```powershell
+openssl genrsa -out ios_distribution.key 2048
+openssl req -new -key ios_distribution.key -out ios_distribution.csr -subj "/emailAddress=YOUR_APPLE_ID_EMAIL,CN=Validel iOS Distribution,C=SN"
+```
+
+In the Apple Developer portal:
+
+1. Open **Certificates, Identifiers & Profiles**.
+2. Create an **Apple Distribution** certificate.
+3. Upload `ios_distribution.csr`.
+4. Download the generated `.cer` certificate.
+
+Convert the downloaded certificate and private key into a `.p12` file:
+
+```powershell
+openssl x509 -inform DER -in distribution.cer -out distribution.pem
+openssl pkcs12 -export -inkey ios_distribution.key -in distribution.pem -out distribution.p12
+```
+
+Use the password you chose during export as `P12_PASSWORD`.
+
 ### 1. Export your signing certificate
 
-Export your Apple Distribution certificate as a `.p12` file from Keychain Access or Xcode.
+Use the `distribution.p12` file created above. If you do have access to a Mac, you can also export your Apple Distribution certificate as a `.p12` file from Keychain Access or Xcode.
 
 Then convert it to Base64.
 
 PowerShell:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\certificate.p12"))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\distribution.p12"))
 ```
 
 Copy the output into the `BUILD_CERTIFICATE_BASE64` GitHub secret.
@@ -59,7 +93,14 @@ Store the `.p12` password in `P12_PASSWORD`.
 
 ### 2. Export your provisioning profile
 
-Download the App Store provisioning profile for `com.validele.app`, then convert it to Base64.
+In the Apple Developer portal:
+
+1. Create or confirm the app identifier `com.validele.app`.
+2. Create an **App Store** provisioning profile for that identifier.
+3. Select the Apple Distribution certificate created from your CSR.
+4. Download the `.mobileprovision` file.
+
+Then convert it to Base64.
 
 PowerShell:
 

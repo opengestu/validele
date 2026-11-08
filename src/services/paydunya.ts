@@ -14,7 +14,8 @@ interface PaymentResponse {
 }
 
 export class PayDunyaService {
-  private baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  private baseUrl = import.meta.env.VITE_API_URL ||
+    (import.meta.env.DEV ? 'http://localhost:3001' : 'https://validele-d16b.onrender.com');
   private masterKey: string;
   private privateKey: string;
   private token: string;

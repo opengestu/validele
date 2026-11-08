@@ -8,6 +8,12 @@ Les règles de conservation de Capacitor sont fournies par sa bibliothèque
 (`consumerProguardFiles`). Elles couvrent les plugins personnalisés qui étendent
 `com.getcapacitor.Plugin`. Ne pas ajouter une règle globale conservant tout le code.
 
+Le fichier `app/proguard-rules.pro` conserve aussi les annotations
+`com.getcapacitor.annotation.**` et leurs membres/defaults lus à l'exécution.
+Sans cette règle, R8 peut retirer les valeurs de `Permission` et provoquer un
+`NullPointerException` dans `Bridge.getPermissionStates` au contrôle des
+notifications dès le démarrage (observé sur la version 121).
+
 ## Construction
 
 Depuis `android` :

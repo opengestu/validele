@@ -2458,7 +2458,7 @@ const VendorDashboard = () => {
         </TabsContent>
         {/* Orders Tab */}
         <TabsContent value="orders" className="space-y-6">
-          <div className="flex items-center justify-between gap-3 flex-nowrap">
+          <div className="flex items-center justify-between gap-3 flex-nowrap pt-3">
             <div className="flex items-center gap-1 whitespace-nowrap">
               <h3 className="text-xs md:text-sm font-semibold text-foreground m-0 leading-none">Commandes</h3>
               <span className="text-[11px] md:text-xs text-muted-foreground font-medium leading-none">({totalOrders})</span>
@@ -2566,11 +2566,11 @@ const VendorDashboard = () => {
                         {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
                           <button
                             onClick={() => handleShowVendorQR(order)}
-                            className="flex-1 h-[40px] rounded-2xl text-[13px] font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+                            className="flex-[1.8] min-w-0 h-[40px] px-2 rounded-2xl text-[13px] whitespace-nowrap font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
                             style={{ background: 'linear-gradient(135deg,#1a1a1a,#404040)', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}
                           >
-                            <QrCode className="h-4 w-4" />
-                            QR Code
+                            <QrCode className="h-4 w-4 shrink-0" />
+                            Donner à un livreur
                           </button>
                         )}
                       </div>
@@ -2887,7 +2887,7 @@ const VendorDashboard = () => {
             </TabsContent>
             <TabsContent value="orders" className="mt-0">
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 pt-3">
                   <div className="flex items-center gap-1 whitespace-nowrap">
                     <h4 className="text-xs font-semibold m-0 leading-none">Commandes</h4>
                     <span className="text-xs text-muted-foreground leading-none">({totalOrders})</span>
@@ -3003,11 +3003,11 @@ const VendorDashboard = () => {
                                   {(order.status === 'paid' || order.status === 'assigned') && order.order_code && (
                                     <button
                                       onClick={() => handleShowVendorQR(order)}
-                                      className="flex-1 h-[40px] rounded-2xl text-[13px] font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+                                      className="flex-[1.8] min-w-0 h-[40px] px-2 rounded-2xl text-[13px] whitespace-nowrap font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
                                       style={{ background: 'linear-gradient(135deg,#1a1a1a,#404040)', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}
                                     >
-                                      <QrCode className="h-4 w-4" />
-                                      QR Code
+                                      <QrCode className="h-4 w-4 shrink-0" />
+                                      Donner à un livreur
                                     </button>
                                   )}
                                 </div>
