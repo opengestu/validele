@@ -609,6 +609,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       explicitSignOutRef.current = true;
       hadSupabaseSessionRef.current = false;
+      // Une déconnexion doit repartir d'un flux d'authentification vierge.
+      // Sinon PhoneAuthForm peut restaurer l'étape confirm-pin sans le PIN
+      // initial, qui n'est volontairement jamais persisté.
+      localStorage.removeItem('phone_auth_state_v1');
+      localStorage.removeItem('auth_token');
       // Nettoyer la session SMS si elle existe
       localStorage.removeItem('sms_auth_session');
       localStorage.removeItem(SUPABASE_SESSION_KEY);
