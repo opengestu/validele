@@ -1261,6 +1261,27 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
       const formatted = formatPhoneNumber(rawPhone || '');
       setFormData(prev => ({ ...prev, phone: formatted }));
 
+      // Le flux lancé depuis l'écran de connexion n'a pas encore chargé le
+      // profil. Le récupérer avant l'OTP afin que la sauvegarde du nouveau PIN
+      // puisse associer la réinitialisation au bon profil.
+      const profileResp = await fetch(apiUrl(`/auth/users/exists?phone=${encodeURIComponent(formatted)}`));
+      const profileData = await profileResp.json().catch(() => null);
+      if (!profileResp.ok || !profileData?.exists || !profileData.profile?.id) {
+        throw new Error('Profil utilisateur introuvable');
+      }
+      const profile = profileData.profile as {
+        id: string;
+        full_name?: string;
+        role?: string;
+        hasPin?: boolean;
+      };
+      setExistingProfile({
+        id: profile.id,
+        full_name: profile.full_name || '',
+        role: (profile.role ?? 'buyer') as 'buyer' | 'vendor' | 'delivery',
+        pin_hash: profile.hasPin ? '__SERVER__' : null,
+      });
+
       // Envoyer un OTP via Direct7 pour vérifier l'identité
       // allowExisting=true permet d'envoyer l'OTP même si le profil existe (cas reset PIN)
       const resp = await sendOTP(formatted, { allowExisting: true });

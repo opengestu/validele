@@ -7824,7 +7824,21 @@ app.post('/api/auth/reset-pin', async (req, res) => {
     // Chercher le profil (recherche tolerant sur les 9 derniers chiffres comme ailleurs)
     const digitsOnly = formattedPhone.replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
-    const { data: profiles, error: profErr } = await supabase
+    // This endpoint is intentionally unauthenticated after OTP verification,
+    // so the profile update must use the service-role client. Using the anon
+    // client here can be blocked by RLS and make reset appear successful only
+    // until the next login attempt.
+    const resetDb = SUPABASE_SERVICE_ROLE_KEY
+      ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { autoRefreshToken: false, persistSession: false }
+      })
+      : null;
+    if (!resetDb) {
+      console.error('[RESET-PIN] Supabase service-role client unavailable');
+      return res.status(503).json({ success: false, error: 'Service de réinitialisation indisponible' });
+    }
+
+    const { data: profiles, error: profErr } = await resetDb
       .from('profiles')
       .select('id, phone, role')
       .ilike('phone', `%${last9}%`)
@@ -7844,10 +7858,19 @@ app.post('/api/auth/reset-pin', async (req, res) => {
     try {
       const bcrypt = require('bcryptjs');
       const hashed = await bcrypt.hash(String(newPin), 10);
-      const { error: updateErr } = await supabase.from('profiles').update({ pin_hash: hashed }).eq('id', profileId);
+      const { data: updatedProfile, error: updateErr } = await resetDb
+        .from('profiles')
+        .update({ pin_hash: hashed })
+        .eq('id', profileId)
+        .select('id')
+        .maybeSingle();
       if (updateErr) {
         console.error('[RESET-PIN] Erreur update:', updateErr);
         return res.status(500).json({ success: false, error: 'Erreur sauvegarde PIN' });
+      }
+      if (!updatedProfile) {
+        console.error('[RESET-PIN] Aucun profil mis à jour:', profileId);
+        return res.status(404).json({ success: false, error: 'Profil non trouvé' });
       }
     } catch (e) {
       console.error('[RESET-PIN] Hash/update error:', e);
