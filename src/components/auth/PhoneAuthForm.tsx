@@ -368,8 +368,14 @@ export const PhoneAuthForm: React.FC<PhoneAuthFormProps> = ({ initialPhone, onBa
           });
           setHasCheckedProfile(true);
         }
-        if (s?.step && ['phone','otp','login-pin','pin','confirm-pin','profile'].includes(s.step)) {
+        if (s?.step && ['phone', 'otp', 'login-pin'].includes(s.step)) {
           setStep(s.step);
+        } else if (s?.step === 'pin' || s?.step === 'confirm-pin' || s?.step === 'profile') {
+          // The first PIN is intentionally never persisted. These steps cannot
+          // be resumed after a reload, otherwise confirm-pin has no value to
+          // compare against and every entry is reported as different.
+          localStorage.removeItem(STORAGE_KEY);
+          setStep('phone');
         }
         if (s?.isResetPin) setIsResetPin(true);
       }
