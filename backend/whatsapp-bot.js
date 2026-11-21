@@ -447,30 +447,19 @@ const TXT_LIMITE_PROTECTION = 'Un remboursement dépend de l’examen de la dema
 
 function ficheProduitText(produit) {
   const { prix, frais, total } = computeFees(produit.prix);
-  const ligneVendeur = produit.vendeurQuartier
-    ? `Proposé par *${shortDescription(produit.vendeurNom, 50)}* · ${shortDescription(produit.vendeurQuartier, 50)}`
-    : `Proposé par *${shortDescription(produit.vendeurNom, 50)}*`;
-  // Description du produit (si renseignée) : rend la fiche compréhensible pour le
-  // client, au lieu d'un simple code + nom sans explication.
-  const desc = shortDescription(produit.description, 120);
   const lignes = [];
-  // Annoncé AVANT tout le reste : le testeur doit savoir dès la première ligne
-  // qu'il ne s'engage à rien.
+  // Garder le premier message court ; l'avertissement de démonstration reste
+  // affiché avant le produit pour éviter toute confusion avec une vraie vente.
   if (produit.isDemo) lignes.push('🧪 *DÉMONSTRATION — ceci n\'est pas une vraie vente*', '');
-  lignes.push('Bonjour et bienvenue chez Validèl 👋', 'Voici le produit qui vous intéresse :', '');
-  lignes.push(`📦 *${shortDescription(produit.nom, 90)}*`);
+  lignes.push(`👋 *${shortDescription(produit.nom, 90)}*`);
+  const desc = shortDescription(produit.description, 80);
   if (desc) lignes.push(desc);
   lignes.push(
-    `Prix : *${formatFcfa(prix)} FCFA*`,
-    ligneVendeur,
+    `Prix : ${formatFcfa(prix)} FCFA · Protection : ${formatFcfa(frais)} FCFA`,
+    `*Total : ${formatFcfa(total)} FCFA*`,
     '',
-    `Frais de protection : ${formatFcfa(frais)} FCFA`,
-    `*Total à payer : ${formatFcfa(total)} FCFA*`,
-    '',
-    TXT_SERVICE_PROTECTION,
-    'Les frais correspondent à ce service de protection. Consultez « Une question ? » → « Les frais » pour les détails.',
-    '',
-    'Pour continuer, appuyez sur « Commander ». Vous pouvez aussi me poser une question sur ce produit.',
+    '🔒 Paiement protégé jusqu’à votre confirmation de réception.',
+    'Appuyez sur « Commander » pour continuer.',
   );
   return lignes.join('\n').slice(0, 1024);
 }
